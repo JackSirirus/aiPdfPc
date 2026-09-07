@@ -647,6 +647,33 @@ def radio_group(dest, options):
     os.replace(temporary,dest)
 
 
+def url_to_pdf(url,dest):
+    """Windows URL rendering via Playwright, replacing the Swift WebHelper.
+
+    Each task gets a fresh browser context (no storage_state, no cookies),
+    matching the WebHelper's nonPersistent WKWebsiteDataStore. Bundled
+    Chromium is the default; channel="msedge" is a documented fallback when
+    the bundled browser is unavailable.
+    """
+    from playwright.sync_api import sync_playwright, TimeoutError as web_timeout
+    try:
+        with sync_playwright() as p:
+            browser=p.chromium.launch(headless=True)
+            try:
+                context=browser.new_context()
+                page=context.new_page()
+                page.goto(url,wait_until="load",timeout=45000)
+                page.pdf(path=str(dest),format="A4",print_background=True)
+                context.close()
+            finally:
+                browser.close()
+    except web_timeout:
+        raise UserError("网页加载超时，请检查网址或稍后重试。")
+    except Exception:
+        raise UserError("网页加载失败，请检查网址是否可访问。")
+    return [dest]
+
+
 def single_pdf(operation, source, options, out, index):
     stem=f"{index:02d}-"+("网页" if source.startswith(("https://","http://")) else Path(source).stem)
     dest=out/f"{stem}-{operation}.pdf"
@@ -654,6 +681,9 @@ def single_pdf(operation, source, options, out, index):
         return office_convert(source,dest)
     if operation=="html_to_pdf":
         if source.startswith(("https://","http://")):
+            if sys.platform=="win32":
+                # Windows: Playwright replaces the WebHelper binary; nothing persists.
+                return url_to_pdf(source,dest)
             helper=web_path()
             if not helper: raise UserError("缺少本地网页渲染组件，请重新构建应用。")
             with tempfile.TemporaryDirectory(prefix="aipdf-web-") as temp:

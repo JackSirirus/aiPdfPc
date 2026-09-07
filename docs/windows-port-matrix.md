@@ -37,7 +37,7 @@
 | pdf_to_word | PDF 转 Word | 格式转换 | engine.py:pdf_to_word | planned | PyMuPDF | 无 |
 | pdf_to_ppt | PDF 转 PowerPoint | 格式转换 | engine.py:pdf_to_ppt | planned | PyMuPDF | 无 |
 | pdf_to_excel | PDF 转 Excel | 格式转换 | engine.py:pdf_to_excel | planned | PyMuPDF | 无 |
-| html_to_pdf | HTML 转 PDF | 格式转换 | engine.py:html_to_pdf | planned | PyMuPDF | URL→PDF 方案：Playwright 替代 Apple WebKit 渲染，需额外安装 chromium |
+| html_to_pdf | HTML 转 PDF | 格式转换 | engine.py:html_to_pdf | working | PyMuPDF（本地 HTML）/ Playwright（网址） | URL→PDF 方案：Playwright 替代 Apple WebKit 渲染，需额外安装 chromium（`playwright install chromium`）；每任务全新无 Cookie context，超时 45 秒 |
 | pdfa | PDF 转 PDF/A | 格式转换 | engine.py:pdfa | planned | office | LibreOffice 替代方案 |
 | markdown | PDF 转 Markdown | 格式转换 | engine.py:markdown | planned | PyMuPDF | 无 |
 
