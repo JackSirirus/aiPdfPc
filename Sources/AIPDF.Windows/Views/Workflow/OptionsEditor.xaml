@@ -1,0 +1,82 @@
+<UserControl x:Class="AIPDF.Windows.Views.Workflow.OptionsEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Name="Root">
+    <!-- 通用参数表单：字段形状来自 catalog（text/number/textarea/choice/toggle/secret/file），一一映射。 -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="WorkflowResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ItemsControl ItemsSource="{Binding Options, ElementName=Root}">
+        <ItemsControl.ItemTemplate>
+            <DataTemplate>
+                <Grid Margin="0,4,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Label}"
+                               Style="{StaticResource FieldLabel}"
+                               Margin="0,8,12,0" />
+                    <StackPanel Grid.Column="1">
+                        <!-- 文本 / 数字 -->
+                        <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                 Style="{StaticResource ToolInput}"
+                                 Visibility="{Binding IsText, Converter={StaticResource BoolToVis}}" />
+                        <!-- 多行文本 -->
+                        <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                 Style="{StaticResource ToolInput}"
+                                 AcceptsReturn="True"
+                                 Height="64"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Visibility="{Binding IsMultiLine, Converter={StaticResource BoolToVis}}" />
+                        <!-- 选项 -->
+                        <ComboBox ItemsSource="{Binding Choices}"
+                                  SelectedItem="{Binding Value, Mode=TwoWay}"
+                                  Style="{StaticResource ToolComboBox}"
+                                  Visibility="{Binding IsChoice, Converter={StaticResource BoolToVis}}" />
+                        <!-- 开关 -->
+                        <CheckBox Content="{Binding Label}"
+                                  IsChecked="{Binding Value, Converter={StaticResource StrBool}, Mode=TwoWay}"
+                                  Visibility="{Binding IsToggle, Converter={StaticResource BoolToVis}}" />
+                        <!-- 密码：仅本次运行使用（引擎经 stdin 收取），不进入预设 -->
+                        <PasswordBox x:Name="SecretBox"
+                                     PasswordChanged="OnPasswordChanged"
+                                     Padding="7,5"
+                                     Visibility="{Binding IsSecret, Converter={StaticResource BoolToVis}}" />
+                        <!-- 文件 -->
+                        <StackPanel Orientation="Horizontal"
+                                    Visibility="{Binding IsFile, Converter={StaticResource BoolToVis}}">
+                            <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged, Mode=TwoWay}"
+                                     Style="{StaticResource ToolInput}"
+                                     Width="320" />
+                            <Button Content="浏览…"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="8,0,0,0"
+                                    Padding="10,4"
+                                    Click="OnBrowseFile" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding Help}"
+                                   Margin="0,4,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource HelpText}">
+                                    <Style.Triggers>
+                                        <Trigger Property="Text" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>
