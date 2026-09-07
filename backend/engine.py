@@ -135,6 +135,11 @@ def vision_path():
             exe = helper_dir / "bin" / config / "net8.0-windows10.0.19041.0" / "win-x64" / "WindowsOcrHelper.exe"
             if exe.is_file():
                 return str(exe)
+        # 安装布局：<install>/helper/WindowsOcrHelper.exe
+        # engine.py 位于 <install>/engine/backend/engine.py → parents[2] 为安装根目录。
+        install_helper = Path(__file__).resolve().parents[2] / "helper" / "WindowsOcrHelper.exe"
+        if install_helper.is_file():
+            return str(install_helper)
         return None
     paths = [os.environ.get("AIPDF_VISION", ""), str(Path(__file__).resolve().parent / "VisionHelper"),
              str(Path(__file__).resolve().parent.parent / ".build/release/VisionHelper")]

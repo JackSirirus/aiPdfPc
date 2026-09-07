@@ -67,6 +67,26 @@ class WindowsPathTests(unittest.TestCase):
              patch.object(shutil,"which",return_value=None),patch.object(sys,"platform","darwin"):
             self.assertEqual(engine.find_office(),mac_soffice)
 
+    def test_vision_path_install_layout(self):
+        """vision_path() 在安装布局下能找到 <install>/helper/WindowsOcrHelper.exe"""
+        try:
+            with tempfile.TemporaryDirectory(prefix="aipdf-win-install-", dir=ROOT/"tmp") as tmp:
+                install_root = Path(tmp)
+                helper_dir = install_root / "helper"
+                helper_dir.mkdir(parents=True)
+                helper_exe = helper_dir / "WindowsOcrHelper.exe"
+                helper_exe.write_bytes(b"\x00")  # 伪造可执行文件
+
+                # engine.py 位于 <install>/engine/backend/engine.py
+                fake_engine_file = str(install_root / "engine" / "backend" / "engine.py")
+                with patch.object(engine, "__file__", fake_engine_file), \
+                     patch.object(sys, "platform", "win32"):
+                    # 开发布局探测会失败（没有 Sources/WindowsOcrHelper），应降级到安装布局
+                    result = engine.vision_path()
+                    self.assertEqual(result, str(helper_exe))
+        finally:
+            pass  # TemporaryDirectory 已自动清理
+
     def test_heic_image_rejected_with_clear_message(self):
         for suffix in (".heic",".HEIF"):
             with self.subTest(suffix=suffix):

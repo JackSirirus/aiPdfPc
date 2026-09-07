@@ -628,6 +628,7 @@ public static class WindowsOcrLanguages
             return null;
         }
 
+        // 开发布局：Sources/WindowsOcrHelper/bin/{Release,Debug}/...
         var helperDir = Path.Combine(repoRoot, "Sources", "WindowsOcrHelper", "bin");
         foreach (var configuration in new[] { "Release", "Debug" })
         {
@@ -636,6 +637,13 @@ public static class WindowsOcrLanguages
             {
                 return exe;
             }
+        }
+
+        // 安装布局：<install-root>/helper/WindowsOcrHelper.exe
+        var installHelper = Path.Combine(repoRoot, "helper", "WindowsOcrHelper.exe");
+        if (File.Exists(installHelper))
+        {
+            return installHelper;
         }
 
         return null;
@@ -683,11 +691,18 @@ public static class WindowsOcrLanguages
 
     private static string? FindRepoRoot()
     {
-        // 与 EngineBridge 相同的锚点：向上查找 backend/engine.py。
+        // 与 EngineBridge 相同的双锚：开发布局 backend/engine.py，安装布局 engine/backend/engine.py。
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
+            // 开发布局
             if (File.Exists(Path.Combine(directory.FullName, "backend", "engine.py")))
+            {
+                return directory.FullName;
+            }
+
+            // 安装布局
+            if (File.Exists(Path.Combine(directory.FullName, "engine", "backend", "engine.py")))
             {
                 return directory.FullName;
             }
