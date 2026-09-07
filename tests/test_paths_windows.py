@@ -53,9 +53,11 @@ class WindowsPathTests(unittest.TestCase):
         result=engine.find_office()
         self.assertTrue(result is None or Path(result).is_file())
 
-    def test_helper_paths_none_on_windows(self):
+    def test_helper_paths_windows(self):
         with patch.object(sys,"platform","win32"):
-            self.assertIsNone(engine.vision_path())
+            vp = engine.vision_path()
+            # vision_path returns a valid path if helper was built, else None
+            self.assertTrue(vp is None or Path(vp).is_file())
             self.assertIsNone(engine.web_path())
 
     def test_mac_office_branch_preserved(self):

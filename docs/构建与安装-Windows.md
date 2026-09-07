@@ -54,7 +54,7 @@ dist/aipdf-windows/
 ├── app/                  WPF 应用程序（AIPDF.Windows.exe + 依赖）
 ├── engine/backend/       Python 引擎（engine.py + catalog.py + catalog.json）
 ├── helper/               OCR 助手（WindowsOcrHelper.exe，自包含）
-└── scripts/              安装脚本（Install.ps1，如已提供）
+└── scripts/              安装脚本（Install.ps1）
 ```
 
 ## 安装步骤
@@ -64,7 +64,7 @@ dist/aipdf-windows/
 1. 将 `dist/aipdf-windows/` 整个目录复制到目标位置（如 `C:\Program Files\AIPDF`）。
 2. 运行 `AIPDF.Windows.exe` 启动应用。
 
-> 当前阶段为源码构建安装，尚未提供 `Install.ps1` 自动安装脚本。
+> 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（需以管理员权限运行 PowerShell）。
 
 ## SmartScreen 未签名警告
 
