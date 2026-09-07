@@ -7,3 +7,19 @@ __pycache__/
 .DS_Store
 .env*
 *.log
+
+# Windows development artifacts
+.vs/
+bin/
+obj/
+*.user
+TestResults/
+
+# AI agent workspaces
+.omo/
+CLAUDE.md
+MEMORY.md
+memory/
+
+# Playwright
+.playwright/
