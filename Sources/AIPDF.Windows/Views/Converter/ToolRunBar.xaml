@@ -1,0 +1,107 @@
+<UserControl x:Class="AIPDF.Windows.Views.Converter.ToolRunBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        转换组共享执行栏：输出目录选择 + 校验/状态反馈 + 执行/取消。
+        绑定 ConverterToolViewModelBase 的同名属性
+        （OutputDir / BrowseOutputDirCommand / ValidationMessage / ExecuteCommand / CancelCommand /
+         IsRunning / StatusMessage / ProgressMessage / ProgressFraction / Results）。
+    -->
+    <Border Style="{StaticResource ConverterCard}">
+        <StackPanel>
+            <TextBlock Text="输出位置"
+                       Margin="0,0,0,6"
+                       Style="{StaticResource FieldLabel}" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Text="{Binding OutputDir, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{StaticResource FieldTextBox}" />
+                <Button Grid.Column="1"
+                        Margin="8,0,0,0"
+                        Content="选择…"
+                        Command="{Binding BrowseOutputDirCommand}"
+                        Style="{StaticResource SecondaryButton}"
+                        VerticalAlignment="Stretch" />
+            </Grid>
+
+            <!-- 即时校验消息（依赖缺失 / 输入 / 输出目录 / 参数） -->
+            <TextBlock Margin="0,10,0,0"
+                       Text="{Binding ValidationMessage}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource ErrorText}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ValidationMessage}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <Button Margin="0,14,0,0"
+                    Content="开始处理"
+                    Command="{Binding ExecuteCommand}"
+                    Style="{StaticResource ConverterPrimaryButton}"
+                    HorizontalAlignment="Left" />
+
+            <!-- 运行中：进度与取消 -->
+            <StackPanel Margin="0,12,0,0">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding ProgressMessage}"
+                               Style="{StaticResource FieldHint}"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="1"
+                            Content="取消"
+                            Command="{Binding CancelCommand}"
+                            Style="{StaticResource SecondaryButton}" />
+                </Grid>
+                <ProgressBar Margin="0,6,0,0"
+                             Height="4"
+                             Minimum="0"
+                             Maximum="1"
+                             Value="{Binding ProgressFraction, Mode=OneWay}" />
+            </StackPanel>
+
+            <!-- 最近一次状态（完成 / 失败 / 已取消） -->
+            <TextBlock Margin="0,12,0,0"
+                       Text="{Binding StatusMessage}"
+                       Style="{StaticResource FieldHint}" />
+
+            <!-- 结果列表：新建任务子目录中的输出文件 -->
+            <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Results}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding Path}"
+                                   ToolTip="{Binding Path}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="0,2" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Margin="0,10,0,0"
+                       Text="每次处理都会生成新的 AIPDF-日期-编号 输出目录，不覆盖源文件。"
+                       Style="{StaticResource FieldHint}" />
+        </StackPanel>
+    </Border>
+</UserControl>

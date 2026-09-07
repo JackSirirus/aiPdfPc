@@ -1,0 +1,62 @@
+<UserControl x:Class="AIPDF.Windows.Views.Converter.HtmlToPdfPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converter="clr-namespace:AIPDF.Windows.Views.Converter">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ConverterResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Style="{StaticResource ConverterPageStack}">
+            <TextBlock Text="{Binding Tool.Name}" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="{Binding Tool.Subtitle}"
+                       Margin="0,6,0,16"
+                       Style="{StaticResource PageSubtitle}" />
+
+            <Border Style="{StaticResource ConverterWarnBanner}">
+                <TextBlock Text="{Binding DependencyWarning}" Style="{StaticResource ConverterWarnText}" />
+            </Border>
+
+            <Border Style="{StaticResource ConverterCard}">
+                <StackPanel>
+                    <TextBlock Text="网页地址（可选）"
+                               Margin="0,0,0,6"
+                               Style="{StaticResource FieldLabel}" />
+                    <TextBox Text="{Binding UrlText, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource FieldTextBox}" />
+                    <!-- 网址格式错误提示（与引擎 dispatch 同一条规则） -->
+                    <TextBlock Margin="0,6,0,0"
+                               Text="{Binding UrlError}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource ErrorText}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding UrlError}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Margin="0,8,0,0"
+                               Text="{Binding UrlHelp}"
+                               Style="{StaticResource FieldHint}" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="{Binding Tool.Note}"
+                               Style="{StaticResource FieldHint}" />
+                    <!-- 网址转换会联网：界面必须明确说明（不隐藏这一事实） -->
+                    <TextBlock Margin="0,8,0,0"
+                               Text="填写网址后转换会联网加载该页面（含脚本与资源）；本地文件不会上传。"
+                               Style="{StaticResource FieldHint}" />
+                </StackPanel>
+            </Border>
+
+            <converter:FileListPanel />
+
+            <converter:ToolRunBar />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

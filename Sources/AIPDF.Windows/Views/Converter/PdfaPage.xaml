@@ -1,0 +1,43 @@
+<UserControl x:Class="AIPDF.Windows.Views.Converter.PdfaPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converter="clr-namespace:AIPDF.Windows.Views.Converter">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ConverterResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Style="{StaticResource ConverterPageStack}">
+            <TextBlock Text="{Binding Tool.Name}" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="{Binding Tool.Subtitle}"
+                       Margin="0,6,0,16"
+                       Style="{StaticResource PageSubtitle}" />
+
+            <Border Style="{StaticResource ConverterWarnBanner}">
+                <TextBlock Text="{Binding DependencyWarning}" Style="{StaticResource ConverterWarnText}" />
+            </Border>
+
+            <converter:FileListPanel />
+
+            <Border Style="{StaticResource ConverterCard}">
+                <StackPanel>
+                    <TextBlock Text="归档格式"
+                               Margin="0,0,0,6"
+                               Style="{StaticResource FieldLabel}" />
+                    <ComboBox ItemsSource="{Binding LevelChoices}"
+                              SelectedItem="{Binding Level, Mode=TwoWay}"
+                              Style="{StaticResource FieldComboBox}"
+                              HorizontalAlignment="Stretch" />
+                    <TextBlock Margin="0,8,0,0"
+                               Text="{Binding Tool.Note}"
+                               Style="{StaticResource FieldHint}" />
+                </StackPanel>
+            </Border>
+
+            <converter:ToolRunBar />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

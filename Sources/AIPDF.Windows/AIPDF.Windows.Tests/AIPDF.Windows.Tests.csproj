@@ -24,4 +24,9 @@
     <Content Include="..\..\..\backend\catalog.json" Link="catalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- 测试集合串行执行：部分用例操作进程级全局状态（环境变量、静态注册表），并行会互相干扰 -->
+  <ItemGroup>
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

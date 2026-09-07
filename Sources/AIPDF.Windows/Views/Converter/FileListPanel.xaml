@@ -1,0 +1,74 @@
+<UserControl x:Class="AIPDF.Windows.Views.Converter.FileListPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        转换组共享文件列表面板：绑定 ConverterToolViewModelBase 的同名属性
+        （Files / FileSummary / ExtensionsHint / BrowseFilesCommand / RemoveFileCommand / ClearFilesCommand）。
+    -->
+    <Border Style="{StaticResource ConverterCard}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="文件"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource Brush.TextPrimary}"
+                               VerticalAlignment="Center" />
+                    <TextBlock Margin="8,0,0,0"
+                               Text="{Binding FileSummary}"
+                               FontSize="11"
+                               Foreground="{StaticResource Brush.TextTertiary}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Grid.Column="1"
+                        Content="添加文件"
+                        Command="{Binding BrowseFilesCommand}"
+                        Style="{StaticResource SecondaryButton}" />
+                <Button Grid.Column="2"
+                        Margin="8,0,0,0"
+                        Content="清空"
+                        Command="{Binding ClearFilesCommand}"
+                        Style="{StaticResource SecondaryButton}" />
+            </Grid>
+
+            <ItemsControl Grid.Row="1" ItemsSource="{Binding Files}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Path}"
+                                       ToolTip="{Binding Path}"
+                                       FontSize="12"
+                                       Foreground="{StaticResource Brush.TextPrimary}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="1"
+                                    Command="{Binding DataContext.RemoveFileCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                    CommandParameter="{Binding}"
+                                    Style="{StaticResource ConverterRemoveButton}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Grid.Row="2"
+                       Margin="0,8,0,0"
+                       Text="{Binding ExtensionsHint}"
+                       Style="{StaticResource FieldHint}" />
+        </Grid>
+    </Border>
+</UserControl>
