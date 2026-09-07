@@ -12,6 +12,7 @@ from contextlib import redirect_stdout
 import html
 import io
 import json
+import locale
 import math
 import os
 from pathlib import Path
@@ -46,13 +47,34 @@ class UserError(Exception):
 CHILDREN: list[subprocess.Popen] = []
 
 
+def terminate_tree(proc):
+    """Kill a helper and everything it spawned, not just the direct child."""
+    if sys.platform == "win32":
+        # taskkill /T walks the whole parent-child tree and force-terminates it;
+        # os.killpg does not exist here and proc.terminate() would orphan grandchildren.
+        detail = ""
+        try:
+            done = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+            if done.returncode == 0:
+                return
+            # taskkill emits console-ANSI text, not UTF-8.
+            detail = (done.stderr or done.stdout).decode(locale.getpreferredencoding(False), errors="replace").strip()
+        except FileNotFoundError:
+            detail = "taskkill 不可用"
+        print(f"taskkill 终止进程树失败（pid={proc.pid}）：{detail}", file=sys.stderr, flush=True)
+        if proc.poll() is None:
+            proc.terminate()
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
 def stop(*_):
     for child in CHILDREN:
         if child.poll() is None:
-            try:
-                os.killpg(child.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            terminate_tree(child)
     raise UserError("处理已取消。已完成的文件保留在本次输出目录。")
 
 
@@ -62,10 +84,15 @@ def progress(message, fraction=0):
 
 def run_process(args, timeout=180):
     env = None
+    popen_flags = {}
     if sys.platform == "win32":
         # Helper processes must speak UTF-8 too, regardless of the console code page.
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-    child = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=env)
+        # A fresh process group is the Windows counterpart of start_new_session;
+        # it keeps console Ctrl events away from helpers, whose tree stop()
+        # addresses via taskkill instead.
+        popen_flags["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    child = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=env, **popen_flags)
     CHILDREN.append(child)
     try:
         out, err = child.communicate(timeout=timeout)
@@ -77,7 +104,7 @@ def run_process(args, timeout=180):
             raise UserError("本地转换引擎未能完成处理。请检查源文件是否可正常打开。")
         return out
     except subprocess.TimeoutExpired:
-        os.killpg(child.pid, signal.SIGTERM)
+        terminate_tree(child)
         child.communicate()
         raise UserError("本地转换超时。请缩小文件后重试。")
     finally:
