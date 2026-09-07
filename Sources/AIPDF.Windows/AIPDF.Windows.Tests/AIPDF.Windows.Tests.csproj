@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>AIPDF.Windows.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AIPDF.Windows.csproj" />
+  </ItemGroup>
+
+  <!-- 与主工程同样链接 backend/catalog.json，测试输出目录中可直接 ToolCatalog.Load() -->
+  <ItemGroup>
+    <Content Include="..\..\..\backend\catalog.json" Link="catalog.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

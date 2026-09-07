@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AIPDF.Windows</RootNamespace>
+    <AssemblyName>AIPDF.Windows</AssemblyName>
+    <Version>0.1.0</Version>
+    <Product>AIPDF</Product>
+    <Description>AIPDF 本地 PDF 工作台（Windows 版骨架）</Description>
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AIPDF.Windows.Tests" />
+  </ItemGroup>
+
+  <!-- 测试项目位于本目录的子文件夹，默认 **/*.cs 通配会把它编进主程序，显式排除 -->
+  <ItemGroup>
+    <Compile Remove="AIPDF.Windows.Tests\**\*.cs" />
+  </ItemGroup>
+
+  <!-- 工具目录唯一来源：backend/catalog.py 生成的 backend/catalog.json。
+       以链接方式随构建复制到输出目录，避免复制出第二份会漂移的清单。 -->
+  <ItemGroup>
+    <Content Include="..\..\backend\catalog.json" Link="catalog.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
