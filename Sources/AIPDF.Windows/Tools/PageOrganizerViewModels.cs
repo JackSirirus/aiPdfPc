@@ -118,7 +118,7 @@ public abstract partial class PageOrganizerViewModelBase : ObservableObject
         {
             Operation = Tool.Id,
             Files = [.. Files.Select(f => f.Path)],
-            Options = BuildOptions(),
+            Options = new Dictionary<string, object?>(BuildOptions()),
             OutputDir = OutputDir.Trim(),
         };
 
