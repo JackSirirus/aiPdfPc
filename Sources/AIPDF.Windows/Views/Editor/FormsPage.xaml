@@ -1,0 +1,134 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<UserControl x:Class="AIPDF.Windows.Views.Editor.FormsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:AIPDF.Windows.Controls"
+             xmlns:editor="clr-namespace:AIPDF.Windows.Views.Editor">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="760" HorizontalAlignment="Left" Margin="28,24,28,32">
+            <TextBlock Style="{StaticResource PageTitle}" Text="{Binding Tool.Name}" />
+            <TextBlock Style="{StaticResource PageSubtitle}" Margin="0,6,0,0" Text="{Binding Tool.Subtitle}" />
+            <TextBlock Margin="0,10,0,0" Style="{StaticResource FieldHint}" Text="{Binding Tool.Note}" />
+
+            <!-- 预览框选：目录 note「新建模式在框选位置创建字段」；只消费 T13 控件 -->
+            <TextBlock Margin="0,22,0,0" Style="{StaticResource SectionTitle}" Text="预览框选（创建字段时定位）" />
+            <controls:PdfPreviewControl x:Name="Preview"
+                                        MinHeight="400" Height="440"
+                                        Margin="0,12,0,0"
+                                        IsRegionSelectionEnabled="True" />
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <Button Style="{StaticResource SecondaryButton}"
+                        Content="加载预览"
+                        Click="OnLoadPreviewClick" />
+                <Button Margin="8,0,0,0"
+                        Style="{StaticResource SecondaryButton}"
+                        Content="清除框选"
+                        Click="OnClearSelectionClick" />
+                <TextBlock Margin="12,0,0,0"
+                           VerticalAlignment="Center"
+                           Style="{StaticResource FieldHint}"
+                           Text="{Binding SelectionSummary}" />
+            </StackPanel>
+
+            <TextBlock Margin="0,20,0,0" Style="{StaticResource SectionTitle}" Text="参数" />
+            <Grid Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="96" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="操作" />
+                <ComboBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,0" Width="240" HorizontalAlignment="Left"
+                          Style="{StaticResource FieldComboBox}"
+                          ItemsSource="{Binding FormModes}"
+                          SelectedItem="{Binding FormMode}" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,10,0,0" Style="{StaticResource FieldLabel}" Text="字段名称" />
+                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,10,0,0"
+                         Style="{StaticResource FieldTextBox}"
+                         Text="{Binding FieldName, UpdateSourceTrigger=PropertyChanged}" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,10,0,0" Style="{StaticResource FieldLabel}" Text="字段值" />
+                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,10,0,0"
+                         Style="{StaticResource FieldTextBox}"
+                         Text="{Binding FieldValue, UpdateSourceTrigger=PropertyChanged}" />
+            </Grid>
+
+            <TextBlock Margin="0,8,0,0" Style="{StaticResource FieldHint}"
+                       Text="填写模式：字段名称填文件中已有的字段名，字段值填要写入的值。"
+                       ToolTip="fill" />
+
+            <!-- 创建模式专属：字段类型 / 选项 / 位置与大小 -->
+            <StackPanel>
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FormMode}" Value="create">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="96" />
+                        <ColumnDefinition Width="240" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Text="字段类型" />
+                    <ComboBox Grid.Column="1"
+                              Style="{StaticResource FieldComboBox}"
+                              ItemsSource="{Binding FieldTypes}"
+                              SelectedItem="{Binding FieldType}" />
+                </Grid>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="96" />
+                        <ColumnDefinition Width="240" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Text="选项" />
+                    <TextBox Grid.Column="1"
+                             Style="{StaticResource FieldTextBox}"
+                             AcceptsReturn="True" Height="72" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             VerticalContentAlignment="Top"
+                             VerticalAlignment="Top"
+                             Text="{Binding Choices, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+                <TextBlock Margin="0,8,0,0" Style="{StaticResource FieldHint}" Text="每行一个选项；list 需至少一个，radio 需至少两个。checkbox 的字段值填 true 或 false。" />
+
+                <TextBlock Margin="0,16,0,0" Style="{StaticResource SectionTitle}" Text="字段位置与大小（pt，从页面左上角起）" />
+                <UniformGrid Columns="4" Margin="0,12,0,0">
+                    <StackPanel Margin="0,0,12,0">
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="左边距 x" />
+                        <TextBox Margin="0,6,0,0" Style="{StaticResource FieldTextBox}" Text="{Binding X, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,12,0">
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="上边距 y" />
+                        <TextBox Margin="0,6,0,0" Style="{StaticResource FieldTextBox}" Text="{Binding Y, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,12,0">
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="宽度" />
+                        <TextBox Margin="0,6,0,0" Style="{StaticResource FieldTextBox}" Text="{Binding Width, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource FieldLabel}" Text="高度" />
+                        <TextBox Margin="0,6,0,0" Style="{StaticResource FieldTextBox}" Text="{Binding Height, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+                </UniformGrid>
+            </StackPanel>
+
+            <editor:EditorRunPanel Margin="0,22,0,0" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

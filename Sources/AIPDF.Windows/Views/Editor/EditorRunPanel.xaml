@@ -1,0 +1,61 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<UserControl x:Class="AIPDF.Windows.Views.Editor.EditorRunPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 编辑组共用的执行条：文件、输出文件夹、预检错误与开始按钮。
+         DataContext 由宿主工具页继承（EditorToolViewModel）。 -->
+    <StackPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="96" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0"
+                       Style="{StaticResource FieldLabel}"
+                       Text="PDF 文件" />
+            <TextBox Grid.Column="1"
+                     Style="{StaticResource FieldTextBox}"
+                     Text="{Binding InputFile, UpdateSourceTrigger=PropertyChanged}" />
+            <Button Grid.Column="2"
+                    Margin="8,0,0,0"
+                    Style="{StaticResource SecondaryButton}"
+                    Content="浏览…"
+                    Click="OnBrowseFileClick" />
+        </Grid>
+
+        <Grid Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="96" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0"
+                       Style="{StaticResource FieldLabel}"
+                       Text="输出文件夹" />
+            <TextBox Grid.Column="1"
+                     Style="{StaticResource FieldTextBox}"
+                     Text="{Binding OutputDir, UpdateSourceTrigger=PropertyChanged}" />
+            <Button Grid.Column="2"
+                    Margin="8,0,0,0"
+                    Style="{StaticResource SecondaryButton}"
+                    Content="浏览…"
+                    Click="OnBrowseOutputClick" />
+        </Grid>
+
+        <TextBlock Margin="0,10,0,0"
+                   Style="{StaticResource ErrorText}"
+                   Text="{Binding ErrorText}" />
+
+        <Button Margin="0,14,0,0"
+                HorizontalAlignment="Left"
+                Style="{StaticResource PrimaryButton}"
+                Content="开始处理"
+                Command="{Binding ExecuteCommand}" />
+        <TextBlock Margin="0,10,0,0"
+                   Style="{StaticResource FieldHint}"
+                   Text="引擎在输出文件夹下新建任务目录，原文件保持不变。" />
+    </StackPanel>
+</UserControl>

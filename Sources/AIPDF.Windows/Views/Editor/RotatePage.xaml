@@ -1,0 +1,40 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<UserControl x:Class="AIPDF.Windows.Views.Editor.RotatePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:editor="clr-namespace:AIPDF.Windows.Views.Editor">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="680" HorizontalAlignment="Left" Margin="28,24,28,32">
+            <TextBlock Style="{StaticResource PageTitle}" Text="{Binding Tool.Name}" />
+            <TextBlock Style="{StaticResource PageSubtitle}" Margin="0,6,0,0" Text="{Binding Tool.Subtitle}" />
+            <TextBlock Margin="0,10,0,0" Style="{StaticResource FieldHint}" Text="{Binding Tool.Note}" />
+
+            <TextBlock Margin="0,22,0,0" Style="{StaticResource SectionTitle}" Text="参数" />
+            <Grid Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="96" />
+                    <ColumnDefinition Width="240" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource FieldLabel}" Text="页面范围" />
+                <TextBox Grid.Row="0" Grid.Column="1"
+                         Style="{StaticResource FieldTextBox}"
+                         Text="{Binding Pages, UpdateSourceTrigger=PropertyChanged}" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,10,0,0" Style="{StaticResource FieldLabel}" Text="顺时针旋转" />
+                <ComboBox Grid.Row="1" Grid.Column="1" Margin="0,10,0,0"
+                          Style="{StaticResource FieldComboBox}"
+                          ItemsSource="{Binding Angles}"
+                          SelectedItem="{Binding Angle}" />
+            </Grid>
+            <TextBlock Margin="0,8,0,0" Style="{StaticResource FieldHint}" Text="页面范围留空为全部；例如 1-3,5。" />
+
+            <editor:EditorRunPanel Margin="0,22,0,0" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
