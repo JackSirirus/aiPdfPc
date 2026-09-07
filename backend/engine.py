@@ -128,7 +128,14 @@ def find_office():
 
 def vision_path():
     if sys.platform == "win32":
-        return None  # Windows helper 路径在接入系统 OCR 时补充。
+        # Windows：内置 Windows.Media.Ocr 的 C# helper（自包含，不依赖本机 .NET 运行时）。
+        # Release 优先，Debug 兜底；自包含构建产物位于 win-x64 子目录。
+        helper_dir = Path(__file__).resolve().parent.parent / "Sources" / "WindowsOcrHelper"
+        for config in ("Release", "Debug"):
+            exe = helper_dir / "bin" / config / "net8.0-windows10.0.19041.0" / "win-x64" / "WindowsOcrHelper.exe"
+            if exe.is_file():
+                return str(exe)
+        return None
     paths = [os.environ.get("AIPDF_VISION", ""), str(Path(__file__).resolve().parent / "VisionHelper"),
              str(Path(__file__).resolve().parent.parent / ".build/release/VisionHelper")]
     return next((p for p in paths if p and Path(p).is_file()), None)
