@@ -141,8 +141,8 @@
                               VerticalAlignment="Stretch"
                               Background="Transparent" />
 
-                <!-- 详情占位：未选中显示空态，选中显示工具信息（具体工具页属 Wave 5） -->
-                <Grid Grid.Column="2">
+                <!-- 详情区：注册表认领的工具显示工具页（ToolPageHost），否则显示占位视图 -->
+                <Grid x:Name="DetailPlaceholder" Grid.Column="2">
                     <!-- 空态 -->
                     <StackPanel HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
@@ -234,6 +234,11 @@
                                    Foreground="{StaticResource Brush.TextTertiary}" />
                     </StackPanel>
                 </Grid>
+
+                <!-- 工具页宿主：ToolPageRegistry 认领的工具在此显示（Wave 5 各组各加一行注册） -->
+                <ContentControl x:Name="ToolPageHost"
+                                Grid.Column="2"
+                                Visibility="Collapsed" />
             </Grid>
 
             <!-- 底部状态栏 -->

@@ -1,0 +1,202 @@
+<UserControl x:Class="AIPDF.Windows.Views.PageOrganizer.ToolPageShell"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AIPDF.Windows;component/Views/PageOrganizer/PageOrganizerResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- 统一骨架：头部 → 文件 → 参数（各工具页注入）→ 输出 → 执行/取消 → 进度 → 状态与结果 -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="28,24,28,20" MaxWidth="780" HorizontalAlignment="Left">
+
+            <!-- 头部：工具名 / 副标题 / 说明（catalog 权威） -->
+            <TextBlock Style="{StaticResource PageTitleText}" Text="{Binding Tool.Name}" />
+            <TextBlock Style="{StaticResource PageSubtitleText}"
+                       Text="{Binding Tool.Subtitle}"
+                       Margin="0,4,0,0" />
+            <TextBlock Style="{StaticResource PageNoteText}"
+                       Text="{Binding Tool.Note}"
+                       Margin="0,10,0,0" />
+
+            <!-- ① 文件输入：拖拽 + 浏览按钮 -->
+            <TextBlock Style="{StaticResource SectionTitleText}" Text="文件" />
+            <Border AllowDrop="True"
+                    Drop="OnDropZoneDrop"
+                    DragOver="OnDropZoneDragOver"
+                    DragLeave="OnDropZoneDragLeave">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource DropZoneBorder}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFileDragOver, RelativeSource={RelativeSource AncestorType=local:ToolPageShell}}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+                                <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel Margin="16,14">
+                    <TextBlock HorizontalAlignment="Center"
+                               FontSize="13"
+                               Foreground="{StaticResource Brush.TextSecondary}"
+                               Text="拖入文件到此处，或" />
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Content="浏览文件…"
+                            Margin="0,8,0,0"
+                            HorizontalAlignment="Center"
+                            Command="{Binding BrowseFilesCommand}" />
+                    <TextBlock HorizontalAlignment="Center"
+                               FontSize="11"
+                               Margin="0,8,0,0"
+                               Foreground="{StaticResource Brush.TextTertiary}"
+                               Text="可多选，按列表顺序处理。"
+                               Visibility="{Binding SupportsMultipleFiles, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock HorizontalAlignment="Center"
+                               FontSize="11"
+                               Margin="0,8,0,0"
+                               Foreground="{StaticResource Brush.TextTertiary}"
+                               Text="此工具一次处理一份文件。"
+                               Visibility="{Binding SupportsMultipleFiles, Converter={StaticResource InverseBoolToVisibility}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- 文件列表：顺序即传参顺序；多文件工具可上移/下移/移除 -->
+            <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                <ItemsControl ItemsSource="{Binding Files}"
+                              Visibility="{Binding HasFiles, Converter={StaticResource BoolToVisibility}}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource ListRowBorder}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Name}"
+                                               FontSize="13"
+                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Path=Path, Mode=OneWay}" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                                        <StackPanel Orientation="Horizontal"
+                                                    Visibility="{Binding DataContext.SupportsMultipleFiles, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource BoolToVisibility}}">
+                                            <Button Style="{StaticResource IconButton}"
+                                                    Content="↑"
+                                                    ToolTip="上移"
+                                                    Command="{Binding DataContext.MoveUpCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Style="{StaticResource IconButton}"
+                                                    Content="↓"
+                                                    ToolTip="下移"
+                                                    Command="{Binding DataContext.MoveDownCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                        <Button Style="{StaticResource IconButton}"
+                                                Content="✕"
+                                                ToolTip="移除"
+                                                Command="{Binding DataContext.RemoveFileCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                CommandParameter="{Binding}" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- ② 参数表单：由各工具页通过 OptionsContent 注入 -->
+            <TextBlock Style="{StaticResource SectionTitleText}" Text="参数" />
+            <ContentPresenter Margin="0,0,0,4"
+                              Content="{Binding OptionsContent, RelativeSource={RelativeSource AncestorType=local:ToolPageShell}}" />
+
+            <!-- ③ 输出目录（可改；引擎在其下新建任务子目录） -->
+            <TextBlock Style="{StaticResource SectionTitleText}" Text="输出" />
+            <TextBox Style="{StaticResource FormTextBox}"
+                     Text="{Binding OutputDir, UpdateSourceTrigger=PropertyChanged}"
+                     ToolTip="输出文件夹：引擎在其下新建任务子目录，不覆盖源文件" />
+            <TextBlock Style="{StaticResource HelpText}"
+                       Margin="0,6,0,0"
+                       Text="每次处理在输出文件夹下新建任务子目录（AIPDF-日期-编号），不会覆盖源文件。" />
+
+            <!-- ④ 执行 / 取消 -->
+            <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+                <Button Style="{StaticResource PrimaryButton}"
+                        Content="开始处理"
+                        Command="{Binding ExecuteCommand}" />
+                <Button Style="{StaticResource SecondaryButton}"
+                        Content="取消"
+                        Margin="10,0,0,0"
+                        Command="{Binding CancelCommand}" />
+            </StackPanel>
+
+            <!-- ⑤ 进度 -->
+            <ProgressBar Height="4"
+                         Maximum="1"
+                         Value="{Binding ProgressFraction, Mode=OneWay}"
+                         Margin="0,16,0,0"
+                         Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+            <TextBlock Text="{Binding ProgressMessage, Mode=OneWay}"
+                       FontSize="11"
+                       Foreground="{StaticResource Brush.TextTertiary}"
+                       Margin="0,6,0,0"
+                       Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+
+            <!-- 状态与结果列表 -->
+            <TextBlock Text="{Binding StatusMessage, Mode=OneWay}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                        <Setter Property="TextWrapping" Value="Wrap" />
+                        <Setter Property="Margin" Value="0,12,0,0" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding StatusMessage}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <TextBlock Text="结果">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Margin" Value="0,20,0,8" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Results.Count}" Value="0">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding Results}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource ListRowBorder}">
+                                <TextBlock Text="{Binding Name}"
+                                           FontSize="13"
+                                           Foreground="{StaticResource Brush.TextPrimary}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding Path=Path, Mode=OneWay}" />
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

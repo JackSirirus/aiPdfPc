@@ -1,0 +1,26 @@
+<UserControl x:Class="AIPDF.Windows.Views.PageOrganizer.ExtractPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AIPDF.Windows;component/Views/PageOrganizer/PageOrganizerResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- 提取页面：pages 留空为全部 -->
+    <shell:ToolPageShell>
+        <shell:ToolPageShell.OptionsContent>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabelText}" Text="页面范围" />
+                <TextBox Style="{StaticResource FormTextBox}"
+                         Margin="0,6,0,0"
+                         Text="{Binding PagesText, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource HelpText}" Margin="0,6,0,0"
+                           Text="要保留的页面；留空为全部，例如 1-3,5。" />
+            </StackPanel>
+        </shell:ToolPageShell.OptionsContent>
+    </shell:ToolPageShell>
+</UserControl>

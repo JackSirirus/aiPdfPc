@@ -32,6 +32,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isRunning;
 
+    /// <summary>引擎桥：工具页 VM 与主窗口共用同一执行通道；无桥时工具页执行入口提示引擎未就绪。</summary>
+    public EngineBridge? Bridge => _bridge;
+
     /// <summary>加载真实工具目录（backend/catalog.json）并接入真实引擎桥。</summary>
     public MainViewModel() : this(ToolCatalog.Load(), new EngineBridge())
     {

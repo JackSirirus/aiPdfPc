@@ -1,0 +1,33 @@
+<UserControl x:Class="AIPDF.Windows.Views.PageOrganizer.ScanPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AIPDF.Windows;component/Views/PageOrganizer/PageOrganizerResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- 扫描为 PDF：扫描效果 + 自动识别纸张边缘；输入是图片，列表顺序即页序 -->
+    <shell:ToolPageShell>
+        <shell:ToolPageShell.OptionsContent>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabelText}" Text="扫描效果" />
+                <ComboBox Style="{StaticResource FormComboBox}"
+                          Margin="0,6,0,0"
+                          Width="220"
+                          HorizontalAlignment="Left"
+                          ItemsSource="{Binding ScanModeChoices}"
+                          SelectedItem="{Binding ScanMode, Mode=TwoWay}" />
+                <CheckBox Margin="0,12,0,0"
+                          FontSize="13"
+                          Content="自动识别纸张边缘"
+                          IsChecked="{Binding Perspective, Mode=TwoWay}" />
+                <TextBlock Style="{StaticResource HelpText}" Margin="0,8,0,0"
+                           Text="document=增强为扫描文档，gray=灰度，original=保持原图。多张图片按列表顺序装订。" />
+            </StackPanel>
+        </shell:ToolPageShell.OptionsContent>
+    </shell:ToolPageShell>
+</UserControl>

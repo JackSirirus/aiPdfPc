@@ -1,0 +1,23 @@
+<UserControl x:Class="AIPDF.Windows.Views.PageOrganizer.MergePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AIPDF.Windows;component/Views/PageOrganizer/PageOrganizerResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- 合并 PDF：无参数；文件列表顺序即合并顺序 -->
+    <shell:ToolPageShell>
+        <shell:ToolPageShell.OptionsContent>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabelText}" Text="合并顺序" />
+                <TextBlock Style="{StaticResource HelpText}" Margin="0,6,0,0"
+                           Text="按文件列表顺序合并，可用箭头调整顺序。" />
+            </StackPanel>
+        </shell:ToolPageShell.OptionsContent>
+    </shell:ToolPageShell>
+</UserControl>

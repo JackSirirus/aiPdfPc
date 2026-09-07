@@ -1,0 +1,26 @@
+<UserControl x:Class="AIPDF.Windows.Views.PageOrganizer.RemovePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:shell="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/AIPDF.Windows;component/Views/PageOrganizer/PageOrganizerResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!-- 删除页面：pages 必填，原文件保持不变 -->
+    <shell:ToolPageShell>
+        <shell:ToolPageShell.OptionsContent>
+            <StackPanel>
+                <TextBlock Style="{StaticResource FieldLabelText}" Text="页面范围（必填）" />
+                <TextBox Style="{StaticResource FormTextBox}"
+                         Margin="0,6,0,0"
+                         Text="{Binding PagesText, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Style="{StaticResource HelpText}" Margin="0,6,0,0"
+                           Text="要删除的页码，例如 2,5-7。原文件保持不变。" />
+            </StackPanel>
+        </shell:ToolPageShell.OptionsContent>
+    </shell:ToolPageShell>
+</UserControl>
