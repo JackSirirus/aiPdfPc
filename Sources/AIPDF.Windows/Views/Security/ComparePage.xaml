@@ -1,0 +1,129 @@
+<UserControl x:Class="AIPDF.Windows.Views.Security.ComparePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="SecurityPageStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="680" HorizontalAlignment="Left" Margin="36,28,36,28">
+            <!-- 页头 -->
+            <TextBlock Text="{Binding Tool.Name}" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="{Binding Tool.Subtitle}" Style="{StaticResource PageSubtitle}" Margin="0,4,0,0" />
+            <TextBlock Text="{Binding Tool.Note}" Style="{StaticResource FieldHint}" Margin="0,10,0,0" />
+
+            <!-- 错误横幅 -->
+            <Border Style="{StaticResource ErrorBannerBorder}"
+                    Margin="0,18,0,0"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+            </Border>
+
+            <!-- 双文件输入：旧版 / 新版两个拖拽槽，顺序即引擎传参顺序 -->
+            <TextBlock Text="文件（旧版在前，新版在后）" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Style="{StaticResource DropZoneBorder}"
+                        AllowDrop="True"
+                        Drop="FirstZone_Drop"
+                        DragOver="Zone_DragOver">
+                    <StackPanel>
+                        <TextBlock Text="旧版 PDF" Style="{StaticResource SlotTitle}" />
+                        <TextBlock Margin="0,6,0,0" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding FirstFile}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="{Binding FirstFile}" />
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FirstFile}" Value="">
+                                            <Setter Property="Text" Value="点击下方按钮选择，或拖入旧版 PDF" />
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Content="选择文件…" Style="{StaticResource SecondaryButton}" Margin="0,10,0,0" HorizontalAlignment="Left" Click="PickFirst_Click" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2"
+                        Style="{StaticResource DropZoneBorder}"
+                        AllowDrop="True"
+                        Drop="SecondZone_Drop"
+                        DragOver="Zone_DragOver">
+                    <StackPanel>
+                        <TextBlock Text="新版 PDF" Style="{StaticResource SlotTitle}" />
+                        <TextBlock Margin="0,6,0,0" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding SecondFile}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="{Binding SecondFile}" />
+                                    <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SecondFile}" Value="">
+                                            <Setter Property="Text" Value="点击下方按钮选择，或拖入新版 PDF" />
+                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button Content="选择文件…" Style="{StaticResource SecondaryButton}" Margin="0,10,0,0" HorizontalAlignment="Left" Click="PickSecond_Click" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="清空" Style="{StaticResource SecondaryButton}" Command="{Binding ClearFilesCommand}" />
+            </StackPanel>
+
+            <!-- 输出 -->
+            <TextBlock Text="输出文件夹" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Style="{StaticResource FieldTextBox}" Text="{Binding OutputDir, Mode=OneWay}" IsReadOnly="True" />
+                <Button Grid.Column="1" Content="选择…" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="ChooseOutput_Click" />
+            </Grid>
+            <TextBlock Text="每次处理都会在输出文件夹里新建任务子目录，不覆盖源文件。导出逐页视觉对比 PDF 和文字差异 HTML。"
+                       Style="{StaticResource FieldHint}"
+                       Margin="0,6,0,0" />
+
+            <!-- 执行 -->
+            <StackPanel Orientation="Horizontal" Margin="0,26,0,0">
+                <Button Content="开始处理" Style="{StaticResource PrimaryButton}" Command="{Binding ExecuteCommand}" />
+                <Button Content="取消" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Command="{Binding CancelCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource FieldHint}" Margin="0,10,0,0" />
+            <ProgressBar Value="{Binding ProgressFraction, Mode=OneWay}"
+                         Maximum="1"
+                         Height="4"
+                         Margin="0,10,0,0" />
+            <TextBlock Text="{Binding ProgressMessage}" Style="{StaticResource FieldHint}" Margin="0,4,0,0" />
+
+            <!-- 结果 -->
+            <ItemsControl ItemsSource="{Binding Results}" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Margin="0,2"
+                                   Text="{Binding Name, StringFormat=已生成：{0}}"
+                                   FontSize="12"
+                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   ToolTip="{Binding Path}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

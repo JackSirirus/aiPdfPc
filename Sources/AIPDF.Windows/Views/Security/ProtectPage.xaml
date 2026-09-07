@@ -1,0 +1,126 @@
+<UserControl x:Class="AIPDF.Windows.Views.Security.ProtectPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Loaded="Page_Loaded"
+             Unloaded="Page_Unloaded">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="SecurityPageStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="680" HorizontalAlignment="Left" Margin="36,28,36,28">
+            <!-- 页头 -->
+            <TextBlock Text="{Binding Tool.Name}" Style="{StaticResource PageTitle}" />
+            <TextBlock Text="{Binding Tool.Subtitle}" Style="{StaticResource PageSubtitle}" Margin="0,4,0,0" />
+            <TextBlock Text="{Binding Tool.Note}" Style="{StaticResource FieldHint}" Margin="0,10,0,0" />
+
+            <!-- 错误横幅 -->
+            <Border Style="{StaticResource ErrorBannerBorder}"
+                    Margin="0,18,0,0"
+                    Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Text="{Binding ErrorText}" Style="{StaticResource ErrorText}" />
+            </Border>
+
+            <!-- 文件（单文件：拖入即替换） -->
+            <TextBlock Text="文件" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <Border Style="{StaticResource DropZoneBorder}"
+                    AllowDrop="True"
+                    Drop="DropZone_Drop"
+                    DragOver="DropZone_DragOver">
+                <StackPanel>
+                    <TextBlock Text="拖入一份 PDF 文件，或点击下方按钮选择。" Style="{StaticResource FieldHint}" />
+                    <ItemsControl ItemsSource="{Binding Files}" Margin="0,8,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding}"
+                                               VerticalAlignment="Center" />
+                                    <Button Grid.Column="1"
+                                            Content="✕"
+                                            Style="{StaticResource GhostButton}"
+                                            Command="{Binding DataContext.RemoveFileCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="移除" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <Button Content="添加文件…" Style="{StaticResource SecondaryButton}" Click="AddFiles_Click" />
+                <Button Content="清空" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Command="{Binding ClearFilesCommand}" />
+            </StackPanel>
+
+            <!-- 新密码：PasswordBox 不暴露明文，VM 经 Func 委托按需取值 -->
+            <TextBlock Text="新密码" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <PasswordBox x:Name="SecretBox"
+                         Width="280"
+                         HorizontalAlignment="Left"
+                         Style="{StaticResource FieldPasswordBox}" />
+            <TextBlock Text="使用 AES-256 加密。密码只经安全管道传给本机引擎；不保存、不记录，也不会出现在命令行或日志中。"
+                       Style="{StaticResource FieldHint}"
+                       Margin="0,6,0,0" />
+
+            <!-- 权限 -->
+            <TextBlock Text="权限" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <CheckBox Content="允许打印" IsChecked="{Binding AllowPrint, Mode=TwoWay}" />
+            <CheckBox Content="允许复制" IsChecked="{Binding AllowCopy, Mode=TwoWay}" Margin="0,6,0,0" />
+            <TextBlock Text="部分阅读器可能忽略打印、复制权限。"
+                       Style="{StaticResource FieldHint}"
+                       Margin="0,6,0,0" />
+
+            <!-- 输出 -->
+            <TextBlock Text="输出文件夹" Style="{StaticResource SectionTitle}" Margin="0,24,0,0" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Style="{StaticResource FieldTextBox}" Text="{Binding OutputDir, Mode=OneWay}" IsReadOnly="True" />
+                <Button Grid.Column="1" Content="选择…" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Click="ChooseOutput_Click" />
+            </Grid>
+            <TextBlock Text="每次处理都会在输出文件夹里新建任务子目录，不覆盖源文件。"
+                       Style="{StaticResource FieldHint}"
+                       Margin="0,6,0,0" />
+
+            <!-- 执行 -->
+            <StackPanel Orientation="Horizontal" Margin="0,26,0,0">
+                <Button Content="开始处理" Style="{StaticResource PrimaryButton}" Command="{Binding ExecuteCommand}" />
+                <Button Content="取消" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Command="{Binding CancelCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding StatusMessage}" Style="{StaticResource FieldHint}" Margin="0,10,0,0" />
+            <ProgressBar Value="{Binding ProgressFraction, Mode=OneWay}"
+                         Maximum="1"
+                         Height="4"
+                         Margin="0,10,0,0" />
+            <TextBlock Text="{Binding ProgressMessage}" Style="{StaticResource FieldHint}" Margin="0,4,0,0" />
+
+            <!-- 结果 -->
+            <ItemsControl ItemsSource="{Binding Results}" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Margin="0,2"
+                                   Text="{Binding Name, StringFormat=已生成：{0}}"
+                                   FontSize="12"
+                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   ToolTip="{Binding Path}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

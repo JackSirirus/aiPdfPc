@@ -48,6 +48,55 @@ internal static class TestPdfFactory
         return Encoding.ASCII.GetBytes(builder.ToString());
     }
 
+    /// <summary>
+    /// 带文字的合成 PDF：每页除色块外用标准 14 字体 Helvetica 写一行 ASCII 文本，
+    /// 供 pypdf extract_text 校验（如加密/解锁往返后文本仍可读）。
+    /// </summary>
+    public static byte[] CreateWithText(params (double WidthPt, double HeightPt, string Text)[] pages)
+    {
+        // 对象布局：1 = Catalog，2 = Pages，页 i 的 Page 对象 = 3 + 2i，内容流 = 4 + 2i，字体对象 = 3 + 2×页数
+        var fontObject = 3 + pages.Length * 2;
+        var objects = new List<string>
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            $"<< /Type /Pages /Kids [{string.Join(" ", Enumerable.Range(0, pages.Length).Select(i => $"{3 + i * 2} 0 R"))}] /Count {pages.Length} >>",
+        };
+
+        for (var i = 0; i < pages.Length; i++)
+        {
+            var (widthPt, heightPt, text) = pages[i];
+            var contentIndex = 4 + i * 2;
+            objects.Add(
+                $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {Fmt(widthPt)} {Fmt(heightPt)}] /Contents {contentIndex} 0 R /Resources << /Font << /F1 {fontObject} 0 R >> >> >>");
+            var content = $"BT /F1 14 Tf 72 720 Td ({EscapePdfText(text)}) Tj ET";
+            objects.Add($"<< /Length {content.Length} >>\nstream\n{content}\nendstream");
+        }
+
+        objects.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+
+        var builder = new StringBuilder("%PDF-1.4\n");
+        var offsets = new int[objects.Count];
+        for (var i = 0; i < objects.Count; i++)
+        {
+            offsets[i] = ByteLength(builder);
+            builder.Append($"{i + 1} 0 obj\n{objects[i]}\nendobj\n");
+        }
+
+        var xrefOffset = ByteLength(builder);
+        builder.Append($"xref\n0 {objects.Count + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+        {
+            builder.Append($"{offset:D10} 00000 n \n");
+        }
+
+        builder.Append($"trailer\n<< /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(builder.ToString());
+    }
+
+    /// <summary>PDF 字符串字面量转义（反斜杠与括号）；文本请保持 ASCII（/Length 按 ASCII 字节计）。</summary>
+    private static string EscapePdfText(string text)
+        => text.Replace("\\", "\\\\").Replace("(", "\\(").Replace(")", "\\)");
+
     private static string Fmt(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
 
     private static int ByteLength(StringBuilder builder) => Encoding.ASCII.GetByteCount(builder.ToString());
