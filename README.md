@@ -12,6 +12,16 @@
 
 安装版的运行环境保存在用户数据目录，安装成功后可以删除下载的源码；仍需保留基础 Python。当前是源码构建安装，不是免依赖的预编译 DMG。
 
+## Windows 用户
+
+Windows 版本通过 WPF 界面提供相同工具集。需要 Python 3.12+、.NET 8 Desktop Runtime 和（可选）LibreOffice。在 PowerShell 中运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+```
+
+构建完成后 `dist/aipdf-windows/` 即为可运行目录。详细步骤、已知降级和故障排查见 **[Windows 构建与安装](docs/构建与安装-Windows.md)**。
+
 ## 使用
 
 1. 选择工具，将文件拖入窗口或点击“添加文件”。

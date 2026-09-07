@@ -24,6 +24,20 @@
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | XlsxWriter | 3.2.9 | BSD-2-Clause |
 
+### Windows 平台新增依赖
+
+Windows 版本额外使用以下组件，许可证独立于上述 Python 依赖：
+
+| 组件 | 版本 | 许可证 | 说明 |
+| --- | --- | --- | --- |
+| Playwright | 1.62.0 | Apache-2.0 | Python 包，仅 Windows 安装（`sys_platform == "win32"`）；用于 URL 转 PDF 的 Chromium 渲染 |
+| CommunityToolkit.Mvvm | 8.3.2 | MIT | NuGet 包，WPF 界面 MVVM 框架 |
+| PDFtoImage | 5.4.0 | MIT | NuGet 包，PDF 页面渲染为图像（预览组件） |
+| SkiaSharp | 4.150.1 | MIT | NuGet 包，PDFtoImage 的图形后端 |
+| bblanchon.PDFium | 152.0.7961 | Apache-2.0 | NuGet 包，PDFtoImage 的 PDF 渲染引擎 |
+
+NuGet 包的许可原文随各发行包提供；打包发行时应在 `licenses/third-party/` 中保留对应声明。
+
 原文位于 [licenses/third-party](licenses/third-party/)，版本、来源 URL、原始路径及 SHA-256 位于 [manifest.json](licenses/third-party/manifest.json)。文件直接复制自已安装发行包，未删除其作者姓名、版权说明或上游联系方式。这些公开许可中的联系方式不是本项目维护者的私人数据。
 
 生成与核对命令：

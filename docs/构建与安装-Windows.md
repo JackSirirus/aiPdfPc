@@ -1,0 +1,151 @@
+# Windows 构建与安装
+
+这是**源码构建安装**：脚本负责安装 Python 依赖、编译 WPF 界面与 OCR 助手、组装发行目录；不是免环境的预编译安装包。首次需要 Python 和 .NET SDK。
+
+## 快速开始
+
+1. 从 GitHub 仓库下载 ZIP 并解压到本地目录（路径不含中文和空格为宜）。
+2. 在 PowerShell 中进入解压目录，运行构建脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+```
+
+3. 脚本完成后，`dist\aipdf-windows\` 即为可运行的发行目录。
+
+## 前置条件
+
+| 组件 | 要求 | 安装方法 |
+|------|------|----------|
+| Windows | Windows 10 1903+ 或 Windows 11（需要 Windows.Media.Ocr API） | 系统自带 |
+| Python | 3.12 或更高版本 | [Python 官网](https://www.python.org/downloads/)下载安装；安装时勾选「Add Python to PATH」 |
+| .NET SDK | 8.0 或更高版本（用于编译 WPF 界面和 OCR 助手） | [.NET 官网](https://dotnet.microsoft.com/download/dotnet/8.0)下载 Desktop Runtime 或 SDK |
+| LibreOffice（可选） | Word/PPT/Excel 与 PDF/A 转换需要 | [LibreOffice 官网](https://www.libreoffice.org/download/)安装到默认路径；没有它也能使用其他工具 |
+| 网络与磁盘 | 首次构建需联网下载 Python 依赖和 Playwright Chromium | 预留 2 GB 以上磁盘空间 |
+
+## 构建步骤
+
+构建脚本 `scripts/build.ps1` 自动完成以下阶段：
+
+1. **前置检查**：验证 Python ≥ 3.12、.NET SDK 8 已安装并可执行。
+2. **Python 环境**：创建项目 `.venv`，按 `requirements.lock.txt` 安装锁定依赖；额外安装 Playwright（仅 Windows）并下载 Chromium 浏览器。
+3. **工具目录**：运行 `backend/catalog.py` 生成 `backend/catalog.json`。
+4. **OCR 助手**：编译并发布 `Sources/WindowsOcrHelper`（自包含单文件，不依赖 .NET 运行时）。
+5. **WPF 界面**：发布 `Sources/AIPDF.Windows`（框架依赖，需要目标机器安装 .NET Desktop Runtime）。
+6. **组装与校验**：按预设布局组装 `dist/aipdf-windows/`，运行引擎健康检查和单元测试子集。
+
+### 构建参数
+
+```powershell
+# Release 构建（默认）
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+
+# Debug 构建
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Configuration Debug
+
+# 跳过测试
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -SkipTests
+```
+
+### 构建产物布局
+
+```
+dist/aipdf-windows/
+├── app/                  WPF 应用程序（AIPDF.Windows.exe + 依赖）
+├── engine/backend/       Python 引擎（engine.py + catalog.py + catalog.json）
+├── helper/               OCR 助手（WindowsOcrHelper.exe，自包含）
+└── scripts/              安装脚本（Install.ps1，如已提供）
+```
+
+## 安装步骤
+
+构建完成后，`dist/aipdf-windows/` 目录可直接运行。如需安装到固定位置：
+
+1. 将 `dist/aipdf-windows/` 整个目录复制到目标位置（如 `C:\Program Files\AIPDF`）。
+2. 运行 `AIPDF.Windows.exe` 启动应用。
+
+> 当前阶段为源码构建安装，尚未提供 `Install.ps1` 自动安装脚本。
+
+## SmartScreen 未签名警告
+
+首次运行时，Windows 可能弹出「Windows 已保护你的电脑」蓝色对话框（SmartScreen 筛选器）。这是因为应用尚未经过代码签名。处理方式：
+
+1. 点击「更多信息」。
+2. 点击「仍要运行」。
+
+这只是未签名警告，不影响功能。后续正式发布时会进行代码签名以消除此警告。
+
+## 已知降级
+
+以下功能在 Windows 上与 Mac 版本存在差异：
+
+### 扫描透视校正（scan 工具）
+
+Mac 版使用 Apple Vision 进行纸张边缘检测和透视校正。Windows 无等价 API，当前降级为**仅图像增强，不做透视校正**。扫描照片无法自动纠偏。
+
+### HEIC 输入（images_to_pdf、scan 工具）
+
+Windows 无原生 HEIC 解码支持。iPhone 直出的 HEIC/HEIF 格式图片无法直接使用，会提示用户预转换为 JPG/PNG 格式。
+
+### URL 转 PDF（html_to_pdf 工具）
+
+Mac 版使用 WebKit 无头渲染。Windows 版使用 Playwright + Chromium 替代，需要额外安装 Chromium（构建脚本自动完成）。渲染行为可能与 WebKit 有细微差异。
+
+### OCR 文字识别（ocr 工具）
+
+Mac 版使用 Apple Vision。Windows 版使用 Windows.Media.Ocr API，中文识别需要系统安装对应语言包（设置 → 时间和语言 → 语言 → 添加中文语言包）。
+
+## 故障排查
+
+### Python 相关
+
+**"python 不是内部或外部命令"**
+确保 Python 已安装且添加到 PATH。在 PowerShell 中运行 `python --version` 验证。
+
+**"pip 安装依赖失败"**
+检查网络连接。部分依赖需要从 PyPI 下载编译好的 wheel。如果网络受限，可尝试使用镜像源。
+
+### .NET 相关
+
+**"dotnet 不是内部或外部命令"**
+安装 .NET SDK 或 Desktop Runtime 后重启终端。确认 `dotnet --version` 输出 8.x。
+
+**"应用程序无法启动" 或 ".NET Desktop Runtime 未安装"**
+WPF 应用需要 .NET 8 Desktop Runtime。从 [.NET 官网](https://dotnet.microsoft.com/download/dotnet/8.0) 下载并安装。
+
+### OCR 相关
+
+**OCR 识别结果为空**
+确认已安装 Windows.Media.Ocr 语言包。在 PowerShell 中运行 `Get-WinUserLanguageList` 查看已安装语言。
+
+### Playwright/Chromium 相关
+
+**"网页加载失败"**
+确保 Chromium 已下载。构建脚本自动执行 `python -m playwright install chromium`。手动安装：
+
+```powershell
+.venv\Scripts\python.exe -m playwright install chromium
+```
+
+### LibreOffice 相关
+
+**Word/Excel/PPT 转换失败**
+确认 LibreOffice 已安装在默认路径（`C:\Program Files\LibreOffice\program\soffice.exe`）。也可通过环境变量 `AIPDF_OFFICE` 指定 `soffice.exe` 路径。
+
+## 运行测试
+
+```powershell
+# 运行引擎测试
+.venv\Scripts\python.exe tests\test_engine.py -v
+
+# 运行 Windows 特定测试
+.venv\Scripts\python.exe tests\test_cancel_windows.py -v
+.venv\Scripts\python.exe tests\test_paths_windows.py -v
+.venv\Scripts\python.exe tests\test_ocr_windows.py -v
+.venv\Scripts\python.exe tests\test_url2pdf_windows.py -v
+
+# 运行 WPF 单元测试
+dotnet test Sources\AIPDF.Windows
+```
+
+测试自行生成示例文件，不读取个人文件。

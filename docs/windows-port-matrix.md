@@ -1,6 +1,10 @@
-# AIPDF Windows 移植矩阵
+# AIPDF Windows 移植矩阵（终稿）
 
-本文件为 AIPDF 32 个工具向 Windows 平台移植的初始蓝图。上游权威来源为 `backend/catalog.py`，工具列表、分组和参数以该文件为准。状态枚举：`planned`（当前阶段）/ `working` / `degraded`。
+本文件为 AIPDF 32 个工具向 Windows 平台移植的终稿状态。上游权威来源为 `backend/catalog.py`，工具列表、分组和参数以该文件为准。
+
+状态枚举：`working`（功能正常）/ `degraded`（有已知降级）/ `planned`（尚未验证）。
+
+证据路径以 `.omo/evidence/` 下文件为准；引擎级验证见 `tests/test_engine.py` 全量运行结果。
 
 ---
 
@@ -8,65 +12,65 @@
 
 ### 整理页面
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| merge | 合并 PDF | 整理页面 | engine.py:merge | planned | PyMuPDF | 无 |
-| split | 拆分 PDF | 整理页面 | engine.py:split | planned | PyMuPDF | 无 |
-| remove | 删除页面 | 整理页面 | engine.py:remove | planned | PyMuPDF | 无 |
-| extract | 提取页面 | 整理页面 | engine.py:extract | planned | PyMuPDF | 无 |
-| organize | 排列页面 | 整理页面 | engine.py:organize | planned | PyMuPDF | 无 |
-| scan | 扫描为 PDF | 整理页面 | engine.py:scan | planned | vision | 纸张识别+透视校正锁定降级：Apple Vision 纸张边缘检测与透视校正无 Windows 等价 API，锁定为简化模式（仅增强，不做透视校正） |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| merge | 合并 PDF | working | 无 | `.omo/evidence/task-14-merge.txt` |
+| split | 拆分 PDF | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
+| remove | 删除页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
+| extract | 提取页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
+| organize | 排列页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
+| scan | 扫描为 PDF | degraded | 透视校正锁定降级：Apple Vision 纸张边缘检测无 Windows 等价 API，仅图像增强，不做透视校正 | `.omo/evidence/task-14-fullsuite.txt` |
 
 ### 优化文件
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| compress | 压缩 PDF | 优化文件 | engine.py:compress | planned | PyMuPDF | 无 |
-| repair | 修复 PDF | 优化文件 | engine.py:repair | planned | PyMuPDF | 无 |
-| ocr | OCR 文字识别 | 优化文件 | engine.py:ocr | planned | vision | Windows.Media.Ocr 替代 Apple Vision；中文识别需系统语言包 |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| compress | 压缩 PDF | working | 无 | `.omo/evidence/task-15-optimizer.txt` |
+| repair | 修复 PDF | working | 无 | `.omo/evidence/task-15-optimizer.txt` |
+| ocr | OCR 文字识别 | working | Windows.Media.Ocr 替代 Apple Vision；中文识别需系统语言包 | `.omo/evidence/task-15-optimizer.txt` |
 
 ### 格式转换
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| images_to_pdf | 图片转 PDF | 格式转换 | engine.py:images_to_pdf | planned | PyMuPDF | HEIC 输入明确报错：Windows 无原生 HEIC 解码，需用户预转换为 JPG/PNG |
-| pdf_to_images | PDF 转图片 | 格式转换 | engine.py:pdf_to_images | planned | PyMuPDF | 无 |
-| word_to_pdf | Word 转 PDF | 格式转换 | engine.py:word_to_pdf | planned | office | LibreOffice 替代方案 |
-| ppt_to_pdf | PowerPoint 转 PDF | 格式转换 | engine.py:ppt_to_pdf | planned | office | LibreOffice 替代方案 |
-| excel_to_pdf | Excel 转 PDF | 格式转换 | engine.py:excel_to_pdf | planned | office | LibreOffice 替代方案 |
-| pdf_to_word | PDF 转 Word | 格式转换 | engine.py:pdf_to_word | planned | PyMuPDF | 无 |
-| pdf_to_ppt | PDF 转 PowerPoint | 格式转换 | engine.py:pdf_to_ppt | planned | PyMuPDF | 无 |
-| pdf_to_excel | PDF 转 Excel | 格式转换 | engine.py:pdf_to_excel | planned | PyMuPDF | 无 |
-| html_to_pdf | HTML 转 PDF | 格式转换 | engine.py:html_to_pdf | working | PyMuPDF（本地 HTML）/ Playwright（网址） | URL→PDF 方案：Playwright 替代 Apple WebKit 渲染，需额外安装 chromium（`playwright install chromium`）；每任务全新无 Cookie context，超时 45 秒 |
-| pdfa | PDF 转 PDF/A | 格式转换 | engine.py:pdfa | planned | office | LibreOffice 替代方案 |
-| markdown | PDF 转 Markdown | 格式转换 | engine.py:markdown | planned | PyMuPDF | 无 |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| images_to_pdf | 图片转 PDF | degraded | HEIC 输入明确报错：Windows 无原生 HEIC 解码，需用户预转换为 JPG/PNG | `tests/test_engine.py` |
+| pdf_to_images | PDF 转图片 | working | 无 | `tests/test_engine.py` |
+| word_to_pdf | Word 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| ppt_to_pdf | PowerPoint 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| excel_to_pdf | Excel 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| pdf_to_word | PDF 转 Word | working | 无 | `tests/test_engine.py` |
+| pdf_to_ppt | PDF 转 PowerPoint | working | 无 | `tests/test_engine.py` |
+| pdf_to_excel | PDF 转 Excel | working | 无 | `tests/test_engine.py` |
+| html_to_pdf | HTML 转 PDF | working | Playwright + Chromium 替代 WebKit；需额外安装 Chromium（构建脚本自动完成） | `.omo/evidence/task-16-converter-tests.txt` |
+| pdfa | PDF 转 PDF/A | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| markdown | PDF 转 Markdown | working | 无 | `tests/test_engine.py` |
 
 ### 编辑内容
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| rotate | 旋转 PDF | 编辑内容 | engine.py:rotate | planned | PyMuPDF | 无 |
-| numbers | 添加页码 | 编辑内容 | engine.py:numbers | planned | PyMuPDF | 无 |
-| watermark | 添加水印 | 编辑内容 | engine.py:watermark | planned | PyMuPDF | 无 |
-| crop | 裁剪 PDF | 编辑内容 | engine.py:crop | planned | PyMuPDF | 无 |
-| edit | 编辑 PDF | 编辑内容 | engine.py:edit | planned | PyMuPDF | 无 |
-| forms | PDF 表单 | 编辑内容 | engine.py:forms | planned | PyMuPDF | 无 |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| rotate | 旋转 PDF | working | 无 | `.omo/evidence/task-17-crop.txt` |
+| numbers | 添加页码 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
+| watermark | 添加水印 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
+| crop | 裁剪 PDF | working | 无 | `.omo/evidence/task-17-crop.txt` |
+| edit | 编辑 PDF | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
+| forms | PDF 表单 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
 
 ### 安全保护
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| unlock | PDF 解锁 | 安全保护 | engine.py:unlock | planned | PyMuPDF | 无 |
-| protect | PDF 加密 | 安全保护 | engine.py:protect | planned | PyMuPDF | 无 |
-| sign | PDF 签名 | 安全保护 | engine.py:sign | planned | PyMuPDF | 无 |
-| redact | 永久遮盖 | 安全保护 | engine.py:redact | planned | PyMuPDF | 无 |
-| compare | 比较 PDF | 安全保护 | engine.py:compare | planned | PyMuPDF | 无 |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| unlock | PDF 解锁 | working | 无 | `.omo/evidence/task-18-roundtrip.txt` |
+| protect | PDF 加密 | working | 无 | `.omo/evidence/task-18-security.txt` |
+| sign | PDF 签名 | working | 无 | `.omo/evidence/task-18-security.txt` |
+| redact | 永久遮盖 | working | 无 | `.omo/evidence/task-18-security.txt` |
+| compare | 比较 PDF | working | 无 | `.omo/evidence/task-18-fullsuite.txt` |
 
 ### 工作流程
 
-| 工具 ID | 工具名 | 所属组 | 引擎入口 | Windows 状态 | 依赖 | 降级说明 |
-|---------|--------|--------|----------|-------------|------|----------|
-| workflow | 工作流程 | 工作流程 | engine.py:workflow | planned | PyMuPDF | 无 |
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| workflow | 工作流程 | working | 无 | `.omo/evidence/task-19-batch.txt` |
 
 ---
 
@@ -75,8 +79,18 @@
 | 降级项 | 涉及工具 | 原始实现 | Windows 方案 | 影响 |
 |--------|---------|----------|-------------|------|
 | 扫描透视校正 | scan | Apple Vision 纸张边缘检测+透视变换 | 锁定降级：仅图像增强，不做透视校正 | 扫描照片无法自动纠偏 |
-| HEIC 输入 | images_to_pdf, scan | macOS 原生 HEIC 解码 | 明确报错：提示用户预转换格式 | iPhone 直出照片需先转 JPG/PNG |
+| HEIC 输入 | images_to_pdf | macOS 原生 HEIC 解码 | 明确报错：提示用户预转换格式 | iPhone 直出照片需先转 JPG/PNG |
 | URL→PDF | html_to_pdf | Apple WebKit 无头渲染 | Playwright + Chromium 替代 | 需额外下载 Chromium，渲染行为可能与 WebKit 有差异 |
+
+---
+
+## 统计
+
+- **working**: 29/32
+- **degraded**: 3/32（scan、images_to_pdf、html_to_pdf）
+- **planned**: 0/32
+
+全部 32 个工具已在 Windows 平台验证通过（working 或 degraded），无遗留 planned 状态。
 
 ---
 
@@ -85,7 +99,7 @@
 以下脚本读取 `backend/catalog.json` 与本文件表格行数，断言两者一致（32/32）。
 
 ```python
-"""一致性校验：catalog JSON 条目数 vs 矩阵 Markdown 表格行数。"""
+"""一致性校验：catalog JSON 条目数 vs 矩阵 Markdown 行数。"""
 import json, re, sys
 from pathlib import Path
 
