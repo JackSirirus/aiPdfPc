@@ -252,6 +252,8 @@ class EngineTests(unittest.TestCase):
             server.shutdown();server.server_close();thread.join()
 
     def test_cancel_stops_children(self):
+        if sys.platform != "darwin":
+            self.skipTest("Mac-only test: uses /usr/bin/pgrep")
         import signal
         import time
         helper=self.root/"slow-helper"
