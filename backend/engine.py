@@ -85,6 +85,13 @@ def run_process(args, timeout=180):
 
 
 def find_office():
+    if sys.platform == "win32":
+        # Windows：按优先级探测，找不到时返回 None，由上游提示用户安装。
+        paths = [os.environ.get("AIPDF_OFFICE", ""),
+                 r"C:\Program Files\LibreOffice\program\soffice.exe",
+                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]
+        paths += [shutil.which("soffice") or ""]
+        return next((p for p in paths if p and Path(p).is_file()), None)
     paths = [os.environ.get("AIPDF_OFFICE", ""),
              "/Applications/LibreOffice.app/Contents/MacOS/soffice",
              str(Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/native/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/MacOS/soffice")]
@@ -93,12 +100,16 @@ def find_office():
 
 
 def vision_path():
+    if sys.platform == "win32":
+        return None  # Windows helper 路径在接入系统 OCR 时补充。
     paths = [os.environ.get("AIPDF_VISION", ""), str(Path(__file__).resolve().parent / "VisionHelper"),
              str(Path(__file__).resolve().parent.parent / ".build/release/VisionHelper")]
     return next((p for p in paths if p and Path(p).is_file()), None)
 
 
 def web_path():
+    if sys.platform == "win32":
+        return None  # Windows helper 路径在接入网页渲染时补充。
     if vision_path():
         sibling=Path(vision_path()).with_name("WebHelper")
         if sibling.is_file(): return str(sibling)
@@ -223,6 +234,8 @@ def load_image(path, preserve_alpha=False):
         im = Image.open(path)
         return ImageOps.exif_transpose(im).convert("RGBA" if preserve_alpha else "RGB")
     except Exception:
+        if sys.platform == "win32" and Path(path).suffix.lower() in (".heic", ".heif"):
+            raise UserError("Windows 引擎暂不能读取 HEIC 图片。请先将 HEIC 转换为 PNG 或 JPEG 后重试。")
         helper = vision_path()
         if not helper:
             raise UserError("无法读取图片。请转换为 PNG 或 JPEG。")
