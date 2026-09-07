@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using AIPDF.Windows.ViewModels;
 
 namespace AIPDF.Windows.Views;
 
@@ -11,7 +12,10 @@ public partial class MainWindow : Window
 
         // Wave 5 工具组导航注册：每组一行（并行任务合并约定，T14 起建立）。
         PageOrganizer.PageOrganizerPages.Register();
+        Converter.ConverterPages.Register(); // T16 格式转换组：图片 / Office / 网址 / PDF-A / Markdown
         Optimizer.OptimizerToolPages.Register(); // T15：优化文件组（压缩 / 修复 / OCR）
+        Security.SecurityPages.Register(); // T18：安全保护组（解锁 / 加密 / 签名 / 遮盖 / 比较）
+        Editor.EditorPages.Register(); // T17：编辑内容组（旋转 / 页码 / 水印 / 裁剪框选 / 编辑 / 表单）
         Workflow.WorkflowPages.Register(); // T19：工作流程组（步骤串联 / 预设 / 批量 / 记录）
 
         DataContextChanged += (_, _) => HookViewModel();
@@ -20,7 +24,7 @@ public partial class MainWindow : Window
 
     private void HookViewModel()
     {
-        if (DataContext is ViewModels.MainViewModel viewModel)
+        if (DataContext is MainViewModel viewModel)
         {
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.PropertyChanged += OnViewModelPropertyChanged;
