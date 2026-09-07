@@ -28,6 +28,16 @@ import pymupdf as fitz
 from PIL import Image, ImageChops, ImageEnhance, ImageOps
 from catalog import BY_ID
 
+if sys.platform == "win32":
+    # The JSON protocol is UTF-8 end to end. Windows pipes and consoles default
+    # to the legacy ANSI code page (e.g. cp936), which would mangle CJK paths
+    # and messages, so pin stdio to UTF-8 on this platform only.
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
 
 class UserError(Exception):
     pass
@@ -51,10 +61,18 @@ def progress(message, fraction=0):
 
 
 def run_process(args, timeout=180):
-    child = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    env = None
+    if sys.platform == "win32":
+        # Helper processes must speak UTF-8 too, regardless of the console code page.
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    child = subprocess.Popen([str(a) for a in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=env)
     CHILDREN.append(child)
     try:
         out, err = child.communicate(timeout=timeout)
+        if sys.platform == "win32" and isinstance(out, bytes):
+            # Consume helper output as UTF-8; stray non-UTF-8 bytes degrade to
+            # U+FFFD instead of crashing JSON parsing.
+            out = out.decode("utf-8", errors="replace")
         if child.returncode:
             raise UserError("本地转换引擎未能完成处理。请检查源文件是否可正常打开。")
         return out

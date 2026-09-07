@@ -171,11 +171,11 @@ class EngineTests(unittest.TestCase):
 
     def test_markdown(self):
         path=self.run_tool("markdown")["outputs"][0]
-        text=Path(path).read_text()
+        text=Path(path).read_text(encoding="utf-8")
         self.assertIn("# AIPDF",text);self.assertIn("| Item | Value |",text);self.assertIn("本地",text)
 
     def test_html(self):
-        html=self.root/"test.html";html.write_text("<html><body><h1>Local HTML</h1><p>中文网页</p></body></html>")
+        html=self.root/"test.html";html.write_text("<html><body><h1>Local HTML</h1><p>中文网页</p></body></html>",encoding="utf-8")
         with self.pdf(self.run_tool("html_to_pdf",files=[html])) as d:
             self.assertIn("Local HTML",d[0].get_text());self.assertIn("中文网页",d[0].get_text())
 
