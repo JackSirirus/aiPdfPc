@@ -1,0 +1,98 @@
+<UserControl x:Class="AIPDF.Windows.Views.Optimizer.RunPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+      工具页共享的执行卡片：执行/取消 → 进度 → 状态（含引擎错误原文）→ 结果列表。
+      DataContext 继承宿主工具页的 VM（OptimizerViewModelBase 及其子类）。
+    -->
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ToolPageStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Border Style="{StaticResource ToolCard}">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal">
+                <Button Style="{StaticResource PrimaryButton}"
+                        Content="开始处理"
+                        Command="{Binding ExecuteCommand}" />
+                <Button Margin="10,0,0,0"
+                        Style="{StaticResource SecondaryButton}"
+                        Content="取消"
+                        Command="{Binding CancelCommand}">
+                    <Button.Visibility>
+                        <Binding Path="IsRunning" Mode="OneWay">
+                            <Binding.Converter>
+                                <BooleanToVisibilityConverter />
+                            </Binding.Converter>
+                        </Binding>
+                    </Button.Visibility>
+                </Button>
+            </StackPanel>
+
+            <!-- 进度消息 -->
+            <TextBlock Margin="0,12,0,0"
+                       FontSize="12"
+                       Foreground="{StaticResource Brush.TextSecondary}"
+                       Text="{Binding ProgressMessage}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ProgressMessage}" Value="">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <ProgressBar Height="4"
+                         Margin="0,8,0,0"
+                         Minimum="0"
+                         Maximum="1"
+                         IsIndeterminate="{Binding IsRunning}"
+                         Value="{Binding ProgressFraction, Mode=OneWay}" />
+
+            <!-- 状态 / 引擎错误原文 -->
+            <TextBlock Margin="0,10,0,0" Text="{Binding StatusMessage}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="LineHeight" Value="19" />
+                        <Setter Property="TextWrapping" Value="Wrap" />
+                        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasStatus}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsErrorStatus}" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- 结果列表 -->
+            <ItemsControl ItemsSource="{Binding Results}" Margin="0,10,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Margin="0,3,0,3"
+                                   Text="{Binding Path}"
+                                   FontSize="12"
+                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   TextTrimming="CharacterEllipsis"
+                                   ToolTip="{Binding Path}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </Border>
+</UserControl>

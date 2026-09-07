@@ -11,6 +11,7 @@ public partial class MainWindow : Window
 
         // Wave 5 工具组导航注册：每组一行（并行任务合并约定，T14 起建立）。
         PageOrganizer.PageOrganizerPages.Register();
+        Optimizer.OptimizerToolPages.Register(); // T15：优化文件组（压缩 / 修复 / OCR）
 
         DataContextChanged += (_, _) => HookViewModel();
         HookViewModel();
