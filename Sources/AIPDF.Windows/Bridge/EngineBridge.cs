@@ -406,13 +406,20 @@ public class EngineBridge
         }
     }
 
-    /// <summary>从输出目录向上查找源码树根（以 backend/engine.py 为锚）。</summary>
+    /// <summary>从输出目录向上查找源码树根（以 backend/engine.py 或 engine/backend/engine.py 为锚）。</summary>
     private static string? FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
+            // 开发布局：backend/engine.py
             if (File.Exists(Path.Combine(dir.FullName, "backend", "engine.py")))
+            {
+                return dir.FullName;
+            }
+
+            // 安装布局：engine/backend/engine.py
+            if (File.Exists(Path.Combine(dir.FullName, "engine", "backend", "engine.py")))
             {
                 return dir.FullName;
             }
@@ -424,8 +431,33 @@ public class EngineBridge
     }
 
     public static string ResolveDefaultEnginePath()
-        => FindRepoRoot() is { } root ? Path.Combine(root, "backend", "engine.py") : "backend\\engine.py";
+    {
+        var root = FindRepoRoot();
+        if (root is null) return "backend\\engine.py";
+
+        // 优先开发布局；回退安装布局
+        var devPath = Path.Combine(root, "backend", "engine.py");
+        if (File.Exists(devPath)) return devPath;
+
+        var installPath = Path.Combine(root, "engine", "backend", "engine.py");
+        if (File.Exists(installPath)) return installPath;
+
+        return devPath;
+    }
 
     public static string ResolveDefaultPythonPath()
-        => FindRepoRoot() is { } root ? Path.Combine(root, ".venv", "Scripts", "python.exe") : ".venv\\Scripts\\python.exe";
+    {
+        var root = FindRepoRoot();
+        if (root is null) return ".venv\\Scripts\\python.exe";
+
+        // 开发布局
+        var devPath = Path.Combine(root, ".venv", "Scripts", "python.exe");
+        if (File.Exists(devPath)) return devPath;
+
+        // 安装布局：引擎目录下的 .venv
+        var installPath = Path.Combine(root, "engine", ".venv", "Scripts", "python.exe");
+        if (File.Exists(installPath)) return installPath;
+
+        return devPath;
+    }
 }
