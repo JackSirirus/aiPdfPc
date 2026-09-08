@@ -45,6 +45,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Configuration Debug
 
 # 跳过测试
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -SkipTests
+
+# 构建并做 Authenticode 签名（证书参数见下文「代码签名与 SmartScreen」）
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Sign -CertificateSubject "你的证书主题名"
 ```
 
 ### 构建产物布局
@@ -66,14 +69,37 @@ dist/aipdf-windows/
 
 > 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（需以管理员权限运行 PowerShell）。
 
-## SmartScreen 未签名警告
+## 代码签名与 SmartScreen 警告
 
-首次运行时，Windows 可能弹出「Windows 已保护你的电脑」蓝色对话框（SmartScreen 筛选器）。这是因为应用尚未经过代码签名。处理方式：
+应用默认不签名。首次运行未签名应用时，Windows 可能弹出「Windows 已保护你的电脑」蓝色对话框（SmartScreen 筛选器）：点击「更多信息」→「仍要运行」即可，这不影响功能。
 
-1. 点击「更多信息」。
-2. 点击「仍要运行」。
+### 可选签名步骤（-Sign）
 
-这只是未签名警告，不影响功能。后续正式发布时会进行代码签名以消除此警告。
+构建脚本支持在构建完成后对发行目录做 Authenticode 签名，需要本机安装 Windows SDK 的签名工具（脚本会自动定位 `C:\Program Files (x86)\Windows Kits\10\bin` 下最新版本的 `signtool.exe`）：
+
+```powershell
+# 方式一：使用证书存储中的证书（按主题名查找）
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Sign -CertificateSubject "你的证书主题名"
+
+# 方式二：使用 PFX 证书文件
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Sign -CertificateFile "代码签名证书.pfx" -CertificatePassword "PFX 密码"
+```
+
+签名对象为 `app\AIPDF.Windows.exe`、`app\` 顶层的本地 DLL 与 `helper\WindowsOcrHelper.exe`。签名采用 SHA-256 摘要，并通过 DigiCert 时间戳服务联网加时间戳。不带 `-Sign` 时构建行为不变。
+
+### 证书要求
+
+- 自签名证书仅适合本机测试。**正式分发需要 CA 签发的代码签名证书**（OV/EV），否则 SmartScreen 依旧会警告，云信誉也不会累积到你的发布上。
+- 证书会过期；更换证书后需要重新签名再分发。
+
+### 实测的拦截行为（云信誉）
+
+Windows 对新二进制的放行依赖云端信誉。在本机观察到：
+
+- 旧构建的未签名二进制（已在系统上运行过）通常可正常运行；
+- **全新构建的未签名二进制可能被应用程序控制拦截**：以子进程方式启动时报 `WinError 4551`（策略阻止该文件）。
+
+处理方式：用 `-Sign` 对产物签名，或等待该二进制的微软云信誉建立后重试。
 
 ## 已知降级
 

@@ -5,6 +5,8 @@
 #   build.ps1: 前置检查 → venv + 锁定依赖 + Playwright Chromium → catalog JSON →
 #              OCR helper 发布 → WPF（自包含）发布 → dist 布局 → 校验 →
 #              嵌入式 Python 运行时与离线依赖
+# 可选：-Sign 在构建完成后用 signtool 对 dist 顶层的 PE 做 Authenticode 签名
+#       （需要证书参数，见 Invoke-DistSigning；正式分发应使用 CA 签发证书）。
 # 产物：dist\aipdf-windows\（自包含：内置 .NET 运行时与嵌入式 Python；
 #       不打包 LibreOffice 与 Chromium，后者由网址转 PDF 首次使用时联网下载）。
 # 注意：本文件包含中文，PowerShell 5.1 要求 UTF-8 带 BOM 编码保存。
@@ -12,7 +14,12 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    # 可选 Authenticode 签名：-Sign 时在构建完成后签名 dist 顶层 PE。
+    [switch]$Sign,
+    [string]$CertificateSubject = "",
+    [string]$CertificateFile = "",
+    [string]$CertificatePassword = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +45,86 @@ function Exit-Fail([string[]]$Lines) {
 function Assert-LastExit([string]$Name) {
     if ($LASTEXITCODE -ne 0) {
         Exit-Fail @("$Name 失败（退出码 $LASTEXITCODE），构建中止。")
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 可选 Authenticode 签名（-Sign）：定位 signtool，签名 dist 顶层的 PE 文件。
+# 只在构建完成、dist 产物全部就绪后调用（见脚本末尾）。
+# ---------------------------------------------------------------------------
+function Invoke-DistSigning {
+    # ① 定位 signtool：取 Windows Kits\10\bin 下版本号最大的 x64\signtool.exe。
+    #    signtool 不在 PATH 上，必须全路径调用。
+    $kitsBinRoot = "C:\Program Files (x86)\Windows Kits\10\bin"
+    $signtool = Get-ChildItem -LiteralPath $kitsBinRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^\d+(\.\d+){3}$' } |
+        ForEach-Object {
+            $candidate = Join-Path $_.FullName "x64\signtool.exe"
+            if (Test-Path -LiteralPath $candidate) {
+                [PSCustomObject]@{ Version = [version]$_.Name; Path = $candidate }
+            }
+        } |
+        Sort-Object Version -Descending |
+        Select-Object -First 1
+    if (-not $signtool) {
+        Exit-Fail @(
+            "-Sign 需要签名工具 signtool.exe，未在 $kitsBinRoot 下找到。",
+            "请安装 Windows SDK（包含签名工具组件）后重新运行：",
+            "https://developer.microsoft.com/windows/downloads/windows-sdk/"
+        )
+    }
+    Write-Host "signtool：$($signtool.Path)"
+
+    # ② 解析证书：-CertificateFile（PFX）优先，其次 -CertificateSubject（证书存储）。
+    #    两者都缺省时直接报错退出，不触碰任何 dist 文件。
+    if ($CertificateFile) {
+        if (-not (Test-Path -LiteralPath $CertificateFile)) {
+            Exit-Fail @("未找到证书文件：$CertificateFile")
+        }
+        if (-not $CertificatePassword) {
+            Exit-Fail @("使用 -CertificateFile（PFX）时必须同时提供 -CertificatePassword。")
+        }
+        $certArgs = @("/f", $CertificateFile, "/p", $CertificatePassword)
+    }
+    elseif ($CertificateSubject) {
+        $certArgs = @("/n", $CertificateSubject)
+    }
+    else {
+        Exit-Fail @(
+            "-Sign 需要指定签名证书，请补充以下参数之一：",
+            "  -CertificateSubject <证书主题名>                        按名称在当前用户/本机证书存储中查找；",
+            "  -CertificateFile <PFX 路径> -CertificatePassword <密码>  使用 PFX 证书文件。",
+            "正式发布分发需要 CA 签发的代码签名证书；自签名证书仅适合本机测试。"
+        )
+    }
+
+    # ③ 收集签名目标：app 顶层的 *.exe 与 *.dll（本地库）+ helper 主程序。
+    #    仅顶层，不递归（不含 engine\site-packages 的 .pyd，也不进 helper 内部）。
+    $targets = @()
+    $appDir = Join-Path $Dist "app"
+    foreach ($pattern in @("*.exe", "*.dll")) {
+        $targets += @(Get-ChildItem -LiteralPath $appDir -Filter $pattern -File -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName)
+    }
+    $helperTarget = Join-Path $Dist "helper\WindowsOcrHelper.exe"
+    if (Test-Path -LiteralPath $helperTarget) { $targets += $helperTarget }
+    if (-not $targets) {
+        Exit-Fail @("dist 中未找到可签名的可执行文件或本地库，签名中止。")
+    }
+
+    # ④ 逐个签名：SHA-256 摘要 + DigiCert 时间戳（发布期联网操作）。
+    foreach ($target in $targets) {
+        Write-Host "签名：$target"
+        & $signtool.Path sign @certArgs /fd sha256 /tr http://timestamp.digicert.com /td sha256 $target
+        if ($LASTEXITCODE -ne 0) {
+            Exit-Fail @("signtool 签名失败（退出码 $LASTEXITCODE）：$target")
+        }
+    }
+
+    # ⑤ 校验签名结果。
+    foreach ($target in $targets) {
+        $status = (Get-AuthenticodeSignature -FilePath $target).Status
+        Write-Host ("  {0} → {1}" -f (Split-Path -Path $target -Leaf), $status)
     }
 }
 
@@ -406,6 +493,14 @@ else {
     Write-Host "未检测到本机 LibreOffice：Office/PDF/A 为可选功能，可安装后自动探测，或用 AIPDF_OFFICE 指定 soffice 路径。" -ForegroundColor Yellow
 }
 $ProgressPreference = "Continue"
+
+# ---------------------------------------------------------------------------
+# 可选：Authenticode 签名（-Sign）。位于 [7/7] 之后，此时 dist 产物已就绪。
+# ---------------------------------------------------------------------------
+if ($Sign) {
+    Write-Stage "[+] Authenticode 签名 dist 顶层可执行文件（-Sign）"
+    Invoke-DistSigning
+}
 
 Write-Host ""
 Write-Host ("应用已生成：{0}" -f $Dist) -ForegroundColor Green
