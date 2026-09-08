@@ -14,13 +14,13 @@
 
 ## Windows 用户
 
-Windows 版本通过 WPF 界面提供相同工具集。需要 Python 3.12+、.NET 8 Desktop Runtime 和（可选）LibreOffice。在 PowerShell 中运行：
+Windows 版本通过 WPF 界面提供相同工具集。构建需要 Python 3.12+ 和 .NET SDK 8.0+；构建完成后发行版自包含全部运行时，不需要系统安装 Python 或 .NET Desktop Runtime。Office 转换需要另装 LibreOffice（可选）。URL 转 PDF 首次使用需下载 Chromium（构建脚本自动完成）。在 PowerShell 中运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-构建完成后 `dist/aipdf-windows/` 即为可运行目录。详细步骤、已知降级和故障排查见 **[Windows 构建与安装](docs/构建与安装-Windows.md)**。
+构建分 7 个阶段，完成后 `dist/aipdf-windows/` 即为可运行目录。详细步骤、已知降级和故障排查见 **[Windows 构建与安装](docs/构建与安装-Windows.md)**。
 
 ## 使用
 

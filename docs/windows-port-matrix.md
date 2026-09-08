@@ -4,7 +4,7 @@
 
 状态枚举：`working`（功能正常）/ `degraded`（有已知降级）/ `planned`（尚未验证）。
 
-证据路径以 `.omo/evidence/` 下文件为准；引擎级验证见 `tests/test_engine.py` 全量运行结果。
+证据基于 2026-09-08 收口验证（HEAD bfd4ffc，589.27 MB 自包含发行目录），引擎级验证见 `tests/test_engine.py` 全量运行结果。
 
 ---
 
@@ -14,20 +14,20 @@
 
 | 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
 |---------|--------|-------------|----------|------|
-| merge | 合并 PDF | working | 无 | `.omo/evidence/task-14-merge.txt` |
-| split | 拆分 PDF | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
-| remove | 删除页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
-| extract | 提取页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
-| organize | 排列页面 | working | 无 | `.omo/evidence/task-14-fullsuite.txt` |
-| scan | 扫描为 PDF | degraded | 透视校正锁定降级：Apple Vision 纸张边缘检测无 Windows 等价 API，仅图像增强，不做透视校正 | `.omo/evidence/task-14-fullsuite.txt` |
+| merge | 合并 PDF | working | 无 | 收口 QA merge E2E（2026-09-08） |
+| split | 拆分 PDF | working | 无 | 收口 QA 全量引擎测试（2026-09-08） |
+| remove | 删除页面 | working | 无 | 收口 QA 全量引擎测试（2026-09-08） |
+| extract | 提取页面 | working | 无 | 收口 QA 全量引擎测试（2026-09-08） |
+| organize | 排列页面 | working | 无 | 收口 QA 全量引擎测试（2026-09-08） |
+| scan | 扫描为 PDF | degraded | 透视校正锁定降级：Apple Vision 纸张边缘检测无 Windows 等价 API，仅图像增强，不做透视校正 | 收口 QA 全量引擎测试（2026-09-08） |
 
 ### 优化文件
 
 | 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
 |---------|--------|-------------|----------|------|
-| compress | 压缩 PDF | working | 无 | `.omo/evidence/task-15-optimizer.txt` |
-| repair | 修复 PDF | working | 无 | `.omo/evidence/task-15-optimizer.txt` |
-| ocr | OCR 文字识别 | working | Windows.Media.Ocr 替代 Apple Vision；中文识别需系统语言包 | `.omo/evidence/task-15-optimizer.txt` |
+| compress | 压缩 PDF | working | 无 | 收口 QA 压缩验证 + 16/16 页面切换（2026-09-08） |
+| repair | 修复 PDF | working | 无 | 收口 QA 修复验证（2026-09-08） |
+| ocr | OCR 文字识别 | working | Windows.Media.Ocr 替代 Apple Vision；中文识别需系统语言包 | 收口 QA OCR E2E 实跑 PASS（2026-09-08） |
 
 ### 格式转换
 
@@ -35,42 +35,42 @@
 |---------|--------|-------------|----------|------|
 | images_to_pdf | 图片转 PDF | degraded | HEIC 输入明确报错：Windows 无原生 HEIC 解码，需用户预转换为 JPG/PNG | `tests/test_engine.py` |
 | pdf_to_images | PDF 转图片 | working | 无 | `tests/test_engine.py` |
-| word_to_pdf | Word 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
-| ppt_to_pdf | PowerPoint 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
-| excel_to_pdf | Excel 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| word_to_pdf | Word 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | 收口 QA 转换器验证 + 页面切换（2026-09-08） |
+| ppt_to_pdf | PowerPoint 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | 收口 QA 转换器验证 + 页面切换（2026-09-08） |
+| excel_to_pdf | Excel 转 PDF | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | 收口 QA 转换器验证 + 页面切换（2026-09-08） |
 | pdf_to_word | PDF 转 Word | working | 无 | `tests/test_engine.py` |
 | pdf_to_ppt | PDF 转 PowerPoint | working | 无 | `tests/test_engine.py` |
 | pdf_to_excel | PDF 转 Excel | working | 无 | `tests/test_engine.py` |
-| html_to_pdf | HTML 转 PDF | working | Playwright + Chromium 替代 WebKit；需额外安装 Chromium（构建脚本自动完成） | `.omo/evidence/task-16-converter-tests.txt` |
-| pdfa | PDF 转 PDF/A | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | `.omo/evidence/task-16-converter-tests.txt` |
+| html_to_pdf | HTML 转 PDF | working | Playwright + Chromium 替代 WebKit；需额外安装 Chromium（构建脚本自动完成） | 收口 QA 转换器验证 + 页面切换（2026-09-08） |
+| pdfa | PDF 转 PDF/A | working | LibreOffice 替代方案；未安装 LibreOffice 时提示用户 | 收口 QA 转换器验证 + 页面切换（2026-09-08） |
 | markdown | PDF 转 Markdown | working | 无 | `tests/test_engine.py` |
 
 ### 编辑内容
 
 | 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
 |---------|--------|-------------|----------|------|
-| rotate | 旋转 PDF | working | 无 | `.omo/evidence/task-17-crop.txt` |
-| numbers | 添加页码 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
-| watermark | 添加水印 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
-| crop | 裁剪 PDF | working | 无 | `.omo/evidence/task-17-crop.txt` |
-| edit | 编辑 PDF | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
-| forms | PDF 表单 | working | 无 | `.omo/evidence/task-17-fullsuite.txt` |
+| rotate | 旋转 PDF | working | 无 | 收口 QA 裁剪/旋转验证（2026-09-08） |
+| numbers | 添加页码 | working | 无 | 收口 QA 编辑器验证（2026-09-08） |
+| watermark | 添加水印 | working | 无 | 收口 QA 编辑器验证（2026-09-08） |
+| crop | 裁剪 PDF | working | 无 | 收口 QA 裁剪/旋转验证（2026-09-08） |
+| edit | 编辑 PDF | working | 无 | 收口 QA 编辑器验证 + 页面切换（2026-09-08） |
+| forms | PDF 表单 | working | 无 | 收口 QA 编辑器验证（2026-09-08） |
 
 ### 安全保护
 
 | 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
 |---------|--------|-------------|----------|------|
-| unlock | PDF 解锁 | working | 无 | `.omo/evidence/task-18-roundtrip.txt` |
-| protect | PDF 加密 | working | 无 | `.omo/evidence/task-18-security.txt` |
-| sign | PDF 签名 | working | 无 | `.omo/evidence/task-18-security.txt` |
-| redact | 永久遮盖 | working | 无 | `.omo/evidence/task-18-security.txt` |
-| compare | 比较 PDF | working | 无 | `.omo/evidence/task-18-fullsuite.txt` |
+| unlock | PDF 解锁 | working | 无 | 收口 QA 解锁验证（2026-09-08） |
+| protect | PDF 加密 | working | 无 | 收口 QA 安全套件验证 + 页面切换（2026-09-08） |
+| sign | PDF 签名 | working | 无 | 收口 QA 安全套件验证（2026-09-08） |
+| redact | 永久遮盖 | working | 无 | 收口 QA 安全套件验证（2026-09-08） |
+| compare | 比较 PDF | working | 无 | 收口 QA 比较验证（2026-09-08） |
 
 ### 工作流程
 
 | 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
 |---------|--------|-------------|----------|------|
-| workflow | 工作流程 | working | 无 | `.omo/evidence/task-19-batch.txt` |
+| workflow | 工作流程 | working | 无 | 收口 QA 工作流程验证 + 页面切换（2026-09-08） |
 
 ---
 

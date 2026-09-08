@@ -1,6 +1,6 @@
 # Windows 构建与安装
 
-这是**源码构建安装**：脚本负责安装 Python 依赖、编译 WPF 界面与 OCR 助手、组装发行目录；不是免环境的预编译安装包。首次需要 Python 和 .NET SDK。
+构建脚本将 Python 运行时、依赖包、WPF 界面、OCR 助手和 Playwright Chromium 打包进 `dist/aipdf-windows/`，形成自包含发行目录。**运行发行版不需要系统安装 Python、.NET Desktop Runtime 或任何外部依赖**（LibreOffice 可选）。构建本身需要 Python 3.12+ 和 .NET SDK 8.0+。
 
 ## 快速开始
 
@@ -19,20 +19,21 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 |------|------|----------|
 | Windows | Windows 10 1903+ 或 Windows 11（需要 Windows.Media.Ocr API） | 系统自带 |
 | Python | 3.12 或更高版本 | [Python 官网](https://www.python.org/downloads/)下载安装；安装时勾选「Add Python to PATH」 |
-| .NET SDK | 8.0 或更高版本（用于编译 WPF 界面和 OCR 助手） | [.NET 官网](https://dotnet.microsoft.com/download/dotnet/8.0)下载 Desktop Runtime 或 SDK |
-| LibreOffice（可选） | Word/PPT/Excel 与 PDF/A 转换需要 | [LibreOffice 官网](https://www.libreoffice.org/download/)安装到默认路径；没有它也能使用其他工具 |
+| .NET SDK | 8.0 或更高版本（用于编译 WPF 界面和 OCR 助手，仅构建阶段需要） | [.NET 官网](https://dotnet.microsoft.com/download/dotnet/8.0)下载 SDK |
+| LibreOffice（可选） | Word/PPT/Excel 与 PDF/A 转换需要；构建时不需要，运行时按需使用 | [LibreOffice 官网](https://www.libreoffice.org/download/)安装到默认路径；没有它也能使用其他工具 |
 | 网络与磁盘 | 首次构建需联网下载 Python 依赖和 Playwright Chromium | 预留 2 GB 以上磁盘空间 |
 
 ## 构建步骤
 
-构建脚本 `scripts/build.ps1` 自动完成以下阶段：
+构建脚本 `scripts/build.ps1` 自动完成以下 7 个阶段：
 
 1. **前置检查**：验证 Python ≥ 3.12、.NET SDK 8 已安装并可执行。
 2. **Python 环境**：创建项目 `.venv`，按 `requirements.lock.txt` 安装锁定依赖；额外安装 Playwright（仅 Windows）并下载 Chromium 浏览器。
 3. **工具目录**：运行 `backend/catalog.py` 生成 `backend/catalog.json`。
 4. **OCR 助手**：编译并发布 `Sources/WindowsOcrHelper`（自包含单文件，不依赖 .NET 运行时）。
-5. **WPF 界面**：发布 `Sources/AIPDF.Windows`（框架依赖，需要目标机器安装 .NET Desktop Runtime）。
+5. **WPF 界面**：发布 `Sources/AIPDF.Windows`（自包含，内嵌 .NET 运行时）。
 6. **组装与校验**：按预设布局组装 `dist/aipdf-windows/`，运行引擎健康检查和单元测试子集。
+7. **打包**：将嵌入式 Python 运行时、锁定依赖包和 Playwright Chromium 打包进发行目录。构建完成后 `dist/aipdf-windows/` 可直接运行，不需要系统安装 Python 或 .NET Desktop Runtime。
 
 ### 构建参数
 
@@ -55,7 +56,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Sign -CertificateSub
 ```
 dist/aipdf-windows/
 ├── app/                  WPF 应用程序（AIPDF.Windows.exe + 依赖）
-├── engine/backend/       Python 引擎（engine.py + catalog.py + catalog.json）
+├── engine/
+│   ├── backend/          Python 引擎（engine.py + catalog.py + catalog.json）
+│   ├── python/           嵌入式 Python 运行时（免系统安装）
+│   └── site-packages/    锁定依赖包（PyMuPDF、Playwright 等）
 ├── helper/               OCR 助手（WindowsOcrHelper.exe，自包含）
 └── scripts/              安装脚本（Install.ps1）
 ```
@@ -67,7 +71,7 @@ dist/aipdf-windows/
 1. 将 `dist/aipdf-windows/` 整个目录复制到目标位置（如 `C:\Program Files\AIPDF`）。
 2. 运行 `AIPDF.Windows.exe` 启动应用。
 
-> 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（需以管理员权限运行 PowerShell）。
+> 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（不需要管理员权限）。安装器支持 `-InstallDir` 指定路径、`-NoShortcut` 跳过快捷方式创建、`-Uninstall` 卸载。
 
 ## 代码签名与 SmartScreen 警告
 
@@ -115,7 +119,7 @@ Windows 无原生 HEIC 解码支持。iPhone 直出的 HEIC/HEIF 格式图片无
 
 ### URL 转 PDF（html_to_pdf 工具）
 
-Mac 版使用 WebKit 无头渲染。Windows 版使用 Playwright + Chromium 替代，需要额外安装 Chromium（构建脚本自动完成）。渲染行为可能与 WebKit 有细微差异。
+Mac 版使用 WebKit 无头渲染。Windows 版使用 Playwright + Chromium 替代，首次使用时需要下载 Chromium 浏览器（构建脚本自动完成；发行版已打包，无需额外下载）。渲染行为可能与 WebKit 有细微差异。
 
 ### OCR 文字识别（ocr 工具）
 
@@ -134,10 +138,7 @@ Mac 版使用 Apple Vision。Windows 版使用 Windows.Media.Ocr API，中文识
 ### .NET 相关
 
 **"dotnet 不是内部或外部命令"**
-安装 .NET SDK 或 Desktop Runtime 后重启终端。确认 `dotnet --version` 输出 8.x。
-
-**"应用程序无法启动" 或 ".NET Desktop Runtime 未安装"**
-WPF 应用需要 .NET 8 Desktop Runtime。从 [.NET 官网](https://dotnet.microsoft.com/download/dotnet/8.0) 下载并安装。
+构建阶段需要 .NET SDK 8.0+。安装后重启终端，确认 `dotnet --version` 输出 8.x。发行版本身不需要系统安装 .NET Desktop Runtime（已自包含）。
 
 ### OCR 相关
 
@@ -147,7 +148,7 @@ WPF 应用需要 .NET 8 Desktop Runtime。从 [.NET 官网](https://dotnet.micro
 ### Playwright/Chromium 相关
 
 **"网页加载失败"**
-确保 Chromium 已下载。构建脚本自动执行 `python -m playwright install chromium`。手动安装：
+确保 Chromium 已下载。构建脚本自动执行 `python -m playwright install chromium`，发行版已打包 Chromium。如果手动安装，运行：
 
 ```powershell
 .venv\Scripts\python.exe -m playwright install chromium
@@ -156,7 +157,7 @@ WPF 应用需要 .NET 8 Desktop Runtime。从 [.NET 官网](https://dotnet.micro
 ### LibreOffice 相关
 
 **Word/Excel/PPT 转换失败**
-确认 LibreOffice 已安装在默认路径（`C:\Program Files\LibreOffice\program\soffice.exe`）。也可通过环境变量 `AIPDF_OFFICE` 指定 `soffice.exe` 路径。
+确认 LibreOffice 已安装在默认路径（`C:\Program Files\LibreOffice\program\soffice.com`）。也可通过环境变量 `AIPDF_OFFICE` 指定 `soffice.com` 路径（注意是 `soffice.com` 不是 `soffice.exe`，后者是 GUI 启动器，命令行会挂起）。
 
 ## 运行测试
 
@@ -169,6 +170,10 @@ WPF 应用需要 .NET 8 Desktop Runtime。从 [.NET 官网](https://dotnet.micro
 .venv\Scripts\python.exe tests\test_paths_windows.py -v
 .venv\Scripts\python.exe tests\test_ocr_windows.py -v
 .venv\Scripts\python.exe tests\test_url2pdf_windows.py -v
+.venv\Scripts\python.exe tests\test_stress_windows.py -v
+.venv\Scripts\python.exe tests\test_engine_utf8_windows.py -v
+.venv\Scripts\python.exe tests\test_installer_windows.py -v
+.venv\Scripts\python.exe tests\test_office_windows.py -v
 
 # 运行 WPF 单元测试
 dotnet test Sources\AIPDF.Windows
