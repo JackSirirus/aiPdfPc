@@ -4,7 +4,18 @@
     <!--
         转换组共享文件列表面板：绑定 ConverterToolViewModelBase 的同名属性
         （Files / FileSummary / ExtensionsHint / BrowseFilesCommand / RemoveFileCommand / ClearFilesCommand）。
+        组内样式（ConverterCard / ConverterRemoveButton）在 ConverterResources.xaml；
+        UserControl 的 BAML 独立解析，StaticResource 只能看见自身与应用级资源，
+        因此必须自带组资源字典（与 Optimizer 的 RunPanel、页面整理的 ToolPageShell 同一约定），
+        否则宿主页面实例化本控件时抛 XamlParseException，整个工具页打不开。
     -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ConverterResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
     <Border Style="{StaticResource ConverterCard}">
         <Grid>
             <Grid.RowDefinitions>
