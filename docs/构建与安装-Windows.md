@@ -1,6 +1,6 @@
 # Windows 构建与安装
 
-构建脚本将 Python 运行时、依赖包、WPF 界面、OCR 助手和 Playwright Chromium 打包进 `dist/aipdf-windows/`，形成自包含发行目录。**运行发行版不需要系统安装 Python、.NET Desktop Runtime 或任何外部依赖**（LibreOffice 可选）。构建本身需要 Python 3.12+ 和 .NET SDK 8.0+。
+构建脚本将 Python 运行时、依赖包、WPF 界面和 OCR 助手打包进 `dist/aipdf-windows/`，形成自包含发行目录。**运行发行版不需要系统安装 Python、.NET Desktop Runtime 或任何外部依赖**（LibreOffice 可选）。Chromium **不随包分发**；网址转 PDF（`html_to_pdf`）首次使用时需联网下载（约 150 MB，`playwright install chromium`）。构建本身需要 Python 3.12+ 和 .NET SDK 8.0+。
 
 ## 快速开始
 
@@ -33,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 4. **OCR 助手**：编译并发布 `Sources/WindowsOcrHelper`（自包含单文件，不依赖 .NET 运行时）。
 5. **WPF 界面**：发布 `Sources/AIPDF.Windows`（自包含，内嵌 .NET 运行时）。
 6. **组装与校验**：按预设布局组装 `dist/aipdf-windows/`，运行引擎健康检查和单元测试子集。
-7. **打包**：将嵌入式 Python 运行时、锁定依赖包和 Playwright Chromium 打包进发行目录。构建完成后 `dist/aipdf-windows/` 可直接运行，不需要系统安装 Python 或 .NET Desktop Runtime。
+7. **打包**：将嵌入式 Python 运行时和锁定依赖包打包进发行目录。构建完成后 `dist/aipdf-windows/` 可直接运行，不需要系统安装 Python 或 .NET Desktop Runtime。Chromium 不包含在内，首次使用网址转 PDF 时需联网下载。
 
 ### 构建参数
 
@@ -119,7 +119,7 @@ Windows 无原生 HEIC 解码支持。iPhone 直出的 HEIC/HEIF 格式图片无
 
 ### URL 转 PDF（html_to_pdf 工具）
 
-Mac 版使用 WebKit 无头渲染。Windows 版使用 Playwright + Chromium 替代，首次使用时需要下载 Chromium 浏览器（构建脚本自动完成；发行版已打包，无需额外下载）。渲染行为可能与 WebKit 有细微差异。
+Mac 版使用 WebKit 无头渲染。Windows 版使用 Playwright + Chromium 替代。Chromium **不随包分发**，首次使用时需联网下载（约 150 MB，通过 `playwright install chromium`）。渲染行为可能与 WebKit 有细微差异。
 
 ### OCR 文字识别（ocr 工具）
 
@@ -148,7 +148,7 @@ Mac 版使用 Apple Vision。Windows 版使用 Windows.Media.Ocr API，中文识
 ### Playwright/Chromium 相关
 
 **"网页加载失败"**
-确保 Chromium 已下载。构建脚本自动执行 `python -m playwright install chromium`，发行版已打包 Chromium。如果手动安装，运行：
+确保 Chromium 已下载。Chromium 不随发行版分发，需手动安装：
 
 ```powershell
 .venv\Scripts\python.exe -m playwright install chromium
