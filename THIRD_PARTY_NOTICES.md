@@ -52,13 +52,13 @@ NuGet 包的许可原文随各发行包提供；打包发行时应在 `licenses/
 ## 外部程序与系统组件
 
 - **LibreOffice**：按其官网及实际安装包的许可使用，主要为 MPL-2.0，同时包含其他许可证下的组件。当前调用用户本机安装，不在 `.app` 中复制 LibreOffice。若以后捆绑发行，需要实际版本的完整许可材料及其要求的源码提供方式。[官方说明](https://www.libreoffice.org/licenses/)
-- **Python**：由用户安装并建立 `.venv`，目前未捆绑独立 Python 运行时。将来打包解释器时应保留该发行版的 Python/PSF 及第三方原文。
+- **Python**：macOS 侧由用户安装并建立 `.venv`。Windows 自包含构建（`scripts/build.ps1`）随 `dist\aipdf-windows\engine\python\` 捆绑 CPython 3.14.2 embeddable 运行时，其 Python/PSF 许可原文以随包 `LICENSE.txt` 形式保留在解释器目录内；`engine\site-packages\` 中的处理引擎依赖按 `requirements.lock.txt` 锁定版本离线安装，许可原文见 [licenses/third-party](licenses/third-party/) 快照。为支撑网址转 PDF，Windows 产物额外捆绑 playwright 及其运行依赖（greenlet、pyee 等，Apache-2.0/MIT），许可原文随各自 wheel 的 dist-info 提供；playwright 对应的 Chromium 浏览器本体不随包分发，按首次使用联网下载，适用上游许可。
 - **Apple 系统框架、Swift 运行库和 SF Symbols**：通过系统/工具链使用，适用 Apple 及对应运行库的条款，不由本仓库重新许可；没有把系统字体、SDK 或 SF Symbols 字体文件复制进仓库。
 - **Poppler**：只在手工视觉复核中作为外部工具调用，未打入应用；若将来捆绑必须单独复核实际版本的许可和源码义务。
 - **本机开发辅助环境**：发现已有转换程序的位置不等于取得其再分发权。不得把 Codex 缓存、账户配置或整套依赖目录作为本项目源码附件发布。
 
 ## 说明与来源
 
-当前 `.app` 只携带本项目可执行文件、处理代码和许可材料。开发构建的 Python 依赖在项目 `.venv` 中；`Install.command` 安装版的依赖在当前用户的 AIPDF/Runtimes 中，安装版收集实际安装的 wheel 的许可，不改写仓库快照。随附许可材料用于保留归属并方便核查，不表示 `.app` 已经打包这些二进制，也不是完整的软件物料清单或法律合规认证。
+当前 `.app` 只携带本项目可执行文件、处理代码和许可材料。开发构建的 Python 依赖在项目 `.venv` 中；`Install.command` 安装版的依赖在当前用户的 AIPDF/Runtimes 中，安装版收集实际安装的 wheel 的许可，不改写仓库快照。Windows 自包含构建产物（`dist\aipdf-windows\`）则随包携带嵌入式 Python 3.14.2 解释器、按锁定版本离线安装的 wheel 以及 playwright；这些组件的归属与许可见上文「外部程序与系统组件」，随附许可材料用于保留归属并方便核查，不表示构成完整的软件物料清单或法律合规认证。
 
 iLovePDF 仅作为需求研究参照；AIPDF 不包含其网站源代码、商标图标或认证材料，也没有得到其背书。[PyMuPDF 官方许可说明](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright)列明了 AGPL 与商业许可两种选择。

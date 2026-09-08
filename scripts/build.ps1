@@ -3,8 +3,10 @@
 # Windows 构建脚本：镜像 scripts/build.sh 的阶段语义。
 #   build.sh: venv → pip 锁定依赖 → catalog JSON → Swift 构建 → 打包
 #   build.ps1: 前置检查 → venv + 锁定依赖 + Playwright Chromium → catalog JSON →
-#              OCR helper 发布 → WPF 发布 → dist 布局 → 校验
-# 产物：dist\aipdf-windows\（框架依赖，不打包 Python/LibreOffice/.NET 运行时）。
+#              OCR helper 发布 → WPF（自包含）发布 → dist 布局 → 校验 →
+#              嵌入式 Python 运行时与离线依赖
+# 产物：dist\aipdf-windows\（自包含：内置 .NET 运行时与嵌入式 Python；
+#       不打包 LibreOffice 与 Chromium，后者由网址转 PDF 首次使用时联网下载）。
 # 注意：本文件包含中文，PowerShell 5.1 要求 UTF-8 带 BOM 编码保存。
 #Requires -Version 5.1
 param(
@@ -14,6 +16,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# PS 5.1 在 stdout 被重定向（CI、日志捕获）时，向原生命令管道写入的输入
+# 会带上 UTF-8 BOM，破坏引擎的 stdin JSON 协议（冒烟会收到「请求格式不正确」）。
+# 显式指定无 BOM 的 UTF-8，保证 $json | & python 之外部调用方式也可靠。
+$OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $ProjectDir
@@ -37,7 +44,7 @@ function Assert-LastExit([string]$Name) {
 # ---------------------------------------------------------------------------
 # ① 前置检查：Python >= 3.12、.NET SDK 8
 # ---------------------------------------------------------------------------
-Write-Stage "[1/6] 前置检查（Python >= 3.12、.NET SDK 8）"
+Write-Stage "[1/7] 前置检查（Python >= 3.12、.NET SDK 8）"
 
 function Find-Python {
     # 候选顺序：py 启动器（官方安装自带）→ python → python3。
@@ -113,7 +120,7 @@ Write-Host "dotnet SDK：$(& $DotNetExe --version)（$DotNetExe）"
 # ---------------------------------------------------------------------------
 # ② venv：.venv 创建 + 锁定依赖 + Playwright Chromium
 # ---------------------------------------------------------------------------
-Write-Stage "[2/6] 虚拟环境与锁定依赖"
+Write-Stage "[2/7] 虚拟环境与锁定依赖"
 
 $VenvPython = Join-Path $ProjectDir ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $VenvPython)) {
@@ -135,7 +142,7 @@ Assert-LastExit "playwright install chromium"
 # ---------------------------------------------------------------------------
 # ③ 工具目录 JSON（镜像 build.sh 的 backend/catalog.py 步骤）
 # ---------------------------------------------------------------------------
-Write-Stage "[3/6] 生成工具目录 JSON（backend/catalog.py）"
+Write-Stage "[3/7] 生成工具目录 JSON（backend/catalog.py）"
 
 # Windows 上 catalog.py 默认按系统区域（GBK）写文件，会把仓库的 UTF-8 快照改脏；
 # PYTHONUTF8=1 强制 UTF-8 输出（已验证与仓库快照字节等价）。
@@ -146,7 +153,7 @@ Assert-LastExit "backend\catalog.py"
 # ---------------------------------------------------------------------------
 # ④ OCR helper 构建（自包含单文件，零运行时依赖）
 # ---------------------------------------------------------------------------
-Write-Stage "[4/6] 构建 OCR helper（Sources\WindowsOcrHelper）"
+Write-Stage "[4/7] 构建 OCR helper（Sources\WindowsOcrHelper）"
 
 # 显式指向 csproj：目录参数会命中同目录 .sln，连带构建测试项目。
 & $DotNetExe publish "Sources\WindowsOcrHelper\WindowsOcrHelper.csproj" -c $Configuration
@@ -164,9 +171,9 @@ Write-Host "helper 产物：$HelperPublish"
 # ---------------------------------------------------------------------------
 # ⑤ WPF 发布 + dist 布局
 # ---------------------------------------------------------------------------
-Write-Stage "[5/6] 发布 WPF 应用并组装 dist\aipdf-windows"
+Write-Stage "[5/7] 发布 WPF 应用并组装 dist\aipdf-windows"
 
-& $DotNetExe publish "Sources\AIPDF.Windows\AIPDF.Windows.csproj" -c $Configuration -r win-x64 --self-contained false
+& $DotNetExe publish "Sources\AIPDF.Windows\AIPDF.Windows.csproj" -c $Configuration -r win-x64 --self-contained true -p:DebugType=none -p:DebugSymbols=false
 Assert-LastExit "dotnet publish AIPDF.Windows"
 
 $AppExe = Get-ChildItem "Sources\AIPDF.Windows\bin" -Recurse -Filter "AIPDF.Windows.exe" -ErrorAction SilentlyContinue |
@@ -197,16 +204,27 @@ else {
 }
 
 $readme = @(
-    "AIPDF · Windows 本地构建产物",
+    "AIPDF · Windows 自包含构建产物",
     "",
-    "这是一个框架依赖的构建目录，各子目录：",
-    "  app\      WPF 界面程序（运行需要 .NET 8 Desktop Runtime）",
-    "  engine\   Python 处理引擎（运行需要系统 Python 3.12+ 及依赖）",
-    "  helper\   基于 Windows.Media.Ocr 的 OCR 辅助程序（自包含）",
-    "  scripts\  安装脚本（Install.ps1，如已提供）",
+    "这是一个自包含的构建目录：无需系统 Python，无需 .NET Desktop Runtime。各子目录：",
+    "  app\                   WPF 界面程序（自包含发布，内置 .NET 运行时）",
+    "  engine\python\         嵌入式 Python 3.14 运行时（便携，随目录移动）",
+    "  engine\site-packages\  处理引擎依赖（按锁定版本离线安装）",
+    "  engine\backend\        处理引擎代码",
+    "  helper\                基于 Windows.Media.Ocr 的 OCR 辅助程序（自包含）",
+    "  scripts\               安装脚本（Install.ps1，如已提供）",
     "",
-    "构建、安装步骤与前置条件见仓库文档：docs/构建与安装-Windows.md",
-    "本目录不打包 Python 运行时与 LibreOffice。",
+    "运行：双击 app\AIPDF.Windows.exe。OCR 使用系统内置服务，无需额外安装。",
+    "",
+    "可选功能：",
+    "  - Office / PDF/A 转换需要本机 LibreOffice：程序会自动探测安装位置，",
+    "    或用环境变量 AIPDF_OFFICE 指定 soffice 可执行文件路径。",
+    "  - 网址转 PDF 依赖 Chromium 浏览器：首次使用需联网下载（约 150MB，",
+    "    由 Playwright 下载并缓存）；也可提前执行",
+    "    engine\python\python.exe -m playwright install chromium。",
+    "  - 本目录不捆绑 LibreOffice 与 Chromium；除网址转 PDF 外其余功能不联网。",
+    "",
+    "构建、安装步骤与故障排查见仓库文档：docs/构建与安装-Windows.md",
     "网址转 PDF 功能会联网获取输入网址的页面、脚本和资源；本地文件操作不上传文档。",
     ""
 ) -join [Environment]::NewLine
@@ -215,7 +233,7 @@ $readme = @(
 # ---------------------------------------------------------------------------
 # ⑥ 校验：布局断言 + dist 引擎冒烟 + 快速测试子集
 # ---------------------------------------------------------------------------
-Write-Stage "[6/6] 校验 dist 布局与引擎冒烟"
+Write-Stage "[6/7] 校验 dist 布局与引擎冒烟"
 
 $required = @(
     "app\AIPDF.Windows.exe",
@@ -259,6 +277,135 @@ if (-not $SkipTests) {
 else {
     Write-Host "已按 -SkipTests 跳过快速测试子集。"
 }
+
+# ---------------------------------------------------------------------------
+# ⑦ 自包含运行时：嵌入式 Python 解释器 + 离线依赖 wheel
+# ---------------------------------------------------------------------------
+Write-Stage "[7/7] 打包嵌入式 Python 运行时与离线依赖"
+
+$ProgressPreference = "SilentlyContinue"
+$EmbedVersion = "3.14.2"
+$BuildCache = Join-Path $env:TEMP "aipdf-build"
+$EmbedZip = Join-Path $BuildCache "python-$EmbedVersion-embed-amd64.zip"
+$EmbedDir = Join-Path $Dist "engine\python"
+$SitePackages = Join-Path $Dist "engine\site-packages"
+$EmbedPython = Join-Path $EmbedDir "python.exe"
+
+# 嵌入式 Python zip 按版本缓存在 %TEMP%，命中则跳过下载。
+if (-not (Test-Path -LiteralPath $EmbedZip)) {
+    New-Item -ItemType Directory -Path $BuildCache -Force | Out-Null
+    Write-Host "下载 Python $EmbedVersion embeddable（约 12MB，缓存到 $EmbedZip）…"
+    $embedUrl = "https://www.python.org/ftp/python/$EmbedVersion/python-$EmbedVersion-embed-amd64.zip"
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        curl.exe -L --fail -sS -o $EmbedZip $embedUrl
+        if ($LASTEXITCODE -ne 0) {
+            Remove-Item -LiteralPath $EmbedZip -Force -ErrorAction SilentlyContinue
+            Exit-Fail @("下载 Python embeddable 失败（退出码 $LASTEXITCODE），请检查网络后重试。")
+        }
+    }
+    else {
+        try { Invoke-WebRequest -Uri $embedUrl -OutFile $EmbedZip }
+        catch {
+            Exit-Fail @("下载 Python embeddable 失败：$($_.Exception.Message)", "请检查网络后重试。")
+        }
+    }
+}
+Write-Host "解压嵌入式 Python 到 engine\python …"
+New-Item -ItemType Directory -Path $EmbedDir -Force | Out-Null
+Expand-Archive -LiteralPath $EmbedZip -DestinationPath $EmbedDir -Force
+if (-not (Test-Path -LiteralPath $EmbedPython)) {
+    Exit-Fail @("解压后未找到 engine\python\python.exe，构建中止。")
+}
+
+# ._pth：便携相对路径，dist 整体移动后仍然有效。存在 ._pth 时 sys.path
+# 只由这些条目决定（脚本所在目录不会自动加入），..\backend 与
+# ..\site-packages 分别是引擎导入 catalog 与第三方依赖的关键。
+$pthContent = "python314.zip`r`n.`r`n..\site-packages`r`n..\backend`r`nimport site`r`n"
+[IO.File]::WriteAllText((Join-Path $EmbedDir "python314._pth"), $pthContent)
+
+# 构建期联网下载 wheel 到 %TEMP% 缓存：pip 本体 + 锁定依赖 + playwright，
+# 按 3.14/win_amd64 标签解析；缓存键 = 锁文件哈希 + playwright 版本。
+# playwright 不在锁定文件内，但 win32 的网址转 PDF 由它渲染（浏览器本体
+# 按首次使用联网下载），必须随 dist 提供。
+$WheelCache = Join-Path $BuildCache "wheels"
+$PwVersion = & $VenvPython -c "from importlib.metadata import version; print(version('playwright'))"
+Assert-LastExit "读取 venv 中的 playwright 版本"
+$MarkerPath = Join-Path $WheelCache ".source"
+$Marker = "{0}|{1}" -f (Get-FileHash "requirements.lock.txt" -Algorithm SHA256).Hash.Substring(0, 16), $PwVersion
+$CacheStale = $true
+if (Test-Path -LiteralPath $MarkerPath) {
+    $CacheStale = ((Get-Content -LiteralPath $MarkerPath -Raw) -ne $Marker)
+}
+if ($CacheStale) {
+    if (Test-Path -LiteralPath $WheelCache) { Remove-Item -LiteralPath $WheelCache -Recurse -Force }
+    New-Item -ItemType Directory -Path $WheelCache -Force | Out-Null
+    Write-Host "构建期下载 wheel 缓存（pip + 锁定依赖 + playwright）…"
+    & $VenvPython -m pip download --disable-pip-version-check -d $WheelCache -q pip
+    Assert-LastExit "pip download（pip wheel）"
+    & $VenvPython -m pip download --disable-pip-version-check -d $WheelCache -q `
+        --only-binary :all: --python-version $EmbedVersion --platform win_amd64 `
+        -r requirements.lock.txt "playwright==$PwVersion"
+    Assert-LastExit "pip download（锁定依赖 + playwright）"
+    [IO.File]::WriteAllText($MarkerPath, $Marker)
+}
+
+# 离线安装：--no-index 从本地 wheel 缓存装入 dist\engine\site-packages。
+# 以 <embedpy> <wheel>/pip 方式运行 pip（嵌入式包不带 pip 模块），全程
+# 不写入绝对路径。
+$PipWhl = Get-ChildItem -LiteralPath $WheelCache -Filter "pip-*.whl" |
+    Sort-Object Name -Descending | Select-Object -First 1
+if (-not $PipWhl) {
+    Exit-Fail @("wheel 缓存中未找到 pip wheel，构建中止。")
+}
+Write-Host "离线安装依赖 wheel 到 engine\site-packages …"
+& $EmbedPython "$($PipWhl.FullName)/pip" install --no-index --find-links $WheelCache `
+    -r requirements.lock.txt "playwright==$PwVersion" --target $SitePackages `
+    --no-warn-script-location -q
+Assert-LastExit "离线安装依赖 wheel"
+
+# 自包含布局断言（基础布局已在步骤 ⑥ 校验）。
+$requiredStage7 = @(
+    "engine\python\python.exe",
+    "engine\python\python314._pth",
+    "engine\python\python314.zip",
+    "engine\site-packages\fitz",
+    "engine\site-packages\PIL",
+    "engine\site-packages\playwright",
+    "app\hostfxr.dll"
+)
+foreach ($rel in $requiredStage7) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Dist $rel))) {
+        Exit-Fail @("dist 自包含布局断言失败：缺少 $rel")
+    }
+}
+Write-Host "自包含布局断言：$($requiredStage7.Count) 项关键文件全部在位。"
+
+# 冒烟：用 dist 内嵌 Python 直接驱动引擎，验证 ._pth 相对路径解析与
+# 离线依赖可用。vision 必须为 true（helper 锚点为安装根下的 helper\）；
+# office 为可选功能，构建机未装 LibreOffice 时为 false，不算失败。
+$distHealthRequest = '{"operation":"health"}'
+$distHealthOutput = $distHealthRequest | & $EmbedPython (Join-Path $Dist "engine\backend\engine.py")
+Assert-LastExit "dist 自包含引擎冒烟（health）"
+try {
+    $distHealth = $distHealthOutput | ConvertFrom-Json
+}
+catch {
+    Exit-Fail @("dist 自包含引擎冒烟：stdout 不是合法 JSON（协议被污染）。")
+}
+if (-not $distHealth.ok) {
+    Exit-Fail @("dist 自包含引擎冒烟：health 返回 ok=false。")
+}
+if (-not $distHealth.vision) {
+    Exit-Fail @("dist 自包含引擎冒烟：vision=false，helper\WindowsOcrHelper.exe 路径锚点失效。")
+}
+Write-Host ("dist 自包含引擎冒烟：health ok=true（engine={0}，vision={1}）" -f $distHealth.engine, $distHealth.vision)
+if ($distHealth.office) {
+    Write-Host "检测到本机 LibreOffice，Office/PDF/A 转换可用。"
+}
+else {
+    Write-Host "未检测到本机 LibreOffice：Office/PDF/A 为可选功能，可安装后自动探测，或用 AIPDF_OFFICE 指定 soffice 路径。" -ForegroundColor Yellow
+}
+$ProgressPreference = "Continue"
 
 Write-Host ""
 Write-Host ("应用已生成：{0}" -f $Dist) -ForegroundColor Green
