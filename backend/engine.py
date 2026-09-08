@@ -321,6 +321,8 @@ def images_pdf(files, options, dest, scan=False):
 def office_convert(source, outdir, pdfa=None):
     executable = find_office()
     if not executable:
+        if sys.platform == "win32":
+            raise UserError("此转换需要 LibreOffice。请安装 LibreOffice 并确保 soffice.exe 可被找到，或用 AIPDF_OFFICE 环境变量指定路径后重试。")
         raise UserError("此转换需要 LibreOffice。请将 LibreOffice 安装到“应用程序”文件夹后重试。")
     with tempfile.TemporaryDirectory(prefix="aipdf-office-") as tmp:
         profile = Path(tmp) / "profile"

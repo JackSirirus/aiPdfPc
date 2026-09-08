@@ -7,8 +7,12 @@ Two layers:
   array construction is pinned down (flags order, profile URI, --convert-to
   filter, --outdir, source, timeout) without any LibreOffice installation.
 - Real integration: skipped unless engine.find_office() actually locates a
-  LibreOffice executable; converts synthetic .docx files (plain and
-  Chinese-named paths) to PDF and asserts the output exists and is valid.
+  LibreOffice executable; converts synthetic .docx, .xlsx and .pptx files
+  (plain and Chinese-named paths) to PDF and asserts the output exists and
+  is valid.
+
+The xlsx/pptx fixtures are hand-crafted minimal OOXML zip packages, so no
+python-docx/openpyxl/python-pptx dependencies are introduced.
 
 No real soffice call happens at mock level; no user documents are used.
 """
@@ -38,6 +42,90 @@ def make_docx(path,text):
     document.save(path)
 
 
+def zip_ooxml(path,members):
+    """Write a minimal Office Open XML package (hand-crafted, no deps)."""
+    import zipfile
+    with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as z:
+        for name,data in members.items():
+            z.writestr(name,data)
+
+
+def make_xlsx(path,text):
+    """Minimal xlsx: one sheet, one cell holding an inline string."""
+    zip_ooxml(path,{
+        "[Content_Types].xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            '</Types>',
+        "_rels/.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            '</Relationships>',
+        "xl/workbook.xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            '</Relationships>',
+        "xl/worksheets/sheet1.xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>'+text+'</t></is></c></row></sheetData>'
+            '</worksheet>',
+    })
+
+
+def make_pptx(path,text):
+    """Minimal pptx: one slide with one text box holding the marker text."""
+    zip_ooxml(path,{
+        "[Content_Types].xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+            '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            '</Types>',
+        "_rels/.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>'
+            '</Relationships>',
+        "ppt/presentation.xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<presentation xmlns="http://schemas.openxmlformats.org/presentationml/2006/main"'
+            ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sldIdLst><sldId id="256" r:id="rId1"/></sldIdLst>'
+            '<sldSz cx="12192000" cy="6858000"/></presentation>',
+        "ppt/_rels/presentation.xml.rels":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>'
+            '</Relationships>',
+        "ppt/slides/slide1.xml":
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<sld xmlns="http://schemas.openxmlformats.org/presentationml/2006/main"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<cSld><spTree>'
+            '<nvGrpSpPr><cNvPr id="1" name=""/><cNvGrpSpPr/><nvPr/></nvGrpSpPr><grpSpPr/>'
+            '<sp><nvSpPr><cNvPr id="2" name="TextBox 1"/><cNvSpPr txBox="1"/><nvPr/></nvSpPr>'
+            '<spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="9144000" cy="914400"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></spPr>'
+            '<txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="zh-CN"/>'
+            '<a:t>'+text+'</a:t></a:r></a:p></txBody></sp>'
+            '</spTree></cSld></sld>',
+    })
+
+
 def make_pdf(path,part=None,text=CJK_TEXT):
     """Minimal 1-page PDF; optional XMP metadata claiming a PDF/A part."""
     doc=fitz.open()
@@ -64,6 +152,10 @@ class OfficeWindowsTests(unittest.TestCase):
         make_docx(cls.docx,"AIPDF office fixture")
         cls.cjk_docx=cls.root/f"{CJK_NAME}.docx"
         make_docx(cls.cjk_docx,CJK_TEXT)
+        cls.xlsx=cls.root/"report.xlsx"
+        make_xlsx(cls.xlsx,CJK_TEXT)
+        cls.pptx=cls.root/"report.pptx"
+        make_pptx(cls.pptx,CJK_TEXT)
 
     @classmethod
     def tearDownClass(cls):
@@ -141,18 +233,18 @@ class OfficeWindowsTests(unittest.TestCase):
                 engine.office_convert(str(self.docx),str(self.root/"never.pdf"))
         self.assertIn("LibreOffice",str(ctx.exception))
 
-    def convert_for_real(self,source,dest):
+    def convert_for_real(self,source,dest,text=CJK_TEXT):
         result=engine.office_convert(str(source),str(dest))
         self.assertTrue(dest.is_file(),"转换后输出文件不存在")
         with fitz.open(dest) as doc:
             self.assertGreaterEqual(len(doc),1)
-            self.assertIn(CJK_TEXT,doc[0].get_text())
+            self.assertIn(text,doc[0].get_text())
         return result
 
     @unittest.skipUnless(SOFFICE,"LibreOffice not installed (find_office() returned None): real docx→PDF integration skipped")
     def test_real_docx_to_pdf(self):
         """② Synthetic docx → PDF exists with ≥1 page and the marker text."""
-        self.convert_for_real(self.docx,self.root/"real-report.pdf")
+        self.convert_for_real(self.docx,self.root/"real-report.pdf",text="AIPDF office fixture")
 
     @unittest.skipUnless(SOFFICE,"LibreOffice not installed (find_office() returned None): Chinese-path docx→PDF integration skipped")
     def test_real_chinese_path_docx_to_pdf(self):
@@ -160,6 +252,16 @@ class OfficeWindowsTests(unittest.TestCase):
         dest=self.root/"输出目录"/f"{CJK_NAME}.pdf"
         dest.parent.mkdir()
         self.convert_for_real(self.cjk_docx,dest)
+
+    @unittest.skipUnless(SOFFICE,"LibreOffice not installed (find_office() returned None): real xlsx→PDF integration skipped")
+    def test_real_xlsx_to_pdf(self):
+        """② Hand-crafted xlsx → PDF exists with the marker text."""
+        self.convert_for_real(self.xlsx,self.root/"real-report-xlsx.pdf")
+
+    @unittest.skipUnless(SOFFICE,"LibreOffice not installed (find_office() returned None): real pptx→PDF integration skipped")
+    def test_real_pptx_to_pdf(self):
+        """② Hand-crafted pptx → PDF exists with the marker text."""
+        self.convert_for_real(self.pptx,self.root/"real-report-pptx.pdf")
 
 
 if __name__=="__main__":
