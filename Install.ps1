@@ -12,6 +12,9 @@
 #                                                                        卸载（删除安装目录与快捷方式）
 # 说明：仅安装到当前用户目录，不写 HKLM，不需要管理员；不下载 Python/LibreOffice，
 #       只检查并给出指引。本文件包含中文，PowerShell 5.1 要求 UTF-8 带 BOM 编码保存。
+# 模式：来源含 engine\python\python.exe 时判定为自包含安装包（Python 与 .NET
+#       Desktop Runtime 随包内置），跳过两项系统前置检查；否则保持框架依赖模式，
+#       强制检查系统 Python 3.12+ 与 .NET 8 Desktop Runtime。
 #Requires -Version 5.1
 param(
     [string]$InstallDir = "",
@@ -219,28 +222,47 @@ if ($Uninstall) {
     exit 0
 }
 
-Write-Step "前置检查（Python 3.12+、.NET 8 Desktop Runtime、LibreOffice 可选）"
+# 安装来源先于前置检查解析：来源含 engine\python\python.exe 即自包含安装包，
+# Python 与 .NET Desktop Runtime 随包内置，无需系统级前置；否则保持框架依赖模式。
+$Source = Resolve-SourceLayout
+$Mode = if ($Source -and (Test-Path -LiteralPath (Join-Path $Source "engine\python\python.exe"))) { "self-contained" } else { "framework-dependent" }
 
-$foundPython = Find-Python
-if (-not $foundPython) {
-    Exit-Fail @(
-        "需要 Python 3.12 或更新版本（处理引擎运行时依赖），未在系统中找到。",
-        "官方下载：https://www.python.org/downloads/windows/",
-        "安装时勾选「Add python.exe to PATH」，然后重新运行本脚本。",
-        "详细说明：docs/构建与安装-Windows.md"
-    )
+if ($Mode -eq "self-contained") {
+    Write-Step "前置检查（自包含运行时、LibreOffice 可选）"
+    Write-Host "安装模式：自包含（Python 与 .NET Desktop Runtime 随包内置）"
+    if (-not (Test-Path -LiteralPath (Join-Path $Source "app\hostfxr.dll"))) {
+        Exit-Fail @(
+            "自包含安装包缺少 app\hostfxr.dll（.NET 运行时载体），构建产物可能不完整。",
+            "请重新运行 scripts\build.ps1 生成完整产物后重试。详细说明：docs/构建与安装-Windows.md"
+        )
+    }
+    Write-Host "Python：随安装包内置（engine\python\python.exe）"
+    Write-Host ".NET Desktop Runtime：随安装包内置（app\hostfxr.dll）"
 }
-Write-Host "Python：$($foundPython[1])（$($foundPython[0])）"
+else {
+    Write-Step "前置检查（Python 3.12+、.NET 8 Desktop Runtime、LibreOffice 可选）"
 
-$dotnetExe = Find-DesktopRuntime
-if (-not $dotnetExe) {
-    Exit-Fail @(
-        "需要 .NET 8 Desktop Runtime（界面程序运行时依赖），未在系统中找到。",
-        "官方下载：https://dotnet.microsoft.com/download/dotnet/8.0（选择「.NET Desktop Runtime」的 Windows x64 安装程序）。",
-        "安装后重新运行本脚本。详细说明：docs/构建与安装-Windows.md"
-    )
+    $foundPython = Find-Python
+    if (-not $foundPython) {
+        Exit-Fail @(
+            "需要 Python 3.12 或更新版本（处理引擎运行时依赖），未在系统中找到。",
+            "官方下载：https://www.python.org/downloads/windows/",
+            "安装时勾选「Add python.exe to PATH」，然后重新运行本脚本。",
+            "详细说明：docs/构建与安装-Windows.md"
+        )
+    }
+    Write-Host "Python：$($foundPython[1])（$($foundPython[0])）"
+
+    $dotnetExe = Find-DesktopRuntime
+    if (-not $dotnetExe) {
+        Exit-Fail @(
+            "需要 .NET 8 Desktop Runtime（界面程序运行时依赖），未在系统中找到。",
+            "官方下载：https://dotnet.microsoft.com/download/dotnet/8.0（选择「.NET Desktop Runtime」的 Windows x64 安装程序）。",
+            "安装后重新运行本脚本。详细说明：docs/构建与安装-Windows.md"
+        )
+    }
+    Write-Host ".NET Desktop Runtime：8.x（$dotnetExe）"
 }
-Write-Host ".NET Desktop Runtime：8.x（$dotnetExe）"
 
 if (Test-LibreOffice) {
     Write-Host "LibreOffice：已找到，Office/PDF-A 转换可用。"
@@ -256,7 +278,6 @@ if ($Check) {
     exit 0
 }
 
-$Source = Resolve-SourceLayout
 if (-not $Source) {
     Exit-Fail @(
         "未找到 dist 安装布局（需要 app\、engine\、helper\ 与 README-Windows.txt）。",
@@ -310,7 +331,20 @@ try {
             throw "安装布局不完整：缺少 $rel"
         }
     }
-    Write-Host "布局断言：8 项关键文件全部在位。"
+    if ($Mode -eq "self-contained") {
+        foreach ($rel in @("engine\python\python.exe", "app\hostfxr.dll")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stagedApp $rel))) {
+                throw "安装布局不完整：缺少 $rel"
+            }
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $stagedApp "engine\site-packages\fitz") -PathType Container)) {
+            throw "安装布局不完整：缺少 engine\site-packages\fitz（目录）"
+        }
+        Write-Host "布局断言：8 项关键文件 + 自包含运行时 3 项全部在位。"
+    }
+    else {
+        Write-Host "布局断言：8 项关键文件全部在位。"
+    }
 
     if (Test-Path -LiteralPath $Target) {
         $backupLeaf = New-BackupLeaf $ParentDir
@@ -324,9 +358,9 @@ try {
     Move-Item -LiteralPath $stagedApp -Destination $Target
     $swapped = $true
 
-    # 安装信息只含时间与布局标记，不含任何绝对路径，保证安装目录可整体搬移。
+    # 安装信息只含模式、时间与布局标记，不含任何绝对路径，保证安装目录可整体搬移。
     [System.IO.File]::WriteAllText((Join-Path $Target "install-info.json"),
-        (@{ layout = "aipdf-windows"; installedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") } | ConvertTo-Json),
+        (@{ layout = "aipdf-windows"; mode = $Mode; installedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") } | ConvertTo-Json),
         (New-Object System.Text.UTF8Encoding($false)))
 
     if ($ShortcutPath) {
@@ -341,7 +375,12 @@ try {
 
     Write-Host ""
     Write-Host ("安装完成：{0}" -f $Target) -ForegroundColor Green
-    Write-Host "可删除下载的构建目录；运行时仍需系统 Python 3.12+ 与 .NET 8 Desktop Runtime。"
+    if ($Mode -eq "self-contained") {
+        Write-Host "可删除下载的构建目录；无需系统 Python 与 .NET Desktop Runtime；LibreOffice 可选；网址转 PDF 首次使用需联网下载 Chromium。"
+    }
+    else {
+        Write-Host "可删除下载的构建目录；运行时仍需系统 Python 3.12+ 与 .NET 8 Desktop Runtime。"
+    }
     exit 0
 }
 catch {

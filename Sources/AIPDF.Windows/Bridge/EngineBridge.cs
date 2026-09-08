@@ -454,6 +454,10 @@ public class EngineBridge
         var devPath = Path.Combine(root, ".venv", "Scripts", "python.exe");
         if (File.Exists(devPath)) return devPath;
 
+        // 自包含安装布局：随包内置的嵌入式解释器（build.ps1 阶段 7 产物 engine\python\python.exe）
+        var bundledPath = Path.Combine(root, "engine", "python", "python.exe");
+        if (File.Exists(bundledPath)) return bundledPath;
+
         // 安装布局：引擎目录下的 .venv
         var installPath = Path.Combine(root, "engine", ".venv", "Scripts", "python.exe");
         if (File.Exists(installPath)) return installPath;

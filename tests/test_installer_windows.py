@@ -18,6 +18,13 @@
 
 沙箱来源布局是合成的：app/helper 为哑文件，engine/backend 复制仓库真实
 engine.py/catalog.py/catalog.json，因此引擎冒烟（test_06）无需 dist 构建产物。
+
+模式参数化（Task 7）：基类 InstallerWindowsTests 用框架依赖夹具（无
+engine\python\python.exe，前置检查强制系统 Python 与 .NET Desktop Runtime）；
+子类 InstallerSelfContainedWindowsTests 把夹具覆写为自包含布局（内置
+engine\python\python.exe、app\hostfxr.dll、engine\site-packages\fitz），
+同一套安装语义在两种模式下重复验证。缺 Python 拒装（test_09）仅适用
+框架依赖模式；自包含模式在无系统 Python 时 -Check 与安装照常通过。
 """
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 AIPDF contributors
@@ -74,6 +81,10 @@ def run_engine(python_exe, engine_py, request):
 
 @unittest.skipUnless(sys.platform == "win32", "Windows installer (Install.ps1) only")
 class InstallerWindowsTests(unittest.TestCase):
+    # False = 框架依赖夹具（无 engine\python\python.exe）；自包含子类覆写为 True。
+    # 用类属性而非 setUp 赋值：子类覆写不会被基类 setUp 顺序覆盖。
+    self_contained = False
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="aipdf-install-test-")
         self.addCleanup(self.temp.cleanup)
@@ -91,14 +102,26 @@ class InstallerWindowsTests(unittest.TestCase):
     # 沙箱来源布局（合成 dist）：哑二进制 + 真实引擎三件套 + Install.ps1 副本。
     # Install.ps1 的 Resolve-SourceLayout 候选 1（$PSScriptRoot）命中该目录。
     # ------------------------------------------------------------------
-    def make_source(self, src, complete=True):
+    def make_source(self, src, complete=True, self_contained=None):
+        # self_contained=None 跟随当前测试类的模式（框架依赖 / 自包含）。
+        if self_contained is None:
+            self_contained = getattr(self, "self_contained", False)
         (src / "app").mkdir(parents=True)
         (src / "app" / "AIPDF.Windows.exe").write_bytes(b"MZ\x90\x00")
         (src / "app" / "AIPDF.Windows.dll").write_bytes(b"")
+        if self_contained:
+            # 自包含标记：.NET 运行时载体（hostfxr）随包内置。
+            (src / "app" / "hostfxr.dll").write_bytes(b"")
         shutil.copyfile(REPO / "backend" / "catalog.json", src / "app" / "catalog.json")
         (src / "engine" / "backend").mkdir(parents=True)
         for name in ("engine.py", "catalog.py", "catalog.json"):
             shutil.copyfile(REPO / "backend" / name, src / "engine" / "backend" / name)
+        if self_contained:
+            # 内置嵌入式解释器与离线 site-packages（哑文件，布局断言用）。
+            (src / "engine" / "python").mkdir(parents=True)
+            (src / "engine" / "python" / "python.exe").write_bytes(b"MZ\x90\x00")
+            (src / "engine" / "site-packages" / "fitz").mkdir(parents=True)
+            (src / "engine" / "site-packages" / "fitz" / "__init__.py").write_text("", encoding="utf-8")
         (src / "helper").mkdir()
         if complete:
             (src / "helper" / "WindowsOcrHelper.exe").write_bytes(b"")
@@ -106,10 +129,10 @@ class InstallerWindowsTests(unittest.TestCase):
         shutil.copyfile(INSTALL_PS1, src / "Install.ps1")
         return src
 
-    def install(self, source=None, target=None, extra=()):
+    def install(self, source=None, target=None, extra=(), env=None):
         script = (source or self.source) / "Install.ps1"
         args = ["-InstallDir", str(target or self.target), "-ShortcutDir", str(self.shortcuts)]
-        return run_installer(script, [*args, *extra])
+        return run_installer(script, [*args, *extra], env=env)
 
     def uninstall(self, target, extra=()):
         args = ["-Uninstall", "-InstallDir", str(target), "-ShortcutDir", str(self.shortcuts)]
@@ -121,10 +144,20 @@ class InstallerWindowsTests(unittest.TestCase):
     def assert_layout(self, root):
         for rel in LAYOUT_FILES:
             self.assertTrue((root / rel).is_file(), f"安装后缺少关键文件：{rel}")
+        if self.self_contained:
+            # 自包含模式追加 3 项：内置解释器、.NET 运行时载体、离线 site-packages。
+            self.assertTrue((root / "engine/python/python.exe").is_file(), "自包含安装缺少内置 Python")
+            self.assertTrue((root / "app/hostfxr.dll").is_file(), "自包含安装缺少 .NET 运行时载体")
+            self.assertTrue((root / "engine/site-packages/fitz").is_dir(), "自包含安装缺少 site-packages/fitz")
         info = root / "install-info.json"
         self.assertTrue(info.is_file(), "缺少 install-info.json")
         data = json.loads(info.read_text(encoding="utf-8"))
         self.assertEqual(data.get("layout"), "aipdf-windows")
+        self.assertEqual(
+            data.get("mode"),
+            "self-contained" if self.self_contained else "framework-dependent",
+            "install-info.json 应记录安装模式",
+        )
 
     def backups(self, parent=None):
         parent = parent or self.parent
@@ -331,6 +364,17 @@ class InstallerWindowsTests(unittest.TestCase):
     # 打印原因跳过（不静默）。
     # ------------------------------------------------------------------
     def test_09_prerequisite_guidance(self):
+        if self.self_contained:
+            return self._selfcontained_prerequisite_guidance()
+
+        # 框架依赖夹具专用脚本（无 engine\python\python.exe，前置检查强制）。
+        # 不用仓库根 Install.ps1：本机 dist 可能是自包含产物，会跳过系统前置。
+        fw_source = self.make_source(
+            self.root / "fw source with spaces" / "aipdf-dist",
+            complete=True, self_contained=False,
+        )
+        fw_script = fw_source / "Install.ps1"
+
         # 子测试 A：PATH 只留 System32 → Python 缺失 → 指引文案。
         scrubbed = os.environ.copy()
         scrubbed["PATH"] = str(Path(os.environ["SystemRoot"]) / "System32")
@@ -342,7 +386,7 @@ class InstallerWindowsTests(unittest.TestCase):
         found = probe.stdout.decode("utf-8", "replace").strip()
         if found:
             self.skipTest(f"清洗 PATH 后仍能找到 Python，无法模拟缺失：{found}")
-        rc, out, err = run_installer(INSTALL_PS1, ["-Check"], env=scrubbed)
+        rc, out, err = run_installer(fw_script, ["-Check"], env=scrubbed)
         self.assertEqual(rc, 1, "缺 Python 时 -Check 应失败")
         self.assertIn("Python 3.12", err)
         self.assertIn("python.org", err)
@@ -359,14 +403,35 @@ class InstallerWindowsTests(unittest.TestCase):
         fake_lad = self.root / "empty LocalAppData"
         fake_lad.mkdir()
         scrubbed2["LOCALAPPDATA"] = str(fake_lad)
-        rc, out, err = run_installer(INSTALL_PS1, ["-Check"], env=scrubbed2)
+        rc, out, err = run_installer(fw_script, ["-Check"], env=scrubbed2)
         self.assertEqual(rc, 1, "缺 .NET Desktop Runtime 时 -Check 应失败")
         self.assertIn(".NET 8 Desktop Runtime", err)
         self.assertIn("dotnet.microsoft.com", err)
 
-        # 子测试 C（正例）：本机前置齐全时 -Check 通过。
+        # 子测试 C（正例）：本机前置齐全时 -Check 通过（仓库根脚本）。
         rc, out, err = run_installer(INSTALL_PS1, ["-Check"])
         self.assertEqual(rc, 0, f"本机 -Check 应通过：{err}")
+        self.assertIn("环境检查通过", out)
+
+    def _selfcontained_prerequisite_guidance(self):
+        """自包含模式：无系统 Python（清洗 PATH）时 -Check 仍通过。"""
+        scrubbed = os.environ.copy()
+        scrubbed["PATH"] = str(Path(os.environ["SystemRoot"]) / "System32")
+        probe = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "@('py','python','python3') | ForEach-Object { $c = Get-Command $_ -ErrorAction SilentlyContinue; if ($c) { $c.Source } }"],
+            capture_output=True, env=scrubbed,
+        )
+        found = probe.stdout.decode("utf-8", "replace").strip()
+        if found:
+            self.skipTest(f"清洗 PATH 后仍能找到 Python，无法模拟缺失：{found}")
+        rc, out, err = run_installer(self.source / "Install.ps1", ["-Check"], env=scrubbed)
+        self.assertEqual(rc, 0, f"自包含 -Check 不应依赖系统 Python：{err}")
+        self.assertIn("安装模式：自包含", out)
+        self.assertIn("环境检查通过", out)
+        # 正例：正常环境同样通过。
+        rc, out, err = run_installer(self.source / "Install.ps1", ["-Check"])
+        self.assertEqual(rc, 0, f"自包含 -Check 应通过：{err}")
         self.assertIn("环境检查通过", out)
 
     # ------------------------------------------------------------------
@@ -409,6 +474,33 @@ class InstallerWindowsTests(unittest.TestCase):
                     os.rmdir(self.target)  # 只移除 junction 重解析点，不动指向内容
                 except OSError:
                     pass
+
+
+@unittest.skipUnless(sys.platform == "win32", "Windows installer (Install.ps1) only")
+class InstallerSelfContainedWindowsTests(InstallerWindowsTests):
+    """同一套安装语义在自包含安装包（内置 engine\python\python.exe）下的重复验证。
+
+    基类全部用例（test_01..test_11）继承运行：布局/备份/回滚/快捷方式/卸载/
+    防覆盖/防链接语义与模式无关，应同时成立；assert_layout 追加自包含 3 项并
+    校验 install-info.json 的 mode=self-contained。test_09 在本类切换为
+    "无系统 Python 时 -Check 通过"（缺 Python 拒装仅适用框架依赖模式）。
+    """
+
+    self_contained = True
+
+    # ------------------------------------------------------------------
+    # 自包含专属：系统无 Python/dotnet（清洗 PATH）时安装照常完成。
+    # ------------------------------------------------------------------
+    def test_12_installs_without_system_python(self):
+        scrubbed = os.environ.copy()
+        scrubbed["PATH"] = str(Path(os.environ["SystemRoot"]) / "System32")
+        rc, out, err = self.install(env=scrubbed)
+        self.assertEqual(rc, 0, f"自包含安装不应依赖系统 Python：{err}")
+        self.assertIn("安装模式：自包含", out)
+        self.assertIn("无需系统 Python", out)
+        self.assert_layout(self.target)
+        self.assertEqual(self.backups(), [])
+        self.assert_no_staging()
 
 
 if __name__ == "__main__":
