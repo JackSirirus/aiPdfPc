@@ -55,6 +55,7 @@
                 <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,10,0,0" Style="{StaticResource FieldLabel}" Text="编辑方式" />
                 <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,10,0,0" Width="240" HorizontalAlignment="Left"
                           Style="{StaticResource FieldComboBox}"
+                          AutomationProperties.Name="编辑方式"
                           ItemsSource="{Binding Modes}"
                           SelectedItem="{Binding Mode}" />
 

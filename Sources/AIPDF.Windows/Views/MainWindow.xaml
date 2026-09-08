@@ -32,6 +32,8 @@
             <Setter Property="Margin" Value="2,1" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
+            <!-- 侧栏条目的可访问名称取自工具名（否则 UIA 通报类型名 AIPDF.Windows.Models.Tool） -->
+            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">

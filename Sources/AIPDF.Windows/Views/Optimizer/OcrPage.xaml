@@ -139,6 +139,7 @@
                               MinWidth="260"
                               HorizontalAlignment="Left"
                               Margin="0,10,0,0"
+                              AutomationProperties.Name="识别语言"
                               ItemsSource="{Binding Languages}"
                               SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}"
                               DisplayMemberPath="DisplayName"
