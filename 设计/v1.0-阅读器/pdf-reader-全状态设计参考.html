@@ -1,0 +1,795 @@
+<!-- AIPDF 阅读器 全状态设计参考 · v1.0 · 2026-09-10
+     配套：pdf-reader-设计稿.html（v1.1 方案A细化版）
+     覆盖：30 个页面状态 + Toast 汇总 + 边界情况 + 交互行为规则表
+     技术依据：WPF 渲染管线 / 文本层 / 引擎桥接调研（2026-09-10） -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AIPDF 阅读器 · 全状态设计参考 v1.0</title>
+<style>
+:root{--win:#FFFFFF;--side:#F6F6F8;--hov:#EBEBEF;--bd:#E4E4E9;--t1:#1D1D1F;--t2:#6E6E73;--t3:#9A9AA0;--acc:#3159D9;--accsoft:#E4EAFB;--acct:#2A4CBB;--readbg:#EDEDF1;--hl:rgba(255,224,102,.55);--ok:#34A853;--err:#D93025;--warn:#E8710A;--mask:rgba(29,29,31,.45)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei",sans-serif;color:var(--t1);background:#fff;font-size:13px;line-height:1.6}
+button{font-family:inherit;cursor:pointer}
+/* ---- 文档骨架 ---- */
+.doc{max-width:1060px;margin:0 auto;padding:32px 28px 80px}
+.doc h1{font-size:20px;margin-bottom:4px}
+.doc .ver{font-size:12px;color:var(--t2);margin-bottom:18px}
+.toc{background:var(--side);border:1px solid var(--bd);border-radius:8px;padding:14px 18px;margin-bottom:28px}
+.toc .t{font-size:13px;font-weight:600;margin-bottom:8px}
+.toc ol{margin-left:18px;font-size:12px;color:var(--t2)}
+.toc a{color:var(--acct);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.gtitle{font-size:16px;font-weight:700;margin:40px 0 4px;padding-top:12px;border-top:2px solid var(--side)}
+.gsub{font-size:12px;color:var(--t2);margin-bottom:14px}
+.state{margin-bottom:34px;scroll-margin-top:12px}
+.shead{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.shead .id{font-size:11px;color:var(--t3);font-weight:600}
+.shead h3{font-size:14px;font-weight:600}
+.sdesc{font-size:12px;color:var(--t2);margin:2px 0 8px}
+.chip{font-size:10px;font-weight:700;border-radius:4px;padding:1px 7px;color:#fff;vertical-align:1px}
+.c-ok{background:var(--ok)}.c-load{background:var(--acc)}.c-empty{background:var(--t3)}.c-err{background:var(--err)}.c-off{background:var(--t2)}.c-part{background:var(--warn)}.c-edge{background:#7B61C4}
+/* ---- 预览框架 ---- */
+.pv{border:1px solid var(--bd);border-radius:8px;overflow:hidden;width:880px;background:var(--win);margin-bottom:8px}
+.pvbar{height:26px;background:var(--side);border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:6px;padding:0 10px;font-size:11px;color:var(--t2)}
+.pvbar .dot3{display:flex;gap:4px}
+.pvbar .dot3 i{width:7px;height:7px;border-radius:50%;background:#C9C9D1;display:block}
+.pvbody{display:flex;min-height:220px;position:relative}
+.pv .col{background:var(--side);border-right:1px solid var(--bd);padding:8px;width:170px;flex:0 0 170px}
+.pv .body{flex:1;background:var(--readbg);padding:10px;position:relative;min-width:0}
+.pv .pagebox{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12);aspect-ratio:210/260;margin:0 auto;width:64%;padding:14px 16px;position:relative}
+.pv .ln{height:4px;border-radius:2px;background:var(--bd);margin-bottom:6px}
+.pv .ln.w60{width:60%}.pv .ln.w80{width:80%}.pv .ln.w90{width:90%}
+.pv .pgfoot{height:24px;background:var(--side);border-top:1px solid var(--bd);display:flex;align-items:center;gap:10px;padding:0 10px;font-size:10px;color:var(--t2)}
+.mini-tabs{display:flex;gap:2px;margin-bottom:8px}
+.mini-tabs span{flex:1;text-align:center;padding:3px 0;font-size:10px;border-radius:4px;color:var(--t2)}
+.mini-tabs span.on{background:#fff;color:var(--acct);font-weight:600}
+.mini-tabs span:not(.on):hover{background:var(--hov)}
+/* 组件 */
+.tbar{height:30px;background:var(--side);border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:5px;padding:0 8px;font-size:11px}
+.tbar .brand{display:flex;align-items:center;gap:5px;font-weight:700;color:var(--t1)}
+.tbar .brand .mark{width:15px;height:15px;border-radius:4px;background:var(--acc);color:#fff;font-size:8px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.tbar .tab{display:flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:4px 4px 0 0;color:var(--t2);white-space:nowrap;overflow:hidden}
+.tbar .tab.active{background:#fff;color:var(--t1);box-shadow:inset 0 -2px 0 var(--acc)}
+.tbar .tab .x{color:var(--t3);font-size:9px}
+.tbar .tab .newdot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.tbar .grow{flex:1}
+.tbar .sinput{background:#fff;border:1px solid var(--bd);border-radius:4px;padding:2px 8px;font-size:10px;color:var(--t1);min-width:120px}
+.tbar .sinput.dis{color:var(--t3);background:var(--hov)}
+.sbtn{width:18px;height:18px;border:none;background:transparent;border-radius:4px;color:var(--t2);font-size:10px}
+.btn{border:1px solid var(--bd);background:#fff;border-radius:5px;padding:5px 12px;font-size:11px}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn:not(.primary):hover{background:var(--hov)}
+.toast{position:absolute;right:10px;bottom:32px;background:#fff;border:1px solid var(--bd);border-radius:7px;box-shadow:0 4px 14px rgba(0,0,0,.16);padding:8px 12px;font-size:11px;display:flex;align-items:center;gap:7px;z-index:30;max-width:420px}
+.toast .tick{color:var(--ok);font-weight:700}
+.toast .warn{color:var(--warn);font-weight:700}
+.toast .cross{color:var(--err);font-weight:700}
+.toast .sub{color:var(--t3);font-size:10px}
+.toast .act{color:var(--acc);cursor:pointer;white-space:nowrap}
+.savepill{margin-left:auto;background:var(--accsoft);color:var(--acct);border-radius:5px;padding:2px 8px;font-size:10px}
+.savepill.ok .dot{color:var(--ok)}.savepill.bus .dot{color:var(--warn);animation:blink 1s infinite}
+.savepill.fail{background:#FCE8E6;color:#A50E0E}
+.savepill .dot{color:var(--ok)}
+@keyframes blink{50%{opacity:.2}}
+.spinner{width:14px;height:14px;border:2px solid var(--accsoft);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite;display:inline-block;vertical-align:-2px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.wizard{position:absolute;left:50%;top:10%;transform:translateX(-50%);width:360px;background:#fff;border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.28);z-index:21;padding:14px}
+.wizard .wt{font-size:13px;font-weight:600;margin-bottom:2px}
+.wizard .wd{font-size:10px;color:var(--t3);margin-bottom:10px}
+.wfile{display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--bd);border-radius:5px;font-size:11px;margin-bottom:5px}
+.wfile .tag{font-size:9px;background:var(--accsoft);color:var(--acct);border-radius:3px;padding:1px 5px;flex:0 0 auto}
+.wfile .ord{margin-left:auto;color:var(--t3);font-size:10px;white-space:nowrap}
+.wadd{display:flex;align-items:center;justify-content:center;padding:6px;border:1px dashed #C9C9D1;border-radius:5px;font-size:11px;color:var(--t2);margin-bottom:12px}
+.mask{position:absolute;inset:0;background:var(--mask);z-index:20}
+.note-pop{position:absolute;top:36%;left:44%;width:200px;background:#fff;border:1px solid var(--bd);border-radius:7px;box-shadow:0 4px 14px rgba(0,0,0,.18);padding:8px 10px;z-index:6}
+.note-pop .nh{display:flex;align-items:center;font-size:10px;color:var(--t3);margin-bottom:4px}
+.note-pop .nh .ops{margin-left:auto;display:flex;gap:6px}
+.note-pop .nh .ops span{cursor:pointer;color:var(--acc)}
+.note-pop .nt{font-size:11px;line-height:1.5}
+.floatmenu{position:absolute;top:44%;left:30%;background:#fff;border:1px solid var(--bd);border-radius:5px;box-shadow:0 2px 8px rgba(0,0,0,.18);display:flex;z-index:5}
+.floatmenu span{padding:4px 8px;font-size:10px;border-right:1px solid var(--bd);white-space:nowrap}
+.floatmenu span:last-child{border-right:none}
+.start-hero{text-align:center;padding-top:22px}
+.start-hero .logo{width:38px;height:38px;border-radius:10px;background:var(--acc);color:#fff;font-size:18px;display:flex;align-items:center;justify-content:center;margin:0 auto 8px}
+.start-hero .openbtn{background:var(--acc);color:#fff;border:none;border-radius:7px;padding:7px 20px;font-size:12px;font-weight:600}
+.start-hero .draghint{font-size:10px;color:var(--t3);margin-top:6px}
+.hititem{display:flex;align-items:baseline;font-size:10px;padding:3px 5px;border-radius:3px;line-height:1.4}
+.hititem.cur{background:var(--accsoft)}
+.hititem .pg{color:var(--t3);font-size:9px;flex:0 0 auto;margin-right:5px}
+.hititem b{color:var(--acc)}
+.tocitem{display:flex;align-items:baseline;font-size:11px;padding:3px 4px;border-radius:3px}
+.tocitem .dots{flex:1;border-bottom:1px dotted #C9C9D1;margin:0 5px}
+.tocitem .pg{color:var(--t3);font-size:9px}
+.tocitem.lv1{font-weight:600}
+.tocitem.lv2{padding-left:14px;color:var(--t2)}
+.markrect{position:absolute;background:rgba(255,214,64,.6);border-radius:2px}
+.markrect.cur{background:rgba(255,150,40,.75);outline:2px solid #E8710A}
+.notemark{display:inline-block;margin-left:2px;width:11px;height:11px;border-radius:50%;background:var(--acc);color:#fff;font-size:7px;text-align:center;line-height:11px;vertical-align:1px}
+.warncard{position:absolute;left:50%;top:12px;transform:translateX(-50%);background:#FEF7E0;border:1px solid #F0D48A;color:#7A5A00;font-size:10px;border-radius:6px;padding:5px 12px;z-index:8;white-space:nowrap}
+.errcard{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:16px 20px;text-align:center;z-index:8;width:300px}
+.errcard .eic{font-size:22px;margin-bottom:6px}
+.errcard .et{font-size:12px;font-weight:600;margin-bottom:4px}
+.errcard .ed{font-size:11px;color:var(--t2);margin-bottom:10px}
+.skel{background:linear-gradient(90deg,#EDEDF1 25%,#F6F6F8 50%,#EDEDF1 75%);background-size:200% 100%;animation:sh 1.4s infinite;border-radius:3px}
+@keyframes sh{to{background-position:-200% 0}}
+.drawerish{position:absolute;right:0;top:0;bottom:0;width:150px;background:#fff;border-left:1px solid var(--bd);padding:8px;font-size:10px;z-index:10}
+.drawerish .dt{font-size:12px;font-weight:600;margin-bottom:6px}
+.pfield{margin-bottom:7px}
+.pfield .plbl{font-size:9px;color:var(--t3);margin-bottom:2px}
+.pfield .pinput{border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:10px;background:#fff;color:var(--t1)}
+.pfield .pinput.err{border-color:var(--err);background:#FCE8E6}
+.perr{font-size:9px;color:var(--err);margin-top:2px}
+.notes{margin:0 0 6px;padding-left:18px;font-size:12px;color:var(--t2);width:880px}
+.notes li{margin-bottom:3px}
+.notes b{color:var(--t1)}
+/* 表格 */
+table.rules{border-collapse:collapse;width:100%;font-size:12px;margin:10px 0 30px}
+.rules th{background:var(--side);text-align:left;font-weight:600;padding:7px 10px;border:1px solid var(--bd);white-space:nowrap}
+.rules td{padding:7px 10px;border:1px solid var(--bd);vertical-align:top}
+.rules td.trig{white-space:nowrap;color:var(--acct);font-weight:600;font-size:11px}
+.rules tr:nth-child(even) td{background:#FAFAFC}
+table.toasts{border-collapse:collapse;width:100%;font-size:12px;margin:10px 0 30px}
+.toasts th{background:var(--side);text-align:left;font-weight:600;padding:7px 10px;border:1px solid var(--bd)}
+.toasts td{padding:7px 10px;border:1px solid var(--bd);vertical-align:top}
+.toasts td.msg{font-size:12px}
+.toasts .tag{font-size:10px;font-weight:700;border-radius:4px;padding:1px 6px;color:#fff}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>AIPDF 阅读器 · 全状态设计参考</h1>
+  <div class="ver">版本 v1.0 · 2026-09-10 · 配套《pdf-reader-设计稿.html》v1.1 · 载体：Windows WPF（AIPDF.Windows）</div>
+
+  <div class="toc">
+    <div class="t">目录</div>
+    <ol>
+      <li><a href="#g1">打开与起始页</a>（S01–S08）</li>
+      <li><a href="#g2">阅读区</a>（S09–S12）</li>
+      <li><a href="#g3">全文搜索</a>（S13–S16）</li>
+      <li><a href="#g4">标签与左栏</a>（S17–S19）</li>
+      <li><a href="#g5">批注</a>（S20–S23）</li>
+      <li><a href="#g6">工具执行</a>（S24–S30）</li>
+      <li><a href="#toasts">Toast 汇总与规则</a></li>
+      <li><a href="#edges">边界情况</a></li>
+      <li><a href="#rulestable">交互行为规则表</a></li>
+    </ol>
+  </div>
+
+  <!-- ================= G1 打开与起始页 ================= -->
+  <div class="gtitle" id="g1">一、打开与起始页</div>
+  <div class="gsub">应用启动、文件加载全链路的状态覆盖。</div>
+
+  <div class="state" id="s01">
+    <div class="shead"><span class="id">S01</span><span class="chip c-ok">正常</span><h3>起始页 · 有最近文件</h3></div>
+    <div class="sdesc">应用启动 / 关闭最后一个标签。布局见设计稿 R0。</div>
+    <div class="pv"><div class="pvbar"><span class="dot3"><i></i><i></i><i></i></span> AIPDF</div>
+      <div class="pvbody"><div style="flex:1">
+        <div class="start-hero"><div class="logo">📄</div><button class="openbtn">打开 PDF…</button><div class="draghint">或将文件拖入窗口</div></div>
+        <div style="width:640px;margin:18px auto 0">
+          <div style="font-size:10px;color:var(--t2);margin-bottom:6px">最近打开</div>
+          <div style="display:flex;gap:8px">
+            <div style="flex:1;background:var(--side);border:1px solid var(--bd);border-radius:6px;padding:8px"><div class="pagebox" style="aspect-ratio:210/70;width:100%;padding:6px 8px;margin:0 0 6px"><div class="ln w60"></div><div class="ln w90"></div></div><div style="font-size:10px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">季度运营报告.pdf</div><div style="font-size:9px;color:var(--t3)">12 页 · 1.8 MB · 昨天读到第 3 页</div></div>
+            <div style="flex:1;background:var(--side);border:1px solid var(--bd);border-radius:6px;padding:8px"><div class="pagebox" style="aspect-ratio:210/70;width:100%;padding:6px 8px;margin:0 0 6px"><div class="ln w90"></div><div class="ln w80"></div></div><div style="font-size:10px;font-weight:600">员工手册.pdf</div><div style="font-size:9px;color:var(--t3)">36 页 · 5.2 MB · 09-07 读完</div></div>
+            <div style="flex:1;background:var(--side);border:1px solid var(--bd);border-radius:6px;padding:8px"><div class="pagebox" style="aspect-ratio:210/70;width:100%;padding:6px 8px;margin:0 0 6px"><div class="ln w80"></div><div class="ln w60"></div></div><div style="font-size:10px;font-weight:600">供应商合同-v2.pdf</div><div style="font-size:9px;color:var(--t3)">8 页 · 640 KB · 上周</div></div>
+          </div>
+          <div style="font-size:10px;color:var(--t2);margin:12px 0 6px">常用工具</div>
+          <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:5px;font-size:9px;text-align:center">
+            <div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">合并</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">压缩</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">拆分</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">OCR</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">转Word</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">加密</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">水印</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">工作流程</div>
+          </div>
+          <div style="font-size:10px;color:var(--acc);margin-top:8px">全部 32 个工具 →</div>
+        </div>
+      </div></div></div>
+    <ul class="notes">
+      <li>最近文件卡片显示三行元信息：<b>页数 · 体积 · 上次阅读进度</b>（阅读状态记忆外显），上限 20 条。</li>
+      <li>点击卡片 → 直接恢复到上次页码与缩放（S12 恢复提示条）。</li>
+      <li>点常用工具（无当前文档）：单文件工具弹"选择文件"模态；多文件/多步工具直接弹向导（S26）。</li>
+      <li>右上「清除记录」需二次确认对话框（防误触，连阅读状态一并清理）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s02">
+    <div class="shead"><span class="id">S02</span><span class="chip c-empty">空态</span><h3>起始页 · 无最近文件（首次启动）</h3></div>
+    <div class="sdesc">首次安装或清空记录后。起始页只剩打开入口与工具网格。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;text-align:center;padding-top:36px">
+      <div class="start-hero" style="padding-top:0"><div class="logo">📄</div><button class="openbtn">打开 PDF…</button><div class="draghint">或将文件拖入窗口</div></div>
+      <div style="margin-top:20px;font-size:11px;color:var(--t3)">「最近打开」区整体隐藏，不显示空占位</div>
+      <div style="margin-top:16px;width:420px;margin-left:auto;margin-right:auto;text-align:left">
+        <div style="font-size:10px;color:var(--t2);margin-bottom:6px">常用工具</div>
+        <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:5px;font-size:9px;text-align:center">
+          <div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">合并</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">压缩</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">拆分</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">OCR</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">转Word</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">加密</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">水印</div><div style="background:var(--side);border:1px solid var(--bd);border-radius:5px;padding:6px 2px">工作流程</div>
+        </div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li><b>无最近文件时"最近打开"区块整体隐藏</b>——不用"暂无记录"占位，避免给新用户噪音。</li>
+      <li>常用工具网格保持可见：新用户也可能带着"扫描/合并"目的而来。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s03">
+    <div class="shead"><span class="id">S03</span><span class="chip c-load">加载</span><h3>文档打开中（大文件渐进渲染）</h3></div>
+    <div class="sdesc">PDF 解析 + 首屏页渲染期间。标签已创建，阅读区骨架屏。</div>
+    <div class="pv"><div class="pvbar"><span class="dot3"><i></i><i></i><i></i></span>
+      <span class="tab active" style="height:18px">📄 年度审计报告-合并版.pdf ×</span></div>
+      <div class="pvbody">
+        <div class="col"><div class="mini-tabs"><span class="on">缩略图</span><span>目录</span><span>书签</span></div>
+          <div class="skel" style="aspect-ratio:210/297;border-radius:4px;margin-bottom:6px"></div>
+          <div class="skel" style="aspect-ratio:210/297;border-radius:4px"></div>
+          <div style="font-size:9px;color:var(--t3);margin-top:6px"><span class="spinner"></span> 正在打开…</div></div>
+        <div class="body"><div class="pagebox">
+          <div class="skel" style="height:10px;width:50%;margin:20% auto 10px"></div>
+          <div class="skel" style="height:4px;margin-bottom:6px"></div><div class="skel" style="height:4px;width:80%;margin-bottom:6px"></div><div class="skel" style="height:4px;width:60%"></div>
+        </div>
+        <div style="text-align:center;font-size:10px;color:var(--t3);margin-top:8px"><span class="spinner"></span> 首页渲染中，其余页面就绪后即时显示</div>
+      </div></div>
+      <div class="pgfoot">— /238 · 86.4 MB</div>
+    </div>
+    <ul class="notes">
+      <li><b>渐进渲染</b>：文档结构解析完成即可交互翻页；未渲染页显示骨架占位（渲染管线要求：后台线程 + 页面缓存）。</li>
+      <li>加载期间标签可切换，不阻塞其他标签阅读。</li>
+      <li>页数/体积在解析完成前以"— /… "显示。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s04">
+    <div class="shead"><span class="id">S04</span><span class="chip c-load">加载</span><h3>加密文档 · 密码解锁</h3></div>
+    <div class="sdesc">打开已知密码加密的 PDF 时先要密码。密码仅内存使用，不落盘。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;position:relative">
+      <div class="mask" style="background:rgba(29,29,31,.35)"></div>
+      <div class="errcard" style="top:44%">
+        <div class="eic">🔒</div>
+        <div class="et">此文档已加密</div>
+        <div class="ed">供应商合同-v2.pdf 需要密码才能打开</div>
+        <div style="display:flex;gap:6px;justify-content:center"><input style="flex:1;border:1px solid var(--bd);border-radius:5px;padding:5px 8px;font-size:11px" type="password" placeholder="输入密码"><button class="btn primary">解锁</button></div>
+        <div style="font-size:9px;color:var(--err);margin-top:6px">密码错误，请重试（不限次数）</div>
+        <div style="font-size:10px;color:var(--t3);margin-top:8px">密码仅用于本次处理，不会被保存</div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>密码错误行内提示（红字），不弹 Toast；连续错误不清空输入框、不限次数。</li>
+      <li>取消 / Esc → 关闭密码框，不产生标签。</li>
+      <li>解锁成功后密码仅保存在该标签内存会话中，供后续工具调用使用；关闭标签即丢弃。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s05">
+    <div class="shead"><span class="id">S05</span><span class="chip c-err">错误</span><h3>文件不存在（最近列表失效条目）</h3></div>
+    <div class="sdesc">点击最近文件卡片但文件已被移动/删除。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;padding:12px">
+      <div class="toast" style="position:static;margin:0 0 10px auto"><span class="cross">✕</span><div>无法打开：文件不存在或已被移动<div class="sub">D:\docs\供应商合同-v2.pdf</div></div><span class="act">从最近列表移除</span></div>
+      <div style="display:flex;gap:8px">
+        <div style="flex:1;background:var(--hov);border:1px solid var(--bd);border-radius:6px;padding:8px;opacity:.55"><div class="pagebox" style="aspect-ratio:210/70;width:100%;padding:6px 8px;margin:0 0 6px;filter:grayscale(1)"><div class="ln w80"></div><div class="ln w60"></div></div><div style="font-size:10px;font-weight:600;text-decoration:line-through">供应商合同-v2.pdf</div><div style="font-size:9px;color:var(--err)">文件缺失</div></div>
+        <div style="flex:1;background:var(--side);border:1px solid var(--bd);border-radius:6px;padding:8px"><div class="pagebox" style="aspect-ratio:210/70;width:100%;padding:6px 8px;margin:0 0 6px"><div class="ln w90"></div><div class="ln w80"></div></div><div style="font-size:10px;font-weight:600">员工手册.pdf</div><div style="font-size:9px;color:var(--t3)">36 页 · 5.2 MB</div></div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>失效卡片<b>置灰 + 划线</b>，不自动删除（可能是临时断开的网络盘/移动设备）。</li>
+      <li>Toast 错误 8s，附「从最近列表移除」动作按钮。</li>
+      <li>启动时批量校验最近列表（存在性检查，不读内容），缺失条目直接置灰。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s06">
+    <div class="shead"><span class="id">S06</span><span class="chip c-err">错误</span><h3>文件损坏 / 无法解析</h3></div>
+    <div class="sdesc">PDF 头损坏、非 PDF 伪扩展等。引擎端有损坏输入压力测试覆盖。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;position:relative">
+      <div class="mask" style="background:rgba(29,29,31,.25)"></div>
+      <div class="errcard">
+        <div class="eic">⚠️</div>
+        <div class="et">无法打开此文档</div>
+        <div class="ed">文件损坏或不是有效的 PDF。可尝试「修复 PDF」工具恢复可读内容。</div>
+        <div style="display:flex;gap:6px;justify-content:center">
+          <button class="btn">关闭</button>
+          <button class="btn primary">用修复工具打开</button>
+        </div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>错误对话框给出<b>下一步出口</b>：直接引导到 repair 工具（向导式，损坏文件预填）。</li>
+      <li>「用修复工具打开」→ repair 向导/参数面板，输入预填该文件。</li>
+      <li>不产生残留的坏标签。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s07">
+    <div class="shead"><span class="id">S07</span><span class="chip c-err">错误</span><h3>拖入非 PDF 文件 / 文件夹</h3></div>
+    <div class="sdesc">拖拽校验在落点即时反馈，不打断当前阅读。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div></div>
+      <div class="warncard" style="background:#FCE8E6;border-color:#F5B5B0;color:#A50E0E">✕ 仅支持 PDF 文件 — 拖入了 3 个不支持的文件</div>
+      <div class="toast" style="position:static;margin:12px auto 0;width:360px"><span class="cross">✕</span><div>仅支持 PDF 文件<div class="sub">拖入了 .docx ×2、.png ×1</div></div></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>拖入混合内容（PDF+非PDF）：PDF 正常打开，非 PDF 部分汇总在一条 Toast 里列出扩展名。</li>
+      <li>拖入文件夹：提示"不支持文件夹，请选择 PDF 文件"。</li>
+      <li>拖拽悬停时窗口显示浅蓝色落点框（未画出，全局拖放视觉态）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s08">
+    <div class="shead"><span class="id">S08</span><span class="chip c-part">部分可用</span><h3>文件被占用 / 只读</h3></div>
+    <div class="sdesc">文件被其他程序锁定或无读取权限。读取走 FileShare.ReadWrite，尽量可用。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;padding:10px;position:relative">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div></div>
+      <div class="warncard">⚠ 文件被其他程序占用 · 以只读方式打开，批注无法保存</div>
+      <div class="pgfoot"><span class="savepill fail">🔒 只读 · 批注不可用</span></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>尝试 FileShare.ReadWrite 读取成功 → 可正常阅读，但批注保存必然失败 → 提前降级：选中浮菜单隐藏「高亮/笔记」，savepill 显示「只读」。</li>
+      <li>完全无法读取 → 走 S06 同款错误对话框（文案区分"被占用/无权限"）。</li>
+    </ul>
+  </div>
+
+  <!-- ================= G2 阅读区 ================= -->
+  <div class="gtitle" id="g2">二、阅读区</div>
+
+  <div class="state" id="s09">
+    <div class="shead"><span class="id">S09</span><span class="chip c-ok">正常</span><h3>连续滚动阅读（基准态）</h3></div>
+    <div class="sdesc">主界面基准，见设计稿主视图与标注 ①–⑥。</div>
+    <div class="pv"><div class="pvbody">
+      <div class="col"><div class="mini-tabs"><span class="on">缩略图</span><span>目录</span><span>书签</span></div>
+        <div class="pagebox" style="aspect-ratio:210/110;width:100%;padding:8px;margin-bottom:6px;outline:2px solid var(--acc);outline-offset:1px"><div class="ln w60"></div><div class="ln w90"></div></div>
+        <div class="pagebox" style="aspect-ratio:210/110;width:100%;padding:8px;margin-bottom:6px"><div class="ln w80"></div><div class="ln w60"></div></div>
+        <div style="font-size:9px;color:var(--t3)">12 页 · 1.8 MB · 可搜索</div></div>
+      <div class="body">
+        <div class="pagebox"><div style="font-size:11px;font-weight:600;margin-bottom:8px">一、核心指标</div><div style="font-size:10px;line-height:1.7">付费转化率 <span style="background:var(--hl)">3.2%</span><span class="notemark">1</span>，环比提升 0.4pt…</div></div>
+        <div class="pagebox" style="margin-top:8px;height:60px;padding:8px"><div class="ln w90"></div><div class="ln w60"></div></div>
+      </div>
+      <div class="pgfoot">◀ <b style="color:var(--acc)">3</b>/12 ▶ · <span>− 100% ＋</span> · 适配宽度 · <span class="savepill ok"><span class="dot">●</span> 批注已保存</span></div>
+    </div></div>
+    <ul class="notes">
+      <li>当前页 = 视口中占比最大的页；缩略图选中态与页码同步跟随滚动。</li>
+      <li>滚动是连续的：页与页之间 16px 间距，无翻页动画。</li>
+      <li>虚拟化要求：仅可视页 ± 缓冲页持有位图（渲染管线调研：现状无缓存，必须重建）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s10">
+    <div class="shead"><span class="id">S10</span><span class="chip c-load">加载</span><h3>快速滚动到未渲染页（占位态）</h3></div>
+    <div class="sdesc">大文档快速滚动，目标页尚未渲染完成。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+      <div class="pagebox" style="margin-top:8px;display:flex;align-items:center;justify-content:center">
+        <div style="text-align:center"><span class="spinner"></span><div style="font-size:10px;color:var(--t3);margin-top:4px">第 47 页渲染中…</div></div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>占位保持目标页的正确宽高比（避免滚动跳动）。</li>
+      <li>渲染完成直接替换，无闪烁；滚动停止后优先渲染视口内页面。</li>
+      <li>渲染队列策略：可视区 &gt; 翻页方向邻近页 &gt; 缩略图。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s11">
+    <div class="shead"><span class="id">S11</span><span class="chip c-edge">边界</span><h3>缩放边界（25% / 400%）</h3></div>
+    <div class="sdesc">Ctrl+滚轮 / 按钮 到达阶梯端点。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox" style="width:220px;aspect-ratio:210/160"><div class="ln w60"></div><div class="ln w80"></div></div>
+      <div class="pgfoot" style="position:absolute;bottom:0;left:0;right:0">
+        <button class="sbtn" style="color:var(--t3);cursor:default" title="已达最小">−</button><span>25%</span><button class="sbtn">＋</button>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>阶梯：25 / 33 / 50 / 67 / 100 / 150 / 200 / 300 / 400%。到边界后按钮置灰禁用，Ctrl+滚轮不再变化。</li>
+      <li>「适配宽度」「适配页面」为动态档：窗口 resize 时重算，用户手动缩放后脱离适配档。</li>
+      <li>缩放值随阅读状态记忆持久化。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s12">
+    <div class="shead"><span class="id">S12</span><span class="chip c-part">部分可用</span><h3>恢复上次阅读位置（提示条）</h3></div>
+    <div class="sdesc">打开带阅读记忆的文档时的一次性提示。轻提示条，不是 Toast。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="warncard" style="background:var(--accsoft);border-color:#B9C8F0;color:var(--acct)">↩ 已恢复到第 3 页 · 上次阅读于昨天 18:42</div>
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>阅读区顶部居中提示条，2s 自动消失，不打断阅读（区别于右下角 Toast）。</li>
+      <li>记忆内容：页码、缩放、左栏面板与选中 tab、书签。存储：%APPDATA%\AIPDF\reading-state\{文件hash}.json（schema 版本化）。</li>
+      <li>记忆损坏/不可读 → 静默忽略重建（不提示、不崩溃）。</li>
+    </ul>
+  </div>
+
+  <!-- ================= G3 全文搜索 ================= -->
+  <div class="gtitle" id="g3">三、全文搜索</div>
+
+  <div class="state" id="s13">
+    <div class="shead"><span class="id">S13</span><span class="chip c-ok">正常</span><h3>搜索 · 有结果</h3></div>
+    <div class="sdesc">见设计稿 R1。左栏切"搜索"面板，页内高亮全部命中。</div>
+    <div class="pv"><div class="pvbody">
+      <div class="col"><div class="mini-tabs"><span>缩略图</span><span>目录</span><span>书签</span></div>
+        <div class="mini-tabs"><span class="on" style="background:#fff;color:var(--acct);font-weight:600">搜索 ✕</span></div>
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;font-size:9px;color:var(--t3)"><button class="sbtn" style="border:1px solid var(--bd);background:#fff">◀</button><button class="sbtn" style="border:1px solid var(--bd);background:#fff">▶</button><span>3 / 6</span></div>
+        <div class="hititem"><span class="pg">P1</span>…付费<b>转化率</b> 3.2%…</div>
+        <div class="hititem cur"><span class="pg">P2</span>…付费<b>转化率</b> 3.2%，环比提升…</div>
+        <div class="hititem"><span class="pg">P5</span>…分渠道<b>转化率</b>…</div></div>
+      <div class="body"><div class="pagebox">
+        <div style="font-size:11px;font-weight:600;margin-bottom:8px">一、核心指标</div>
+        <div style="font-size:10px;line-height:1.7;position:relative">付费转化率 3.2%，环比提升 0.4 个百分点
+          <span class="markrect cur" style="left:6px;top:14px;width:120px;height:12px"></span>
+          <span class="markrect" style="left:6px;top:52px;width:80px;height:12px"></span>
+        </div></div></div></div></div>
+    <ul class="notes">
+      <li>输入防抖 300ms 后检索；命中按文档顺序列出，当前项高亮同步页内橙框。</li>
+      <li>回车下一处 / Shift+回车上一处 / Esc 退出清除。</li>
+      <li>面板宽 200px，命中项上下文截断为单行 ellipsis，悬停显示全文。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s14">
+    <div class="shead"><span class="id">S14</span><span class="chip c-empty">空态</span><h3>搜索 · 无结果</h3></div>
+    <div class="sdesc">关键词在文档中无命中。</div>
+    <div class="pv"><div class="pvbody"><div class="col">
+      <div class="mini-tabs"><span class="on" style="background:#fff;color:var(--acct);font-weight:600">搜索 ✕</span></div>
+      <div class="sinput" style="display:block;border:1px solid var(--bd);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--t1);margin-bottom:10px">NPS短板</div>
+      <div style="text-align:center;padding:26px 8px;color:var(--t3);font-size:10px">
+        <div style="font-size:18px;margin-bottom:6px">🔍</div>
+        未找到「NPS短板」<br><span style="font-size:9px">试试其他关键词，或检查全文是否为图片型页面</span>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>空态文案给出一个可能原因（图片页），并引导无文本层状态（S15）。</li>
+      <li>清空输入框 → 面板回到"输入关键词"提示态，页内高亮清除。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s15">
+    <div class="shead"><span class="id">S15</span><span class="chip c-off">禁用</span><h3>搜索 · 无文本层文档（扫描件）</h3></div>
+    <div class="sdesc">纯图片扫描 PDF 无文本层，搜索整体禁用并引导 OCR。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1">
+      <div class="tbar"><span class="brand"><span class="mark">A</span>AIPDF</span><span class="grow"></span>
+        <span class="sinput dis">此文档无文本层，搜索不可用</span></div>
+      <div class="pvbody"><div class="body">
+        <div class="pagebox"><div class="skel" style="height:8px;width:40%;margin-bottom:8px"></div><div class="skel" style="height:60px;width:70%;margin-bottom:8px"></div><div class="ln w90"></div><div class="ln w60"></div></div>
+        <div class="toast"><span class="warn">!</span><div>扫描件无法搜索<div class="sub">可先运行 OCR 识别生成文本层</div></div><span class="act">去 OCR →</span></div>
+      </div></div></div></div>
+    <ul class="notes">
+      <li>搜索框置灰，占位文案换成引导语；Ctrl+F 聚焦时显示引导 Toast（警告 6s）。</li>
+      <li>「去 OCR」→ 右抽屉定位到 OCR 工具并展开参数面板（输入已预填当前文档）。</li>
+      <li>OCR 完成 → 结果开新标签（有文本层），Toast 引导"已可搜索"。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s16">
+    <div class="shead"><span class="id">S16</span><span class="chip c-load">加载</span><h3>搜索 · 大文档索引中</h3></div>
+    <div class="sdesc">百页以上文档首次检索时的过渡态。</div>
+    <div class="pv"><div class="pvbody"><div class="col">
+      <div class="mini-tabs"><span class="on" style="background:#fff;color:var(--acct);font-weight:600">搜索 ✕</span></div>
+      <div class="sinput" style="display:block;border:1px solid var(--acc);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--t1);margin-bottom:10px">转化率</div>
+      <div style="font-size:10px;color:var(--t3);padding:10px 4px"><span class="spinner"></span> 正在检索 238 页…</div>
+    </div></div></div>
+    <ul class="notes">
+      <li>索引构建一次、会话内复用（不逐次检索重扫）。</li>
+      <li>检索完成后结果面板无缝替换；期间可继续阅读/滚动。</li>
+      <li>命中 &gt;200 条时列表截断，头部提示"共 486 处，显示前 200 处，请细化关键词"。</li>
+    </ul>
+  </div>
+
+  <!-- ================= G4 标签与左栏 ================= -->
+  <div class="gtitle" id="g4">四、标签与左栏</div>
+
+  <div class="state" id="s17">
+    <div class="shead"><span class="id">S17</span><span class="chip c-empty">空态</span><h3>目录 · 无文档大纲</h3></div>
+    <div class="sdesc">PDF 没有内建 Outline。</div>
+    <div class="pv"><div class="pvbody"><div class="col">
+      <div class="mini-tabs"><span>缩略图</span><span class="on" style="background:#fff;color:var(--acct);font-weight:600">目录</span><span>书签</span></div>
+      <div style="text-align:center;padding:30px 8px;color:var(--t3);font-size:10px">
+        <div style="font-size:18px;margin-bottom:6px">📃</div>
+        此文档没有目录<br><span style="font-size:9px">可用缩略图浏览，或为常看页面添加书签</span>
+      </div>
+    </div></div></div>
+    <ul class="notes"><li>空态给替代路径：缩略图 / 添加书签。不提供"自动生成目录"（超范围）。</li></ul>
+  </div>
+
+  <div class="state" id="s18">
+    <div class="shead"><span class="id">S18</span><span class="chip c-empty">空态</span><h3>书签 · 空 + 添加按钮</h3></div>
+    <div class="sdesc">用户尚未添加任何书签。</div>
+    <div class="pv"><div class="pvbody"><div class="col">
+      <div class="mini-tabs"><span>缩略图</span><span>目录</span><span class="on" style="background:#fff;color:var(--acct);font-weight:600">书签</span></div>
+      <div style="text-align:center;padding:16px 8px;color:var(--t3);font-size:10px">尚无书签</div>
+      <button class="btn" style="width:100%;color:var(--acc);border-color:var(--acc)">＋ 收藏当前页</button>
+    </div></div></div>
+    <ul class="notes">
+      <li>书签条目 = 页码 + 自动标题（目标页首行文字截断）+ 时间；悬停出现 🗑。</li>
+      <li>书签存入阅读状态文件，与文档绑定、跨会话保留。</li>
+      <li>快捷键 Ctrl+B 收藏当前页。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s19">
+    <div class="shead"><span class="id">S19</span><span class="chip c-edge">边界</span><h3>标签栏溢出（多文档）</h3></div>
+    <div class="sdesc">标签过多超出顶栏宽度。</div>
+    <div class="pv">
+      <div class="tbar"><span class="brand"><span class="mark">A</span></span>
+        <span class="tab active" style="max-width:120px">📄 年度审计报告-合并版… <span class="x">×</span></span>
+        <span class="tab" style="max-width:120px">📄 供应商合同-v2.pdf <span class="x">×</span></span>
+        <span class="tab" style="max-width:120px">📄 会议纪要-0908 <span class="x">×</span></span>
+        <span style="color:var(--t3);font-size:10px">◀ ▶</span>
+        <button class="sbtn">＋</button><span class="grow"></span><span class="sinput">搜索…</span></div>
+      <div class="pvbody" style="min-height:60px"><div class="body" style="display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:11px">标签区横向滚动（Shift+滚轮），不压缩标签宽度</div></div>
+    </div>
+    <ul class="notes">
+      <li>标签最小宽度保持可读（约 120px），溢出部分横向滚动；两侧出现滚动指示箭头。</li>
+      <li>长文件名 ellipsis + 悬停完整 title；激活标签优先完整显示。</li>
+      <li>打开已打开的文件 → 激活现有标签（不重复开）。</li>
+    </ul>
+  </div>
+
+  <!-- ================= G5 批注 ================= -->
+  <div class="gtitle" id="g5">五、批注（高亮 + 笔记）</div>
+
+  <div class="state" id="s20">
+    <div class="shead"><span class="id">S20</span><span class="chip c-ok">正常</span><h3>批注 · 高亮与笔记已落</h3></div>
+    <div class="sdesc">见设计稿 R4。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div style="font-size:10px;line-height:1.9">付费转化率 <span style="background:var(--hl)">3.2%，环比提升 0.4 个百分点</span><span class="notemark">1</span>，年度会员占比升至 58%。</div>
+        <div class="note-pop"><div class="nh">📝 笔记 1 · 第 2 页<span class="ops"><span>编辑</span><span>删除</span></span></div><div class="nt">与上季度相比提升明显，周五汇报时重点强调。</div></div>
+      </div>
+      <div class="pgfoot"><span class="savepill ok"><span class="dot">●</span> 批注已保存 · 刚刚</span></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>高亮即时可见（客户端叠加渲染），保存异步进行——视觉不等引擎往返。</li>
+      <li>批注标记 hover 预览；点击进入编辑（弹层内 textarea）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s21">
+    <div class="shead"><span class="id">S21</span><span class="chip c-load">加载</span><h3>批注 · 保存中</h3></div>
+    <div class="sdesc">防抖 2s 后向引擎提交批注批次。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+      <div class="pgfoot"><span class="savepill bus"><span class="dot">●</span> 保存中…</span></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>保存期间可继续阅读/批注；新的批注进入下一批次（队列不重置）。</li>
+      <li>保存中关闭标签 → 先等本次提交完成（或直接取消当前批次，关闭时强制保存一次）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s22">
+    <div class="shead"><span class="id">S22</span><span class="chip c-err">错误</span><h3>批注 · 保存失败</h3></div>
+    <div class="sdesc">引擎往返失败（进程崩溃 / 文件被锁 / 磁盘错误）。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+      <div class="toast"><span class="cross">✕</span><div>批注保存失败<div class="sub">输出文件被占用，批注仍保留在页面上</div></div><span class="act">重试</span><span class="act">另存为…</span></div>
+      <div class="pgfoot"><span class="savepill fail" style="cursor:pointer">保存失败 · 点击重试</span></div>
+    </div></div></div>
+    <ul class="notes">
+      <li><b>客户端批注不丢</b>：失败时叠加层批注保留，可重试或另存为副本。</li>
+      <li>错误 Toast 8s；savepill 常驻失败态直至成功。</li>
+      <li>连续失败 3 次 → Toast 升级为"建议另存为副本"，附「另存为…」。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s23">
+    <div class="shead"><span class="id">S23</span><span class="chip c-off">禁用</span><h3>图片页选区 · 无文字可选中</h3></div>
+    <div class="sdesc">无文本层页面上拖动鼠标（框选行为）。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="skel" style="height:50px;width:80%;margin-bottom:8px"></div><div class="ln w90"></div><div class="ln w60"></div>
+        <div style="position:absolute;left:20px;top:20px;width:80px;height:24px;border:1px dashed var(--acc);background:rgba(49,89,217,.08)"></div></div>
+      <div style="font-size:10px;color:var(--t3);margin-top:6px">拖选结果为矩形区域（无文字）→ 不弹出文字浮菜单</div>
+    </div></div></div>
+    <ul class="notes">
+      <li>v1.0：无文本层页面拖选不出现浮菜单（复制/高亮/笔记均依赖文字）。</li>
+      <li>预留：矩形选区 →「用工具处理」（裁剪/遮盖参数预填）为 v1.1 候选。</li>
+      <li>混合文档（部分页有文本层）：按页判定，有文本层的页正常浮菜单。</li>
+    </ul>
+  </div>
+
+  <!-- ================= G6 工具执行 ================= -->
+  <div class="gtitle" id="g6">六、工具执行</div>
+
+  <div class="state" id="s24">
+    <div class="shead"><span class="id">S24</span><span class="chip c-ok">正常</span><h3>右抽屉 · 单文件工具内联参数面板</h3></div>
+    <div class="sdesc">单文件工具（默认决策）：右抽屉就地展开参数，不弹模态。输入锁定当前文档。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+      <div class="drawerish"><div class="dt">添加水印</div>
+        <div class="pfield"><div class="plbl">输入已锁定</div><div style="font-size:10px;color:var(--t1)">📄 季度运营报告.pdf</div></div>
+        <div class="pfield"><div class="plbl">水印文字</div><div class="pinput">机密文件</div></div>
+        <div class="pfield"><div class="plbl">应用范围</div><div class="pinput">全部 12 页 ▾</div></div>
+        <div style="display:flex;gap:4px;margin-top:10px"><button class="btn">返回</button><button class="btn primary">开始</button></div>
+        <div style="font-size:9px;color:var(--t3);margin-top:8px">每次输出到新任务目录，不覆盖原件</div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>抽屉展开为参数面板：顶部锁定输入（当前文档 + 页码范围默认全文），底部「返回 / 开始」。</li>
+      <li>带预览的编辑类工具（编辑/表单/裁剪）复用现有工具页全屏形态，以临时标签承载（不丢文档上下文）。</li>
+      <li>「返回」收起面板不丢已填参数（会话内保留）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s25">
+    <div class="shead"><span class="id">S25</span><span class="chip c-err">错误</span><h3>参数校验错误</h3></div>
+    <div class="sdesc">必填缺失 / 数值越界，提交前拦截。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="drawerish"><div class="dt">添加水印</div>
+        <div class="pfield"><div class="plbl">水印文字</div><div class="pinput err"></div><div class="perr">水印文字不能为空</div></div>
+        <div class="pfield"><div class="plbl">透明度</div><div class="pinput err">300</div><div class="perr">请输入 0–100 之间的数值</div></div>
+        <div style="display:flex;gap:4px;margin-top:10px"><button class="btn primary" style="opacity:.5;cursor:default">开始</button></div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>行内红字 + 输入框红边；「开始」按钮禁用直到全部合法。</li>
+      <li>校验在输入时即时进行（不等到点击开始）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s26">
+    <div class="shead"><span class="id">S26</span><span class="chip c-empty">空态</span><h3>向导 · 初始（仅当前文档入选）</h3></div>
+    <div class="sdesc">多文件工具打开向导的初始态（如从起始页打开且无文档）。</div>
+    <div class="pv"><div class="pvbody"><div style="flex:1;position:relative">
+      <div class="mask"></div>
+      <div class="wizard"><div class="wt">合并 PDF</div><div class="wd">输出顺序即列表顺序，可调整</div>
+        <div class="wfile">📄 季度运营报告.pdf<span class="tag">当前文档</span><span class="ord">1 ↑ ↓</span></div>
+        <div class="wadd">＋ 添加文件…（或拖入窗口）</div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:9px;color:var(--err)">至少需要 2 份文件</span>
+          <span style="display:flex;gap:5px"><button class="btn">取消</button><button class="btn primary" style="opacity:.5;cursor:default">开始合并</button></span></div>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>校验不过时「开始」禁用 + 左下灰/红提示（≥2 文件、文件可读）。</li>
+      <li>从起始页打开且无当前文档时，列表为空 + 提示"拖入或添加要合并的 PDF"。</li>
+      <li>Esc / 点遮罩 = 取消（若有未提交修改不确认，直接丢弃——向导本身即草稿态）。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s27">
+    <div class="shead"><span class="id">S27</span><span class="chip c-load">加载</span><h3>工具执行中（不阻塞阅读）</h3></div>
+    <div class="sdesc">引擎子进程运行中。进度来自 stderr 事件。</div>
+    <div class="pv"><div class="pvbody">
+      <div class="col"><div class="mini-tabs"><span class="on">缩略图</span><span>目录</span><span>书签</span></div>
+        <div class="pagebox" style="aspect-ratio:210/110;width:100%;padding:8px;margin-bottom:6px;outline:2px solid var(--acc);outline-offset:1px"><div class="ln w60"></div><div class="ln w90"></div></div></div>
+      <div class="body"><div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div></div></div>
+      <div class="pgfoot">
+        <span style="flex:1;height:4px;background:var(--bd);border-radius:2px;position:relative;overflow:hidden"><span style="position:absolute;left:0;top:0;bottom:0;width:62%;background:var(--acc);border-radius:2px"></span></span>
+        <span style="font-size:10px">OCR 第 8/12 页</span><button class="sbtn" title="取消任务">✕</button>
+      </div>
+    </div></div></div>
+    <ul class="notes">
+      <li>进度以<b>当前标签底部细条</b>呈现（不弹进度窗）；阅读、翻页、切标签均不受阻塞。</li>
+      <li>状态栏同步显示运行中工具名 + 取消按钮；取消走 taskkill 子进程树。</li>
+      <li>同一文档同一时刻仅一个任务（引擎单进程契约）；其他标签可并行各自任务？—— v1.0：全局串行队列（沿用引擎契约），后续任务排队并在抽屉/状态栏显示"排队中"。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s28">
+    <div class="shead"><span class="id">S28</span><span class="chip c-err">错误</span><h3>工具执行失败 / 组件缺失</h3></div>
+    <div class="sdesc">引擎返回失败，或外部组件（LibreOffice / Chromium）缺失。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="toast"><span class="cross">✕</span><div>转换失败<div class="sub">未检测到 LibreOffice，Office 转换不可用</div></div><span class="act">安装指引</span><span class="act">查看日志</span></div>
+      <div class="warncard">⚠ Word 转 PDF 需要 LibreOffice · 未安装时此工具不可用</div>
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>组件缺失：参数面板顶部常驻黄色提示条 + 「开始」禁用；Toast 附「安装指引」。</li>
+      <li>一般失败：Toast 8s（重试 / 查看日志——日志为本机任务目录内的引擎 stderr 记录）；抽屉参数保留可改后重试。</li>
+      <li>失败不产生结果标签、不产生半成品标签。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s29">
+    <div class="shead"><span class="id">S29</span><span class="chip c-part">部分可用</span><h3>结果为非 PDF（Word/PPT/Excel/图片）</h3></div>
+    <div class="sdesc">PDF 转 Word 等输出不是 PDF，无法作为标签打开。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="toast"><span class="tick">✓</span><div>转换完成<div class="sub">季度报告.docx · 320 KB</div></div><span class="act">打开文件夹</span></div>
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>不开标签（阅读器只承载 PDF）；Toast 附「打开文件夹」，不自动唤起外部程序。</li>
+      <li>多输出（如 PDF 转图片多页）：Toast 汇总"N 张图片已生成"+ 打开文件夹。</li>
+    </ul>
+  </div>
+
+  <div class="state" id="s30">
+    <div class="shead"><span class="id">S30</span><span class="chip c-part">部分可用</span><h3>首次使用组件下载（网址转 PDF）</h3></div>
+    <div class="sdesc">html_to_pdf 首次使用需下载 Chromium（构建脚本可预下载）。</div>
+    <div class="pv"><div class="pvbody"><div class="body">
+      <div class="toast" style="position:static;margin:8px 10px 0 auto"><span class="warn">⬇</span><div>网址转 PDF 需要下载 Chromium<div class="sub">约 150 MB · 一次性 · 之后离线可用</div></div><span class="act">开始下载</span><span class="act">稍后</span></div>
+      <div class="pagebox"><div class="ln w60"></div><div class="ln w90"></div></div>
+    </div></div></div>
+    <ul class="notes">
+      <li>必须显式征得同意才联网下载（项目边界：不隐式上传/下载）。「稍后」保留任务为草稿。</li>
+      <li>下载中在状态栏显示进度；失败可重试，指引手动安装路径。</li>
+    </ul>
+  </div>
+
+  <!-- ================= Toast 汇总 ================= -->
+  <div class="gtitle" id="toasts">七、Toast 汇总与规则</div>
+  <div class="gsub">右下角堆叠，图标 + 主文案 + 副文案 +（可选）动作按钮。</div>
+
+  <table class="toasts">
+    <tr><th style="width:60px">类型</th><th style="width:330px">文案（主 / 副）</th><th style="width:110px">时长</th><th>动作按钮</th></tr>
+    <tr><td><span class="tag" style="background:var(--ok)">成功</span></td><td class="msg">压缩完成 · 4.2 MB → 1.8 MB<br><span style="color:var(--t3)">已在新标签打开</span></td><td>3s 自动消失</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--ok)">成功</span></td><td class="msg">合并完成 · 2 份文件 · 32 页<br><span style="color:var(--t3)">已在新标签打开</span></td><td>3s</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--ok)">成功</span></td><td class="msg">转换完成 · 季度报告.docx · 320 KB</td><td>5s</td><td>打开文件夹</td></tr>
+    <tr><td><span class="tag" style="background:var(--ok)">成功</span></td><td class="msg">OCR 完成 · 已生成可搜索文本<br><span style="color:var(--t3)">已在新标签打开</span></td><td>4s</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--ok)">成功</span></td><td class="msg">批注已保存</td><td>2s</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--warn)">警告</span></td><td class="msg">扫描件无法搜索<br><span style="color:var(--t3)">可先运行 OCR 识别生成文本层</span></td><td>6s</td><td>去 OCR →</td></tr>
+    <tr><td><span class="tag" style="background:var(--warn)">警告</span></td><td class="msg">网址转 PDF 需要下载 Chromium<br><span style="color:var(--t3)">约 150 MB · 一次性</span></td><td>10s</td><td>开始下载 / 稍后</td></tr>
+    <tr><td><span class="tag" style="background:var(--warn)">警告</span></td><td class="msg">文件被其他程序占用<br><span style="color:var(--t3)">以只读方式打开，批注不可用</span></td><td>6s</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">无法打开：文件不存在或已被移动<br><span style="color:var(--t3)">D:\docs\供应商合同-v2.pdf</span></td><td>8s</td><td>从最近列表移除</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">无法打开：文件损坏或不是有效的 PDF</td><td>8s</td><td>用修复工具打开（对话框内）</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">仅支持 PDF 文件<br><span style="color:var(--t3)">拖入了 .docx ×2、.png ×1</span></td><td>5s</td><td>—</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">转换失败：未检测到 LibreOffice<br><span style="color:var(--t3)">Office 转换不可用</span></td><td>8s</td><td>安装指引 / 查看日志</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">批注保存失败<br><span style="color:var(--t3)">输出文件被占用，批注仍保留在页面上</span></td><td>8s</td><td>重试 / 另存为…</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">工具执行失败：OCR 引擎异常</td><td>8s</td><td>重试 / 查看日志</td></tr>
+    <tr><td><span class="tag" style="background:var(--err)">错误</span></td><td class="msg">任务已取消<br><span style="color:var(--t3)">已生成的部分文件保留在任务目录</span></td><td>4s</td><td>打开文件夹</td></tr>
+  </table>
+
+  <ul class="notes">
+    <li><b>位置</b>：右下角，状态栏上方 12px；<b>堆叠</b>：最多同时 3 条，超出时最旧的先消失（错误优先保留）。</li>
+    <li><b>时长</b>：成功 2–5s、警告 6–10s、错误 8s + 需动作的常驻至被处理；错误/警告可手动关闭（×），成功类自动消失不带 ×。</li>
+    <li><b>禁打扰</b>：阅读翻页等高频操作不发 Toast（用状态栏/页内提示表达）；同一错误 60s 内不重复弹。</li>
+  </ul>
+
+  <!-- ================= 边界情况 ================= -->
+  <div class="gtitle" id="edges">八、边界情况</div>
+  <table class="toasts">
+    <tr><th style="width:180px">场景</th><th>处理</th></tr>
+    <tr><td>长文件名</td><td>标签 / 最近卡片 ellipsis + 悬停完整名；右抽屉工具名不截断（分组内换行）</td></tr>
+    <tr><td>标签溢出</td><td>横向滚动（Shift+滚轮），标签最小宽 120px，两侧滚动指示；激活标签尽量完整显示</td></tr>
+    <tr><td>大文档（500+ 页）</td><td>缩略图仅渲染可视区 ± 3 页；目录/书签/搜索列表内滚动；页码跳转 Ctrl+G</td></tr>
+    <tr><td>重复打开同一文件</td><td>激活现有标签，不重复创建；从不同路径指向同一内容不视为重复（按路径判定）</td></tr>
+    <tr><td>最近列表上限</td><td>20 条，超出淘汰最旧；「清除记录」二次确认</td></tr>
+    <tr><td>阅读状态文件损坏</td><td>静默忽略并重建；不提示不崩溃</td></tr>
+    <tr><td>被占用 / 只读文件</td><td>FileShare.ReadWrite 读取；批注能力降级（S08）</td></tr>
+    <tr><td>拖入文件夹</td><td>Toast：不支持文件夹，请选择 PDF 文件</td></tr>
+    <tr><td>应用退出时有未保存批注</td><td>退出流程内强制保存（含全部标签批注队列）；失败则弹对话框列出失败文档 [仍要退出 / 另存为]</td></tr>
+    <tr><td>批量连续任务</td><td>全局串行队列；后到任务在状态栏显示"排队中 · 第 N 位"；可从队列移除</td></tr>
+    <tr><td>窗口极小尺寸</td><td>左右栏可折叠（左栏折叠为窄条图标，抽屉自动收起为悬浮按钮）；阅读区最小 480px</td></tr>
+  </table>
+
+  <!-- ================= 交互行为规则表 ================= -->
+  <div class="gtitle" id="rulestable">九、交互行为规则表</div>
+  <div class="gsub">完整映射。触发列：用户 / 系统 / 异常。</div>
+  <table class="rules">
+    <tr><th style="width:50px">触发</th><th style="width:190px">用户操作</th><th>系统行为</th><th style="width:250px">反馈</th></tr>
+    <tr><td class="trig">用户</td><td>起始页「打开 PDF…」/ Ctrl+O</td><td>文件对话框（PDF 过滤）；选中后创建标签并加载</td><td>加载态 S03；取消无副作用</td></tr>
+    <tr><td class="trig">用户</td><td>拖拽 PDF 入窗口</td><td>校验扩展名/可读性 → 新标签加载</td><td>成功：标签+加载；失败：S05/S06/S07 对应 Toast</td></tr>
+    <tr><td class="trig">用户</td><td>点击最近文件卡片</td><td>读取文件 → 恢复页码/缩放/侧栏/书签</td><td>成功：恢复提示条 S12；失效：S05 置灰 + Toast</td></tr>
+    <tr><td class="trig">用户</td><td>顶栏 ＋ 新建标签</td><td>弹出打开文件对话框；取消则不产生空标签</td><td>—</td></tr>
+    <tr><td class="trig">用户</td><td>标签 × / Ctrl+W / 中键</td><td>未保存批注先强制保存；关闭最后标签 → 起始页</td><td>保存失败：阻止关闭 + Toast（S22）</td></tr>
+    <tr><td class="trig">用户</td><td>打开已在标签中的文件</td><td>按路径去重，激活现有标签</td><td>标签激活闪烁一次</td></tr>
+    <tr><td class="trig">系统</td><td>工具输出 PDF</td><td>结果开新标签 + 绿点"新"，激活</td><td>Toast 成功摘要（R5）</td></tr>
+    <tr><td class="trig">系统</td><td>工具输出非 PDF</td><td>不开标签</td><td>Toast + 打开文件夹（S29）</td></tr>
+    <tr><td class="trig">用户</td><td>滚轮 / 触摸板滚动</td><td>连续滚动；当前页=视口占比最大页</td><td>状态栏页码 + 缩略图选中跟随（S09）</td></tr>
+    <tr><td class="trig">用户</td><td>点击缩略图 / 目录条目 / 书签</td><td>滚动至目标页顶部</td><td>页码更新</td></tr>
+    <tr><td class="trig">用户</td><td>PageUp/PageDown、←/→</td><td>整页翻动（视口对齐）</td><td>—</td></tr>
+    <tr><td class="trig">用户</td><td>Ctrl+G / 点击页码</td><td>页码输入框；非法输入（0/越界）拒绝</td><td>非法输入：输入框红边抖动</td></tr>
+    <tr><td class="trig">用户</td><td>Ctrl+滚轮 / ± 按钮</td><td>缩放阶梯 25%–400%</td><td>边界禁用（S11）；渲染后更新</td></tr>
+    <tr><td class="trig">用户</td><td>「适配宽度」/「适配页面」</td><td>按窗口重算 zoom；手动缩放后脱离适配档</td><td>zoom 值更新</td></tr>
+    <tr><td class="trig">系统</td><td>打开带阅读记忆的文档</td><td>恢复页码/缩放/侧栏状态</td><td>提示条 2s（S12）</td></tr>
+    <tr><td class="trig">用户</td><td>Ctrl+F</td><td>聚焦搜索框；左栏切"搜索"面板；预填上次关键词并全选</td><td>面板出现（S13）</td></tr>
+    <tr><td class="trig">用户</td><td>输入关键词（防抖 300ms）</td><td>会话内全文检索</td><td>命中列表 + 页内高亮；无结果 S14；索引中 S16；无文本层 S15</td></tr>
+    <tr><td class="trig">用户</td><td>回车 / Shift+回车</td><td>下一处 / 上一处</td><td>列表与页内当前项加深</td></tr>
+    <tr><td class="trig">用户</td><td>Esc / 面板 ✕</td><td>退出搜索，清除页内高亮，左栏恢复原面板</td><td>—</td></tr>
+    <tr><td class="trig">用户</td><td>点击命中项</td><td>跳页 + 滚动至命中行</td><td>—</td></tr>
+    <tr><td class="trig">用户</td><td>拖选文字 → 浮菜单「复制」</td><td>写入系统剪贴板</td><td>Toast「已复制」（2s）</td></tr>
+    <tr><td class="trig">用户</td><td>拖选文字 → 「高亮」</td><td>计算 pt 选区 → 客户端叠加渲染</td><td>高亮即时显示；savepill 保存中（S21→S20）</td></tr>
+    <tr><td class="trig">用户</td><td>拖选文字 → 「笔记」</td><td>落高亮 + 弹笔记输入框</td><td>笔记弹层；确认后出现标记 ①</td></tr>
+    <tr><td class="trig">用户</td><td>悬停批注标记 / 高亮</td><td>预览弹层（编辑 / 删除）</td><td>删除即时消失 + 待保存</td></tr>
+    <tr><td class="trig">系统</td><td>批注 2s 无操作</td><td>批量提交引擎（一进程一请求）</td><td>savepill 三态（S20/S21/S22）</td></tr>
+    <tr><td class="trig">异常</td><td>批注提交失败</td><td>批注保留在叠加层；不重试自动轰炸</td><td>Toast + savepill 失败态（S22）；连败 3 次建议另存为</td></tr>
+    <tr><td class="trig">用户</td><td>无文本层页面拖选</td><td>不出现文字浮菜单（v1.0）</td><td>—（S23）</td></tr>
+    <tr><td class="trig">用户</td><td>右抽屉点单文件工具</td><td>抽屉展开内联参数面板，输入锁定当前文档</td><td>面板滑出（S24）</td></tr>
+    <tr><td class="trig">用户</td><td>右抽屉点多文件/多步工具</td><td>居中模态向导，当前文档入选置顶</td><td>向导（R3 / S26）</td></tr>
+    <tr><td class="trig">用户</td><td>向导：添加/排序/删除文件</td><td>实时校验（≥2 份、可读）</td><td>不合法：开始禁用 + 行内提示</td></tr>
+    <tr><td class="trig">用户</td><td>向导「开始」/ Esc / 点遮罩</td><td>开始→提交引擎；Esc/遮罩→关闭向导（草稿丢弃）</td><td>—</td></tr>
+    <tr><td class="trig">系统</td><td>任务执行中</td><td>标签底部进度细条 + 状态栏任务名；全局串行队列</td><td>阅读不被阻塞（S27）</td></tr>
+    <tr><td class="trig">用户</td><td>取消任务</td><td>taskkill 子进程树</td><td>Toast「任务已取消」；半成品保留于任务目录</td></tr>
+    <tr><td class="trig">异常</td><td>任务失败</td><td>参数保留可改后重试</td><td>Toast 错误 [重试][查看日志]（S28）</td></tr>
+    <tr><td class="trig">异常</td><td>组件缺失（LibreOffice/Chromium）</td><td>「开始」禁用 + 面板顶部提示条</td><td>S28 / S30 对应引导</td></tr>
+    <tr><td class="trig">用户</td><td>选中文字 → 「用工具处理▾」</td><td>子菜单：压缩/拆分/旋转/转Word + 更多工具…；页码范围预填当前页</td><td>进入对应工具（预填输入）</td></tr>
+    <tr><td class="trig">用户</td><td>⚙ 设置菜单</td><td>设置 / 关于·许可</td><td>设置面板模态弹出（检查更新 v1.0 已裁决排除）</td></tr>
+    <tr><td class="trig">用户</td><td>起始页「清除记录」</td><td>确认对话框 → 清空最近列表 + 阅读状态</td><td>列表清空；Toast「已清除」</td></tr>
+    <tr><td class="trig">用户</td><td>Ctrl+B</td><td>收藏当前页为书签</td><td>书签面板出现新条目（若左栏在书签页）</td></tr>
+    <tr><td class="trig">异常</td><td>退出应用且有未保存批注</td><td>强制保存全部队列</td><td>失败：对话框列出失败文档 [仍要退出 / 另存为]</td></tr>
+    <tr><td class="trig">用户</td><td>窗口缩至极小</td><td>左栏折叠为窄条、抽屉收为悬浮按钮</td><td>阅读区最小 480px</td></tr>
+  </table>
+
+  <div style="font-size:11px;color:var(--t3);margin-top:8px">— 全状态参考结束 · 配套《需求总结.md》与《pdf-reader-设计稿.html》v1.1 —</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,476 @@
+<!-- AIPDF 阅读器 设计稿 · 方案A细化版 v1.1 · 2026-09-10
+     基线：v1.0 方案A 保留式三栏（2026-09-09）
+     本次细化新增：① 顶栏品牌位与设置入口 ② 起始页（A3：打开+最近文件+常用工具网格）
+     ③ 全文搜索面板（左栏第四面板）④ 多文件工具模态向导（B3）⑤ 批注笔记弹层
+     ⑥ 结果自动开新标签 + Toast（C1）
+     技术依据：WPF 端渲染管线/文本层/引擎桥接调研（2026-09-10） -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AIPDF 阅读器 · 设计稿 v1.1</title>
+<style>
+:root{--win:#FFFFFF;--side:#F6F6F8;--hov:#EBEBEF;--bd:#E4E4E9;--t1:#1D1D1F;--t2:#6E6E73;--t3:#9A9AA0;--acc:#3159D9;--accsoft:#E4EAFB;--acct:#2A4CBB;--readbg:#EDEDF1;--hl:rgba(255,224,102,.55);--ok:#34A853;--err:#D93025;--mask:rgba(29,29,31,.45)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI Variable Display","Segoe UI","Microsoft YaHei",sans-serif;color:var(--t1);background:var(--win);font-size:13px}
+button{font-family:inherit;cursor:pointer}
+.app{display:flex;flex-direction:column;width:100vw;height:100vh;overflow:hidden}
+/* ---- ① 顶栏：品牌 + 多标签 + 全文搜索 + 设置 ---- */
+.tabbar{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:6px;padding:0 10px;background:var(--side);border-bottom:1px solid var(--bd)}
+.brand{display:flex;align-items:center;gap:7px;padding:0 8px 0 2px;font-weight:700;font-size:13px;color:var(--t1)}
+.brand .mark{width:20px;height:20px;border-radius:5px;background:var(--acc);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.tab{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px 6px 0 0;font-size:13px;color:var(--t2);cursor:default;user-select:none;white-space:nowrap}
+.tab.active{background:#fff;color:var(--t1);box-shadow:inset 0 -2px 0 var(--acc)}
+.tab:not(.active):hover{background:var(--hov)}
+.tab .x{color:var(--t3);font-size:11px;margin-left:4px}
+.tab .dirty{width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.newtab{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:15px}
+.newtab:hover{background:var(--hov)}
+.search{margin-left:auto}
+.search input{width:220px;height:28px;padding:0 10px;font-size:13px;border:1px solid var(--bd);border-radius:6px;background:#fff;color:var(--t1);outline:none}
+.search input:focus{border-color:var(--acc)}
+.gear{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:14px}
+.gear:hover{background:var(--hov)}
+/* ---- 三栏主体 ---- */
+.main{flex:1;display:flex;min-height:0}
+/* 左：缩略图 / 目录 / 书签 / 搜索 */
+.nav{width:200px;flex:0 0 200px;background:var(--side);border-right:1px solid var(--bd);padding:10px;overflow:hidden}
+.minitabs{display:flex;gap:2px;margin-bottom:12px}
+.minitabs span{flex:1;text-align:center;padding:5px 0;font-size:12px;border-radius:6px;color:var(--t2);cursor:default}
+.minitabs span.on{background:#fff;color:var(--acct);font-weight:600}
+.minitabs span:not(.on):hover{background:var(--hov)}
+.thumb{position:relative;background:#fff;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.12);aspect-ratio:210/297;margin-bottom:10px;padding:14px 10px}
+.thumb.on{outline:2px solid var(--acc);outline-offset:1px}
+.thumb .ln{height:4px;border-radius:2px;background:var(--bd);margin-bottom:7px}
+.thumb .ln.w60{width:60%}.thumb .ln.w80{width:80%}.thumb .ln.w90{width:90%}
+.thumb .hl-ln{height:5px;border-radius:2px;background:var(--hl);width:70%;margin-bottom:7px}
+.thumb .pg{position:absolute;right:8px;bottom:6px;font-size:11px;color:var(--t3)}
+.nav .hint{font-size:11px;color:var(--t3);margin-top:4px}
+/* 中：连续滚动阅读区 */
+.read{flex:1;background:var(--readbg);overflow:hidden;padding:16px 0;min-width:0}
+.pages{width:62%;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.page{position:relative;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12);aspect-ratio:210/297;padding:28px 32px;flex:0 0 auto}
+.p-title{font-size:26px;font-weight:700;text-align:center;margin-top:18%}
+.p-sub{text-align:center;font-size:14px;color:var(--t2);margin-top:10px}
+.p-bullets{margin-top:14%;display:flex;flex-direction:column;gap:10px;align-items:center}
+.p-bullets div{font-size:13px}
+.p-bullets i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--acc);margin-right:8px;vertical-align:2px}
+.h2{font-size:15px;font-weight:600;margin-bottom:14px}
+.p p{font-size:13px;line-height:1.8;margin-bottom:12px}
+.hl{background:var(--hl);position:relative}
+.notemark{display:inline-block;margin-left:3px;width:14px;height:14px;border-radius:50%;background:var(--acc);color:#fff;font-size:9px;text-align:center;line-height:14px;vertical-align:1px;cursor:default}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0 12px}
+.tbl th{background:var(--side);font-weight:600;text-align:left}
+.tbl th,.tbl td{padding:6px 10px;border-bottom:1px solid var(--bd)}
+/* 选中浮菜单 */
+.floatmenu{position:absolute;top:47%;left:34%;background:#fff;border:1px solid var(--bd);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.18);display:flex;z-index:5}
+.floatmenu span{padding:6px 10px;font-size:12px;border-right:1px solid var(--bd);white-space:nowrap}
+.floatmenu span:last-child{border-right:none}
+.floatmenu span:hover{background:var(--hov)}
+.subhint{position:absolute;top:calc(47% + 30px);left:52%;font-size:11px;color:var(--t3);background:#fff;padding:3px 8px;border-radius:4px;border:1px solid var(--bd)}
+/* 右：对此文件的操作 */
+.drawer{width:240px;flex:0 0 240px;background:#fff;border-left:1px solid var(--bd);padding:12px;overflow:hidden;display:flex;flex-direction:column}
+.drawer .t{font-size:15px;font-weight:600;margin-bottom:10px}
+.drawer .search input{width:100%;height:28px;padding:0 10px;font-size:12px;border:1px solid var(--bd);border-radius:6px;outline:none}
+.drawer .lbl{font-size:11px;color:var(--t3);margin:12px 0 6px}
+.tool{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;font-size:13px}
+.tool:hover{background:var(--hov)}
+.tool .ic{width:24px;height:24px;border-radius:8px;background:var(--accsoft);color:var(--acct);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 24px}
+.group{margin-top:10px}
+.group summary{list-style:none;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:5px 4px;cursor:default;border-radius:6px}
+.group summary:hover{background:var(--hov)}
+.group summary .n{font-weight:400;font-size:11px;color:var(--t3);margin-left:2px}
+.group summary .ch{margin-left:auto;color:var(--t3);font-size:11px}
+.group .tool{padding-left:14px}
+.drawer .foot{margin-top:auto;font-size:11px;color:var(--acc);cursor:pointer}
+/* 状态栏 */
+.status{height:32px;flex:0 0 32px;display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--side);border-top:1px solid var(--bd);font-size:12px;color:var(--t2)}
+.sbtn{width:24px;height:24px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:12px}
+.sbtn:hover{background:var(--hov)}
+.pageno b{color:var(--acc);font-weight:600}
+.pageno i{color:var(--t3);font-style:normal}
+.zoom b{color:var(--t1)}
+.fitw{border:none;background:transparent;font-size:12px;color:var(--t2);padding:4px 8px;border-radius:6px}
+.fitw:hover{background:var(--hov)}
+.savepill{margin-left:auto;background:var(--accsoft);color:var(--acct);border-radius:6px;padding:3px 10px;font-size:11px}
+.savepill .dot{color:var(--ok)}
+.fsize{color:var(--t2)}
+/* 标注气泡 */
+.co{position:absolute;width:16px;height:16px;border-radius:50%;background:var(--acc);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;z-index:9;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+/* ---- 状态参考区 ---- */
+.refs{background:#fff;padding:24px 28px 60px;overflow:auto}
+.refs h2{font-size:15px;margin-bottom:6px}
+.refs .lead{font-size:12px;color:var(--t2);margin-bottom:16px}
+.refblock{margin-bottom:36px}
+.refcap{font-size:14px;font-weight:600;margin-bottom:2px}
+.refsub{font-size:12px;color:var(--t2);margin-bottom:8px}
+.mini{border:1px dashed #C9C9D1;width:1200px;transform:scale(.85);transform-origin:top left;margin:10px 0 4px;border-radius:8px;overflow:hidden;background:var(--win)}
+.mini .app2{display:flex;flex-direction:column;height:520px}
+.mini .bar{height:36px;background:var(--side);border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:8px;padding:0 10px;font-size:12px;color:var(--t2)}
+.mini .bar .brand{font-size:12px}
+.mini .bar .brand .mark{width:16px;height:16px;border-radius:4px;font-size:9px}
+.mini .cols{display:flex;flex:1;min-height:0}
+.notes{margin:0 0 8px;padding-left:18px;font-size:12px;color:var(--t2);width:1020px}
+.notes li{margin-bottom:3px}
+.notes b{color:var(--t1)}
+/* R0 起始页 */
+.start{flex:1;display:flex;flex-direction:column;align-items:center;padding-top:48px;overflow:hidden}
+.start .logo{width:52px;height:52px;border-radius:13px;background:var(--acc);color:#fff;font-size:26px;display:flex;align-items:center;justify-content:center;font-weight:800;margin-bottom:14px}
+.start .openbtn{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 28px;font-size:14px;font-weight:600;box-shadow:0 2px 6px rgba(49,89,217,.3)}
+.start .draghint{font-size:12px;color:var(--t3);margin-top:10px}
+.start .sec{width:820px;margin-top:30px}
+.start .sec .lbl{font-size:12px;color:var(--t2);margin-bottom:8px;display:flex;justify-content:space-between}
+.recentrow{display:flex;gap:12px}
+.rcard{flex:1;background:var(--side);border:1px solid var(--bd);border-radius:8px;padding:12px;cursor:default}
+.rcard:hover{background:var(--hov)}
+.rcard .thumb2{background:#fff;border:1px solid var(--bd);border-radius:4px;aspect-ratio:210/90;padding:8px 10px;margin-bottom:8px}
+.rcard .thumb2 .ln{height:3px;border-radius:2px;background:var(--bd);margin-bottom:5px}
+.rcard .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rcard .meta{font-size:11px;color:var(--t3);margin-top:3px}
+.toolgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}
+.tile{background:var(--side);border:1px solid var(--bd);border-radius:8px;padding:10px 4px;text-align:center;font-size:11px}
+.tile:hover{background:var(--hov)}
+.tile .ic{width:28px;height:28px;border-radius:9px;background:var(--accsoft);color:var(--acct);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 6px}
+.alltools{font-size:12px;color:var(--acc);margin-top:10px;cursor:pointer}
+/* R1 搜索面板 */
+.hititem{display:flex;align-items:baseline;font-size:12px;padding:5px 6px;border-radius:4px;line-height:1.5}
+.hititem:hover{background:var(--hov)}
+.hititem.cur{background:var(--accsoft)}
+.hititem .pg{color:var(--t3);font-size:11px;flex:0 0 auto;margin-right:6px}
+.hititem b{color:var(--acc)}
+.hitshead{display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:11px;color:var(--t3)}
+.hitshead .prev,.hitshead .next{border:1px solid var(--bd);background:#fff;border-radius:4px;padding:1px 7px;font-size:11px;color:var(--t2)}
+.markrect{position:absolute;background:rgba(255,214,64,.6);border-radius:2px}
+.markrect.cur{background:rgba(255,150,40,.75);outline:2px solid #E8710A}
+/* R2 目录 */
+.tocitem{display:flex;align-items:baseline;font-size:12px;padding:5px 4px;border-radius:4px}
+.tocitem:hover{background:var(--hov)}
+.tocitem .dots{flex:1;border-bottom:1px dotted #C9C9D1;margin:0 6px}
+.tocitem .pg{color:var(--t3);font-size:11px}
+.tocitem.lv1{font-weight:600}
+.tocitem.lv2{padding-left:18px;color:var(--t2)}
+/* R3 模态向导 */
+.mask{position:absolute;inset:0;background:var(--mask);z-index:20}
+.wizard{position:absolute;left:50%;top:14%;transform:translateX(-50%);width:420px;background:#fff;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.28);z-index:21;padding:18px}
+.wizard .wt{font-size:15px;font-weight:600;margin-bottom:4px}
+.wizard .wd{font-size:11px;color:var(--t3);margin-bottom:12px}
+.wfile{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--bd);border-radius:6px;font-size:12px;margin-bottom:6px}
+.wfile .tag{font-size:10px;background:var(--accsoft);color:var(--acct);border-radius:4px;padding:1px 6px;flex:0 0 auto}
+.wfile .ord{margin-left:auto;color:var(--t3);font-size:11px;white-space:nowrap}
+.wadd{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px;border:1px dashed #C9C9D1;border-radius:6px;font-size:12px;color:var(--t2);margin-bottom:14px}
+.wrow{display:flex;justify-content:flex-end;gap:8px}
+.btn{border:1px solid var(--bd);background:#fff;border-radius:6px;padding:7px 16px;font-size:12px}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn:not(.primary):hover{background:var(--hov)}
+/* R4 笔记弹层 */
+.note-pop{position:absolute;top:44%;left:46%;width:230px;background:#fff;border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:10px 12px;z-index:6}
+.note-pop .nh{display:flex;align-items:center;font-size:11px;color:var(--t3);margin-bottom:6px}
+.note-pop .nh .ops{margin-left:auto;display:flex;gap:6px}
+.note-pop .nh .ops span{cursor:pointer;color:var(--acc)}
+.note-pop .nt{font-size:12px;line-height:1.6}
+/* R5 结果新标签 + Toast */
+.tab .newdot{width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:2px}
+.resultbody{flex:1;background:var(--readbg);display:flex;align-items:center;justify-content:center}
+.resultbody .rb{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:24px 32px;font-size:12px;color:var(--t2);text-align:center}
+.resultbody .rb .big{font-size:15px;font-weight:600;color:var(--t1);margin-bottom:6px}
+.toast{position:absolute;right:16px;bottom:44px;background:#fff;border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:10px 14px;font-size:12px;display:flex;align-items:center;gap:8px;z-index:30}
+.toast .tick{color:var(--ok);font-weight:700}
+.toast .sub{color:var(--t3);font-size:11px}
+</style>
+</head><body>
+
+<!-- ============ 主视图：阅读态（标注版） ============ -->
+<div class="app" style="position:relative">
+  <!-- ① 顶栏 -->
+  <div class="tabbar">
+    <div class="brand"><span class="mark">A</span>AIPDF</div>
+    <div class="tab active" style="position:relative">📄 季度运营报告.pdf <span class="x">×</span>
+      <span class="co" style="right:-22px;top:8px">①</span></div>
+    <div class="tab">📄 员工手册.pdf <span class="x">×</span></div>
+    <button class="newtab" title="新建标签页">＋</button>
+    <div class="search" style="position:relative"><input type="text" placeholder="搜索全文… Ctrl+F">
+      <span class="co" style="right:-22px;top:6px">②</span></div>
+    <button class="gear" title="设置">⚙</button>
+  </div>
+
+  <div class="main">
+    <!-- ③ 左栏：缩略图 / 目录 / 书签（搜索时切换为"搜索"） -->
+    <div class="nav">
+      <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span></div>
+      <div class="thumb on">
+        <div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><div class="ln w80"></div><div class="ln w60"></div><div class="ln"></div>
+        <span class="pg">1</span>
+      </div>
+      <div class="thumb">
+        <div class="ln w60"></div><div class="ln w90"></div><div class="hl-ln"></div><div class="ln w90"></div><div class="ln w60"></div><div class="ln w80"></div>
+        <span class="pg">2</span>
+      </div>
+      <div class="thumb">
+        <div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div>
+        <span class="pg">3</span>
+      </div>
+      <div class="hint">12 页 · 1.8 MB · 可搜索</div>
+      <span class="co" style="left:186px;top:44px">③</span>
+    </div>
+
+    <!-- ④ 连续滚动阅读区 -->
+    <div class="read" style="position:relative">
+      <div class="pages">
+        <div class="page">
+          <div class="p-title">2026 年第三季度产品运营报告</div>
+          <div class="p-sub">产品技术部 · 2026-09-08</div>
+          <div class="p-bullets">
+            <div><i></i>日活 42.6 万，环比 +18.4%</div>
+            <div><i></i>付费转化率 3.2%，环比 +0.4pt</div>
+            <div><i></i>NPS 61，创近四季度新高</div>
+          </div>
+        </div>
+        <div class="page">
+          <div class="h2">一、核心指标</div>
+          <div class="p">
+            <p>本季度产品整体保持稳健增长。九月底日活达到 42.6 万，较上季度末增长 18.4%；七日留存率稳定在 46% 附近，新客激活周期缩短至 1.8 天。</p>
+            <p>付费侧延续上季度的改善趋势：<span class="hl">付费转化率 3.2%，环比提升 0.4 个百分点</span><span class="notemark">1</span>，其中年度会员连续包年占比升至 58%。</p>
+            <table class="tbl">
+              <tr><th>指标</th><th>本月</th><th>上月</th><th>环比</th></tr>
+              <tr><td>日活</td><td>42.6 万</td><td>36.0 万</td><td>+18.4%</td></tr>
+              <tr><td>付费转化</td><td>3.2%</td><td>2.8%</td><td>+0.4pt</td></tr>
+            </table>
+          </div>
+          <div class="floatmenu"><span>复制</span><span>高亮</span><span>笔记</span><span>用工具处理 ▾</span></div>
+          <div class="subhint">压缩 / 拆分 / 旋转 / 转Word</div>
+        </div>
+        <div class="page">
+          <div class="h2">二、渠道分析</div>
+          <div class="p">
+            <p>自然增长成为本季度最主要的增量来源。搜索与口碑渠道合计贡献新增激活的 61%，老用户邀请人均带来 1.7 个新客；投放渠道 ROI 回升至 1.9。</p>
+          </div>
+        </div>
+      </div>
+      <span class="co" style="left:12px;top:12px">④</span>
+    </div>
+
+    <!-- ⑤ 右抽屉 -->
+    <div class="drawer" style="position:relative">
+      <div class="t">对此文件的操作</div>
+      <div class="search"><input type="text" placeholder="搜索工具…"></div>
+      <div class="lbl">常用</div>
+      <div class="tool"><span class="ic">压</span>压缩 PDF</div>
+      <div class="tool"><span class="ic">识</span>OCR 文字识别</div>
+      <div class="tool"><span class="ic">合</span>合并 PDF</div>
+      <div class="tool"><span class="ic">水</span>添加水印</div>
+      <details class="group" open>
+        <summary>整理页面 <span class="n">6</span><span class="ch">▾</span></summary>
+        <div class="tool"><span class="ic">合</span>合并 PDF</div>
+        <div class="tool"><span class="ic">拆</span>拆分 PDF</div>
+        <div class="tool"><span class="ic">删</span>删除页面</div>
+        <div class="tool"><span class="ic">提</span>提取页面</div>
+        <div class="tool"><span class="ic">排</span>排列页面</div>
+        <div class="tool"><span class="ic">扫</span>扫描为 PDF</div>
+      </details>
+      <details class="group"><summary>优化文件 <span class="n">3</span><span class="ch">▸</span></summary></details>
+      <details class="group"><summary>格式转换 <span class="n">11</span><span class="ch">▸</span></summary></details>
+      <details class="group"><summary>编辑内容 <span class="n">6</span><span class="ch">▸</span></summary></details>
+      <details class="group"><summary>安全保护 <span class="n">5</span><span class="ch">▸</span></summary></details>
+      <details class="group"><summary>工作流程 <span class="n">1</span><span class="ch">▸</span></summary></details>
+      <div class="foot">没有找到？展开全部 32 个工具 ▾</div>
+      <span class="co" style="right:10px;top:40px">⑤</span>
+    </div>
+  </div>
+
+  <!-- ⑥ 状态栏 -->
+  <div class="status" style="position:relative">
+    <button class="sbtn">◀</button>
+    <span class="pageno"><b>3</b><i>/12</i></span>
+    <button class="sbtn">▶</button>
+    <span class="zoom"><button class="sbtn">−</button> <b>100%</b> <button class="sbtn">＋</button></span>
+    <button class="fitw">适配宽度</button>
+    <span class="savepill"><span class="dot">●</span> 批注已保存 · 刚刚</span>
+    <span class="fsize">1.8 MB</span>
+    <span class="co" style="right:60px;top:8px">⑥</span>
+  </div>
+</div>
+
+<!-- ============ 状态参考 R0–R5 ============ -->
+<div class="refs">
+  <h2>状态参考（R0–R5）</h2>
+  <div class="lead">以下为按 85% 缩放的关键状态截面。交互细节（Toast 规则、边界情况、完整行为表）见《pdf-reader-全状态设计参考.html》。</div>
+
+  <!-- R0 起始页 -->
+  <div class="refblock">
+    <div class="refcap">R0 · 起始页（无文档打开时）— A3：打开 + 最近文件 + 常用工具网格</div>
+    <div class="refsub">应用启动、关闭最后一个标签时显示。标签栏保留品牌位与设置。</div>
+    <div class="mini"><div class="app2">
+      <div class="bar"><div class="brand"><span class="mark">A</span>AIPDF</div><div style="margin-left:auto">⚙</div></div>
+      <div class="start">
+        <div class="logo">📄</div>
+        <button class="openbtn">打开 PDF…</button>
+        <div class="draghint">或将文件拖入窗口</div>
+        <div class="sec">
+          <div class="lbl"><span>最近打开</span><span>清除记录</span></div>
+          <div class="recentrow">
+            <div class="rcard"><div class="thumb2"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div></div><div class="nm">季度运营报告.pdf</div><div class="meta">12 页 · 1.8 MB · 昨天读到第 3 页</div></div>
+            <div class="rcard"><div class="thumb2"><div class="ln w90"></div><div class="ln w80"></div><div class="ln w60"></div></div><div class="nm">员工手册.pdf</div><div class="meta">36 页 · 5.2 MB · 09-07 读完</div></div>
+            <div class="rcard"><div class="thumb2"><div class="ln w80"></div><div class="ln w60"></div><div class="ln w90"></div></div><div class="nm">供应商合同-v2.pdf</div><div class="meta">8 页 · 640 KB · 上周</div></div>
+          </div>
+        </div>
+        <div class="sec">
+          <div class="lbl"><span>常用工具</span></div>
+          <div class="toolgrid">
+            <div class="tile"><div class="ic">合</div>合并 PDF</div>
+            <div class="tile"><div class="ic">压</div>压缩 PDF</div>
+            <div class="tile"><div class="ic">拆</div>拆分 PDF</div>
+            <div class="tile"><div class="ic">识</div>OCR 识别</div>
+            <div class="tile"><div class="ic">W</div>转 Word</div>
+            <div class="tile"><div class="ic">锁</div>加密</div>
+            <div class="tile"><div class="ic">水</div>水印</div>
+            <div class="tile"><div class="ic">⚡</div>工作流程</div>
+          </div>
+          <div class="alltools">全部 32 个工具 →</div>
+        </div>
+      </div>
+    </div></div>
+    <ul class="notes">
+      <li><b>最近文件卡片</b>：显示页数、体积、上次阅读进度（阅读状态记忆的外显）。点击直接恢复到上次页码。</li>
+      <li><b>常用工具网格</b>：无当前文档时点击工具 → 单文件工具弹"选择文件"模态，多文件/多步工具直接弹向导（R3），不需要先打开文档（覆盖扫描、工作流程等无文档场景）。</li>
+      <li><b>全部 32 个工具 →</b>：展开完整工具目录（同右抽屉的分组结构）。</li>
+    </ul>
+  </div>
+
+  <!-- R1 全文搜索 -->
+  <div class="refblock">
+    <div class="refcap">R1 · 全文搜索（Ctrl+F）— 左栏自动切"搜索"面板</div>
+    <div class="refsub">顶栏搜索框聚焦输入 → 左栏第四面板显示命中列表，页内同步高亮所有命中，当前命中加深。</div>
+    <div class="mini"><div class="app2" style="position:relative">
+      <div class="bar"><div class="brand"><span class="mark">A</span>AIPDF</div>
+        <div style="background:#fff;border:1px solid var(--acc);border-radius:6px;padding:3px 10px;color:var(--t1)">转化率▏</div>
+        <div style="margin-left:auto;font-size:11px">6 个结果 · 回车下一处 · Esc 退出</div></div>
+      <div class="cols">
+        <div style="width:190px;background:var(--side);border-right:1px solid var(--bd);padding:10px">
+          <div class="minitabs" style="margin-bottom:10px"><span>缩略图</span><span>目录</span><span>书签</span></div>
+          <div class="minitabs" style="margin-bottom:10px"><span style="background:#fff;color:var(--acct);font-weight:600">搜索 ✕</span></div>
+          <div class="hitshead"><span class="prev">◀</span><span class="next">▶</span><span>3 / 6</span></div>
+          <div class="hititem"><span class="pg">P1</span>…付费<b>转化率</b> 3.2%，环比…</div>
+          <div class="hititem"><span class="pg">P2</span>…付费<b>转化率</b> 3.2%，环比提升…</div>
+          <div class="hititem cur"><span class="pg">P2</span>…收入增长主要由<b>转化</b>改善驱动…</div>
+          <div class="hititem"><span class="pg">P5</span>…分渠道<b>转化率</b>对比详见…</div>
+          <div class="hititem"><span class="pg">P8</span>…年度会员<b>转化</b>成本下降…</div>
+          <div class="hititem"><span class="pg">P11</span>…下季度<b>转化率</b>目标 3.5%…</div>
+        </div>
+        <div style="flex:1;background:var(--readbg);padding:14px 0;position:relative">
+          <div style="background:#fff;width:56%;margin:0 auto;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:24px 28px;height:420px;position:relative">
+            <div style="font-size:14px;font-weight:600;margin-bottom:12px">一、核心指标</div>
+            <div style="font-size:12px;line-height:1.8">付费侧延续上季度的改善趋势：<span style="background:var(--hl)">付费转化率 3.2%，环比提升 0.4 个百分点</span>。</div>
+            <div class="markrect cur" style="left:52px;top:64px;width:180px;height:14px"></div>
+            <div class="markrect" style="left:52px;top:150px;width:120px;height:14px"></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <ul class="notes">
+      <li><b>入口</b>：Ctrl+F 或点击顶栏搜索框。回车跳下一处，Shift+回车上一处，Esc 退出并清除页内高亮。</li>
+      <li><b>左栏"搜索"面板</b>：搜索激活时自动出现并接管左栏（缩略图/目录/书签顺延隐藏），✕ 关闭后恢复原面板。</li>
+      <li><b>命中项</b>：页码 + 上下文摘录（关键词加粗）。点击跳转页面并滚动到该处，当前命中在页内用高亮框标记。</li>
+      <li><b>无文本层文档</b>（扫描件未 OCR）：搜索框置灰禁用，占位文案改为"此文档无文本层，请先运行 OCR 识别"，点击引导到右抽屉的 OCR 工具。</li>
+    </ul>
+  </div>
+
+  <!-- R2 目录 / 书签 -->
+  <div class="refblock">
+    <div class="refcap">R2 · 目录与书签面板</div>
+    <div class="refsub">目录来自文档内建大纲；书签为用户手动添加，随阅读状态持久化。</div>
+    <div class="mini"><div class="app2">
+      <div class="bar"><div class="brand"><span class="mark">A</span>AIPDF</div><div style="margin-left:auto">⚙</div></div>
+      <div class="cols">
+        <div style="width:190px;background:var(--side);border-right:1px solid var(--bd);padding:10px">
+          <div class="minitabs" style="margin-bottom:10px"><span>缩略图</span><span style="background:#fff;color:var(--acct);font-weight:600">目录</span><span>书签</span></div>
+          <div class="tocitem lv1">摘要<span class="dots"></span><span class="pg">1</span></div>
+          <div class="tocitem lv1">一、核心指标<span class="dots"></span><span class="pg">2</span></div>
+          <div class="tocitem lv2">日活与留存<span class="dots"></span><span class="pg">2</span></div>
+          <div class="tocitem lv2">付费与客单<span class="dots"></span><span class="pg">3</span></div>
+          <div class="tocitem lv1">二、渠道分析<span class="dots"></span><span class="pg">4</span></div>
+          <div class="tocitem lv1">三、下一步计划<span class="dots"></span><span class="pg">9</span></div>
+        </div>
+        <div style="flex:1;background:var(--readbg);padding:14px 0">
+          <div style="background:#fff;width:56%;margin:0 auto;box-shadow:0 1px 4px rgba(0,0,0,.12);height:420px"></div>
+        </div>
+      </div>
+    </div></div>
+    <ul class="notes">
+      <li><b>目录</b>：读取 PDF 大纲（Outline）。无大纲时该面板显示空态"此文档没有目录"+ 缩略图引导。层级缩进，点击跳页。</li>
+      <li><b>书签</b>：用户自建，条目 = 页码 + 自动标题（页面首行文字）+ 添加时间；悬停出现 🗑 删除。随阅读状态存入 %APPDATA%\AIPDF\reading-state\。</li>
+      <li>无大纲、无书签时书签面板显示"＋ 添加书签到当前页"按钮。</li>
+    </ul>
+  </div>
+
+  <!-- R3 模态向导 -->
+  <div class="refblock">
+    <div class="refcap">R3 · 多文件/多步工具模态向导（B3）— 以「合并 PDF」为例</div>
+    <div class="refsub">从右抽屉或选中浮菜单的"用工具处理"进入多文件工具时，居中模态，遮罩阅读区；当前文档默认入选并置顶。</div>
+    <div class="mini"><div class="app2" style="position:relative">
+      <div class="bar"><div class="brand"><span class="mark">A</span>AIPDF</div>
+        <div class="tab active" style="height:26px">📄 季度运营报告.pdf ×</div></div>
+      <div class="cols" style="position:relative">
+        <div style="flex:1;background:var(--readbg)"></div>
+        <div class="mask"></div>
+        <div class="wizard">
+          <div class="wt">合并 PDF</div>
+          <div class="wd">输出顺序即列表顺序，可调整</div>
+          <div class="wfile">📄 季度运营报告.pdf<span class="tag">当前文档</span><span class="ord">1 ↑ ↓</span></div>
+          <div class="wfile">📄 员工手册.pdf<span class="ord">2 ↑ ↓</span></div>
+          <div class="wadd">＋ 添加文件…（或拖入窗口）</div>
+          <div class="wrow"><button class="btn">取消</button><button class="btn primary">开始合并</button></div>
+        </div>
+      </div>
+    </div></div>
+    <ul class="notes">
+      <li><b>同一向导骨架复用</b>：合并（文件列表+顺序）、工作流程（文件+步骤列表）、批量（文件队列）。单文件工具不走向导，右抽屉内联参数面板即可。</li>
+      <li><b>遮罩点击 = 取消</b>；Esc 取消；进行中显示进度条，可取消（taskkill 子进程树）。</li>
+      <li><b>完成后</b>：向导关闭 → 结果文件自动开新标签（R5）+ Toast 汇报。</li>
+    </ul>
+  </div>
+
+  <!-- R4 批注笔记弹层 -->
+  <div class="refblock">
+    <div class="refcap">R4 · 批注笔记弹层 — 高亮 + 文字笔记</div>
+    <div class="refsub">选中文字 →「笔记」：先落高亮再弹笔记框；已有批注悬停其标记可预览/编辑/删除。批注防抖自动保存。</div>
+    <div class="mini"><div class="app2">
+      <div class="cols">
+        <div style="flex:1;background:var(--readbg);padding:14px 0;position:relative">
+          <div style="background:#fff;width:56%;margin:0 auto;box-shadow:0 1px 4px rgba(0,0,0,.12);padding:24px 28px;height:420px;position:relative">
+            <div style="font-size:14px;font-weight:600;margin-bottom:12px">一、核心指标</div>
+            <div style="font-size:12px;line-height:1.9">付费侧延续上季度的改善趋势：<span style="background:var(--hl)">付费转化率 3.2%，环比提升 0.4 个百分点</span><span class="notemark">1</span>，其中年度会员连续包年占比升至 58%。</div>
+            <div class="note-pop">
+              <div class="nh">📝 笔记 1 · 第 2 页<span class="ops"><span>编辑</span><span>删除</span></span></div>
+              <div class="nt">与上季度相比提升明显，周五汇报时重点强调这一条。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <ul class="notes">
+      <li><b>保存机制</b>：批注 2 秒防抖自动保存（一次引擎往返批量提交，非逐条）；状态栏 savepill 三态：保存中… / 批注已保存 / 保存失败·点击重试。</li>
+      <li><b>技术注意</b>：现有引擎 highlight 是内容级绘制；标准注释（可删除、可携带笔记文字）需引擎新增注释操作（PRD 决策点）。</li>
+      <li><b>关闭标签/退出应用</b>时若有未保存批注：立即强制保存，失败则阻止关闭并提示。</li>
+    </ul>
+  </div>
+
+  <!-- R5 结果新标签 + Toast -->
+  <div class="refblock">
+    <div class="refcap">R5 · 处理结果自动开新标签（C1）+ Toast</div>
+    <div class="refsub">工具完成 → 结果文件自动成为新标签并激活，绿点标记"新"；Toast 右下角汇报。</div>
+    <div class="mini"><div class="app2" style="position:relative">
+      <div class="bar"><div class="brand"><span class="mark">A</span>AIPDF</div>
+        <div class="tab" style="height:26px">📄 季度运营报告.pdf ×</div>
+        <div class="tab active" style="height:26px">📄 季度运营报告-压缩.pdf <span class="newdot"></span> ×</div></div>
+      <div class="resultbody"><div class="rb"><div class="big">季度运营报告-压缩.pdf</div>4.2 MB → 1.8 MB · 12 页<br>已自动在新标签打开</div></div>
+      <div class="toast"><span class="tick">✓</span><div>压缩完成<div class="sub">4.2 MB → 1.8 MB · 已在新标签打开</div></div></div>
+    </div></div>
+    <ul class="notes">
+      <li><b>结果即文档</b>：输出 PDF 直接进阅读流；非 PDF 输出（Word/PPT/Excel/图片）不开标签，Toast 附"打开文件夹"。</li>
+      <li><b>新标签</b>：绿点标记直至被阅读；原标签保持不动，可继续阅读或继续处理。</li>
+      <li><b>Toast</b>：成功 3s 自动消失；失败 8s + 操作按钮（重试/打开日志）。</li>
+    </ul>
+  </div>
+</div>
+</body>
+</html>
