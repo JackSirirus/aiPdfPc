@@ -111,12 +111,34 @@ def run_process(args, timeout=180):
         CHILDREN.remove(child)
 
 
+def _windows_office_registry_candidates():
+    """从 LibreOffice UNO InstallPath 注册表键发现安装目录，覆盖自定义安装位置。"""
+    try:
+        import winreg
+    except ImportError:  # 非 Windows 平台
+        return []
+    found = []
+    for view in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for subkey in (r"SOFTWARE\LibreOffice\UNO\InstallPath",
+                       r"SOFTWARE\WOW6432Node\LibreOffice\UNO\InstallPath"):
+            try:
+                with winreg.OpenKey(view, subkey) as key:
+                    value = winreg.QueryValueEx(key, "")[0]
+            except OSError:
+                continue
+            if value:
+                found.append(str(Path(value) / "soffice.exe"))
+    return found
+
+
 def find_office():
     if sys.platform == "win32":
         # Windows：按优先级探测，找不到时返回 None，由上游提示用户安装。
-        paths = [os.environ.get("AIPDF_OFFICE", ""),
-                 r"C:\Program Files\LibreOffice\program\soffice.exe",
-                 r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]
+        paths = [os.environ.get("AIPDF_OFFICE", "")]
+        # 注册表发现，覆盖自定义安装目录（与 Install.ps1 Test-LibreOffice 保持一致）。
+        paths += _windows_office_registry_candidates()
+        paths += [r"C:\Program Files\LibreOffice\program\soffice.exe",
+                  r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]
         paths += [shutil.which("soffice") or ""]
         return next((p for p in paths if p and Path(p).is_file()), None)
     paths = [os.environ.get("AIPDF_OFFICE", ""),

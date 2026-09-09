@@ -95,6 +95,13 @@ function Test-LibreOffice {
     foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if ($base -and (Test-Path -LiteralPath (Join-Path $base "LibreOffice\program\soffice.exe"))) { return $true }
     }
+    # 注册表发现：覆盖自定义安装目录（与 backend\engine.py find_office 的注册表探测保持一致）。
+    foreach ($root in @("HKLM:\SOFTWARE\LibreOffice\UNO\InstallPath",
+                        "HKLM:\SOFTWARE\WOW6432Node\LibreOffice\UNO\InstallPath",
+                        "HKCU:\Software\LibreOffice\UNO\InstallPath")) {
+        $dir = (Get-ItemProperty -Path $root -ErrorAction SilentlyContinue).'(default)'
+        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir "soffice.exe"))) { return $true }
+    }
     if (Get-Command soffice -ErrorAction SilentlyContinue) { return $true }
     return $false
 }
