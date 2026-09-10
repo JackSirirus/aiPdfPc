@@ -16,6 +16,13 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <!-- 阅读器渲染栈（V1 T1）：PDFiumCore CppSharp 包装 + bblanchon PDFium 原生库。
+         原生钉 152.0.7961：本机应用程序控制（Smart App Control 评估态）按文件哈希放行，
+         152 哈希有既往云信誉缓存（T13 起在用）；154.0.8035 原生被拦（0x800711C7/WinError 4551）。
+         PDFiumCore 152.0.7961 与原生同修订，T1 仅用不透明句柄 + 稳定 FPDF_* 导出，无布局风险。
+         154 提升待原生哈希获得信誉或维护者调整本机策略后进行。与 PDFtoImage（SkiaSharp 栈）并存，
+         单栈收敛评估在 T9。 -->
+    <PackageReference Include="PDFiumCore" Version="152.0.7961" />
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
