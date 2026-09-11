@@ -22,7 +22,7 @@ namespace AIPDF.Windows.Views;
 /// 主窗口：顶栏（品牌 + 标签条 + ＋/搜索/⚙）+ 主区（左栏 / TabControl 标签宿主）+ 状态栏。
 /// 多标签核心逻辑在 <see cref="TabHostViewModel"/>；本类只做视图联动与事件接线。
 /// </summary>
-public partial class MainWindow : Window
+public partial class MainWindow : Window, ISessionRestoreTarget
 {
     /// <summary>全文搜索入口命令（Ctrl+F 全局快捷键，FR-09；T8 接管前仅事件桩）。</summary>
     public static readonly RoutedCommand FullTextSearchCommand = new(nameof(FullTextSearchCommand), typeof(MainWindow));
@@ -66,6 +66,9 @@ public partial class MainWindow : Window
         DataContextChanged += (_, _) => HookViewModel();
         HookViewModel();
         UpdateTabAreaState();
+
+        // T6：启动恢复会话（window 几何 → 左栏 → 标签异步；CLI/损坏 session 走默认状态）
+        RestoreSession();
     }
 
     /// <summary>已接线队列取消事件的 MainViewModel（DataContext 变更时反订阅，避免重复弹 Toast）。</summary>
@@ -316,8 +319,25 @@ public partial class MainWindow : Window
         TabHostControl.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
         LeftPanel.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
         LeftSplitter.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
-        LeftPanelColumn.MinWidth = hasTabs ? 220 : 0;
-        LeftPanelColumn.Width = hasTabs ? new GridLength(264) : new GridLength(0);
+        LeftPanelColumn.MinWidth = hasTabs ? MinLeftPanelWidth : 0;
+
+        // T6 左栏宽度恢复：显示时套用记忆宽度（不因切标签重置用户拖动值）；隐藏时记住当前宽度。
+        if (hasTabs)
+        {
+            if (LeftPanelColumn.Width.Value <= 0)
+            {
+                LeftPanelColumn.Width = new GridLength(ClampLeftPanelWidth(_leftPanelWidth));
+            }
+        }
+        else
+        {
+            if (LeftPanelColumn.Width.Value > 0)
+            {
+                _leftPanelWidth = LeftPanelColumn.Width.Value;
+            }
+
+            LeftPanelColumn.Width = new GridLength(0);
+        }
 
         // 阅读面板仅对文档标签显示（搜索面板本体 T8）
         var documentTabActive = active?.Kind == TabKind.Document;
@@ -905,6 +925,24 @@ public partial class MainWindow : Window
     /// <summary>最近文件存储（保存成功 / 关闭标签时同步卡片体积/进度/缩放镜像）。</summary>
     private readonly RecentFilesStore _recentFiles = new();
 
+    // ---- T6 会话恢复（session.json：tabs / window / leftPanel） ----
+
+    /// <summary>会话存储（%APPDATA%\AIPDF\session.json；与 reading-state 独立存储互不影响）。</summary>
+    private readonly SessionStore _sessionStore = new();
+
+    /// <summary>左栏宽度记忆（默认与 XAML 264 一致；拖动/恢复/隐藏时更新）。</summary>
+    private double _leftPanelWidth = DefaultLeftPanelWidth;
+
+    /// <summary>会话失效文件汇总 Toast 计时器（2s 自动隐藏）。</summary>
+    private DispatcherTimer? _sessionToastTimer;
+
+    private const double DefaultLeftPanelWidth = 264;
+    private const double MinLeftPanelWidth = 220;
+    private const double MaxLeftPanelWidth = 600;
+
+    private static double ClampLeftPanelWidth(double width)
+        => Math.Clamp(width <= 0 ? DefaultLeftPanelWidth : width, MinLeftPanelWidth, MaxLeftPanelWidth);
+
     /// <summary>
     /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
     /// V2 挂点：标签关闭时应 renderer.CloseDocument + 书签清理，V1 会话内保留。
@@ -1264,12 +1302,178 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>应用退出：批量保存全部打开标签的阅读状态（FR-24）。</summary>
+    /// <summary>应用退出：批量保存全部打开标签的阅读状态（FR-24）+ 会话（FR-28；移动/缩放期间不写）。</summary>
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
         foreach (var reader in _readerTabs.Values.ToList())
         {
             SaveReadingState(reader.ViewModel, reader.DocId);
+        }
+
+        SaveSession();
+    }
+
+    // ------------------------------------------------------------ T6 会话恢复（启动恢复 / 退出保存）
+
+    /// <summary>
+    /// 启动恢复（FR-29）：读取 session → 窗口几何 → 左栏状态 → 标签集合异步加载。
+    /// session 缺失/损坏 → 静默返回，保持 XAML 默认居中窗口与空标签（AC-28.2）。
+    /// </summary>
+    private async void RestoreSession()
+    {
+        SessionState? state;
+        try
+        {
+            state = _sessionStore.Load();
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 读取会话失败: {ex.Message}");
+            return;
+        }
+
+        if (state is null) return; // 默认状态（AC-28.2）
+
+        try
+        {
+            await SessionRestoreCoordinator.RestoreAsync(
+                state,
+                this,
+                File.Exists,
+                // 每个标签打开前让出 UI 线程：窗口先显示、标签逐个加载，不阻塞启动。
+                () => Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background).Task);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 会话恢复失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>① 窗口几何：M-6 钳制到虚拟屏，套用尺寸/位置/最大化态。尺寸非法则不动（保持默认居中）。</summary>
+    void ISessionRestoreTarget.ApplyWindow(SessionWindow window)
+    {
+        if (window is null || window.Width <= 0 || window.Height <= 0) return;
+
+        var minWidth = double.IsNaN(MinWidth) ? 0 : MinWidth;
+        var minHeight = double.IsNaN(MinHeight) ? 0 : MinHeight;
+        var (x, y, width, height) = SessionWindowMath.ClampToVirtualScreen(
+            window.X, window.Y, window.Width, window.Height,
+            SystemParameters.VirtualScreenLeft,
+            SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth,
+            SystemParameters.VirtualScreenHeight,
+            minWidth,
+            minHeight);
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = x;
+        Top = y;
+        Width = width;
+        Height = height;
+        if (window.Maximized) WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>
+    /// ② 左栏状态：记住宽度（显示时经 <see cref="UpdateTabAreaState"/> 套用）并套用全局激活面板。
+    /// 全局面板仅作初始态——文件标签打开时，其 reading-state 面板选择会覆盖（BA-6 优先级）。
+    /// </summary>
+    void ISessionRestoreTarget.ApplyLeftPanel(SessionLeftPanel leftPanel)
+    {
+        if (leftPanel is null) return;
+
+        if (leftPanel.Width > 0) _leftPanelWidth = ClampLeftPanelWidth(leftPanel.Width);
+        if (TabHost.HasTabs) LeftPanelColumn.Width = new GridLength(_leftPanelWidth);
+
+        ApplyPanelSelection(SessionStore.NormalizePanelKey(leftPanel.ActiveTab));
+    }
+
+    /// <summary>③ 打开有效文件标签（异步分批）；active 为最后激活标签，打开后显式选中。</summary>
+    void ISessionRestoreTarget.OpenSessionDocument(string path, bool active)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+
+        try
+        {
+            OpenDocumentTab(path);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 恢复标签失败: {path} ({ex.Message})");
+            return;
+        }
+
+        if (!active) return;
+
+        var fullPath = Path.GetFullPath(path);
+        var tab = TabHost.Tabs.FirstOrDefault(t => t.Kind == TabKind.Document
+            && string.Equals(t.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (tab is not null) TabHost.SelectedTab = tab;
+    }
+
+    /// <summary>失效文件汇总 Toast（AC-29.1：「N 个文件已失效，已跳过」，2s 自动隐藏）。</summary>
+    void ISessionRestoreTarget.ReportSkippedFiles(int skippedCount)
+    {
+        if (skippedCount <= 0) return;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            SessionToastText.Text = $"{skippedCount} 个文件已失效，已跳过";
+            SessionToast.Visibility = Visibility.Visible;
+            _sessionToastTimer?.Stop();
+            _sessionToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _sessionToastTimer.Tick += (_, _) =>
+            {
+                _sessionToastTimer?.Stop();
+                SessionToast.Visibility = Visibility.Collapsed;
+            };
+            _sessionToastTimer.Start();
+        }));
+    }
+
+    /// <summary>
+    /// 退出保存会话（FR-28）：文档标签集合（路径 + 激活态）、窗口几何（最大化时存还原边界）、
+    /// 左栏宽度与全局激活面板。与 reading-state 独立写入，互不影响。
+    /// </summary>
+    private void SaveSession()
+    {
+        try
+        {
+            var state = new SessionState();
+            foreach (var tab in TabHost.Tabs)
+            {
+                if (tab is { Kind: TabKind.Document, FilePath: { } path })
+                {
+                    state.Tabs.Add(new SessionTab
+                    {
+                        Path = path,
+                        Active = ReferenceEquals(tab, TabHost.SelectedTab),
+                    });
+                }
+            }
+
+            var maximized = WindowState == WindowState.Maximized;
+            var bounds = maximized ? RestoreBounds : new Rect(Left, Top, Width, Height);
+            state.Window = new SessionWindow
+            {
+                Width = bounds.Width > 0 ? bounds.Width : Width,
+                Height = bounds.Height > 0 ? bounds.Height : Height,
+                X = bounds.X,
+                Y = bounds.Y,
+                Maximized = maximized,
+            };
+
+            var panelWidth = LeftPanelColumn.Width.Value > 0 ? LeftPanelColumn.Width.Value : _leftPanelWidth;
+            state.LeftPanel = new SessionLeftPanel
+            {
+                Width = ClampLeftPanelWidth(panelWidth),
+                ActiveTab = _panelState.ActiveKey,
+            };
+
+            _sessionStore.Save(state);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 保存会话失败: {ex.Message}");
         }
     }
 

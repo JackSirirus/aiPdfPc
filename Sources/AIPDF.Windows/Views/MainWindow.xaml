@@ -694,6 +694,23 @@
                            Foreground="White" />
             </Border>
 
+            <!-- V2 T6：会话恢复时失效文件汇总 Toast（AC-29.1；由代码后置 2s 自动隐藏） -->
+            <Border x:Name="SessionToast"
+                    Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,20"
+                    Padding="14,7"
+                    CornerRadius="8"
+                    Background="{StaticResource Brush.TextPrimary}"
+                    Visibility="Collapsed"
+                    IsHitTestVisible="False"
+                    Panel.ZIndex="21">
+                <TextBlock x:Name="SessionToastText"
+                           FontSize="12"
+                           Foreground="White" />
+            </Border>
+
             <!-- 底部状态栏 -->
             <Border Grid.Row="2"
                     Background="{StaticResource Brush.Sidebar}"
