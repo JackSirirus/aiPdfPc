@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -20,11 +21,28 @@ from PIL import Image, ImageDraw
 from pypdf import PdfReader
 
 
+def engine_result_from_stdout(stdout):
+    """对齐 EngineBridge.ParseResult：从后向前找含 "ok" 的 JSON 行，容忍混入诊断行。"""
+    for line in reversed(stdout.splitlines()):
+        line=line.strip()
+        if not line:
+            continue
+        try:
+            obj=json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj,dict) and "ok" in obj:
+            return obj
+    raise AssertionError(f"引擎未返回有效 JSON 结果：{stdout[-300:]!r}")
+
+
 class EngineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory(prefix="aipdf-tests-",dir=ROOT/"tmp")
         cls.root=Path(cls.temp.name)
+        # 隔离就地保存 temp 目录登记，避免污染开发机 %APPDATA%（M-4）。
+        os.environ["AIPDF_STATE_DIR"]=str(cls.root/"state")
         cls.source=cls.root/"source.pdf"
         doc=fitz.open()
         for i in range(3):
@@ -50,6 +68,7 @@ class EngineTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         assert hashlib.sha256(cls.source.read_bytes()).hexdigest()==cls.digest, "Source was modified!"
+        os.environ.pop("AIPDF_STATE_DIR",None)
         cls.temp.cleanup()
 
     def run_tool(self,op,options=None,files=None):
@@ -117,6 +136,185 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("SECRET-123",''.join(p.extract_text() for p in reader.pages))
         self.assertNotIn(b"SECRET-123",path.read_bytes())
         with self.assertRaises(engine.UserError):self.run_tool("redact",{"text":"does-not-exist"})
+
+    # --- V2 T3：批注写回 + 就地原子保存 + 加密保存参数 ---
+
+    def _annotation_path(self,name="annot.pdf",encrypted=False,password="",owner="owner-secret"):
+        path=self.root/name
+        if encrypted:
+            doc=fitz.open(self.source)
+            doc.save(path,encryption=fitz.PDF_ENCRYPT_AES_256,owner_pw=owner,user_pw=password,
+                     permissions=fitz.PDF_PERM_ACCESSIBILITY|fitz.PDF_PERM_PRINT|fitz.PDF_PERM_COPY)
+            doc.close()
+        else:
+            path.write_bytes(self.source.read_bytes())
+        return path
+
+    def _save_annotations(self,path,annotations,password=""):
+        return engine.dispatch({"operation":"save_annotations","files":[str(path)],
+                                "options":{"password":password,"annotations":annotations}})
+
+    def test_annotation_writeback_third_party(self):
+        path=self._annotation_path("annot-writeback.pdf")
+        result=self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"rect":[50,100,300,130],"color":"#FF0000"},
+            {"action":"add","id":"n1","kind":"note","page":1,"rect":[50,100,300,130],"text":"第一条笔记 note"},
+        ])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["outputs"],[str(path)])
+        self.assertIn("h1",result["annotationHandles"]);self.assertIn("n1",result["annotationHandles"])
+        with fitz.open(str(path)) as doc:
+            kinds=[];reds=[];notes=[]
+            for page in doc:
+                for a in page.annots() or []:
+                    kinds.append(a.type[1])
+                    if a.type[1]=="Highlight":reds.append(a.colors.get("stroke"))
+                    if a.type[1]=="FreeText":notes.append(a.info.get("content"))
+            self.assertIn("Highlight",kinds);self.assertIn("FreeText",kinds)
+            self.assertIn([1.0,0.0,0.0],reds)
+            self.assertTrue(any("第一条笔记" in (n or "") for n in notes))
+            self.assertEqual(len(doc),3)
+        # 第三方（pypdf）可打开并看到两类注释
+        reader=PdfReader(str(path))
+        subtypes=[a.get_object().get("/Subtype") for pg in reader.pages for a in (pg.get("/Annots") or [])]
+        self.assertIn("/Highlight",subtypes);self.assertIn("/FreeText",subtypes)
+
+    def test_annotation_delete_and_recolor(self):
+        path=self._annotation_path("annot-edit.pdf")
+        added=self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"rect":[50,100,300,130],"color":"#FF0000"}])
+        handle=added["annotationHandles"]["h1"]
+        self._save_annotations(path,[{"action":"setColor","name":handle,"color":"#00FF00"}])
+        with fitz.open(str(path)) as doc:
+            self.assertIn([0.0,1.0,0.0],[a.colors.get("stroke") for a in doc[0].annots() or []])
+        self._save_annotations(path,[{"action":"delete","name":handle}])
+        with fitz.open(str(path)) as doc:
+            self.assertEqual([a for p in doc for a in (p.annots() or [])],[])
+
+    def test_annotation_dispatch_validation(self):
+        good=self._annotation_path("annot-valid.pdf")
+        action={"action":"add","kind":"highlight","page":0,"rect":[0,0,10,10]}
+        with self.assertRaises(engine.UserError):engine.dispatch({"operation":"save_annotations","files":[]})
+        with self.assertRaises(engine.UserError):engine.dispatch({"operation":"save_annotations","files":[str(self.root/"missing.pdf")],"options":{"annotations":[action]}})
+        txt=self.root/"notpdf.txt";txt.write_text("x")
+        with self.assertRaises(engine.UserError):engine.dispatch({"operation":"save_annotations","files":[str(txt)],"options":{"annotations":[action]}})
+        with self.assertRaises(engine.UserError):engine.dispatch({"operation":"save_annotations","files":[str(good),str(good)],"options":{"annotations":[action]}})
+        with self.assertRaises(engine.UserError):engine.dispatch({"operation":"unknown-op","files":[str(good)]})
+        with self.assertRaises(engine.UserError):self._save_annotations(good,[])
+
+    def test_atomic_save_failure_keeps_original(self):
+        path=self._annotation_path("annot-atomic.pdf")
+        before=hashlib.sha256(path.read_bytes()).hexdigest()
+        def boom(src,dst):raise OSError("injected replace failure")
+        with patch.object(engine.os,"replace",side_effect=boom):
+            with self.assertRaises(OSError):
+                self._save_annotations(path,[{"action":"add","id":"h","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),before)
+        self.assertEqual(list(path.parent.glob(".aipdf_tmp_*")),[])
+
+    def test_replace_busy_distinguishable_error(self):
+        path=self._annotation_path("annot-busy.pdf")
+        before=hashlib.sha256(path.read_bytes()).hexdigest()
+        def busy(src,dst):raise PermissionError(13,"file in use")
+        with patch.object(engine.os,"replace",side_effect=busy):
+            with self.assertRaises(engine.TargetInUseError) as ctx:
+                self._save_annotations(path,[{"action":"add","id":"h","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        self.assertEqual(ctx.exception.code,"target_in_use")
+        self.assertIn("占用",str(ctx.exception))
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),before)
+        failure=engine._failure_result(ctx.exception)
+        self.assertFalse(failure["ok"]);self.assertEqual(failure["errorCode"],"target_in_use")
+
+    def test_temp_validation_aborts_without_replace(self):
+        path=self._annotation_path("annot-validate.pdf")
+        before=hashlib.sha256(path.read_bytes()).hexdigest()
+        calls=[]
+        real_replace=os.replace
+        def spy(src,dst):
+            calls.append((str(src),str(dst)));return real_replace(src,dst)
+        values=iter([0,1])
+        with patch.object(engine,"_count_annots",side_effect=lambda d:next(values)),patch.object(engine.os,"replace",side_effect=spy):
+            with self.assertRaises(engine.UserError) as ctx:
+                self._save_annotations(path,[{"action":"add","id":"h","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        self.assertIn("校验失败",str(ctx.exception))
+        self.assertEqual([c for c in calls if c[1]==str(path)],[])  # 未尝试 replace
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),before)
+
+    def test_dir_fsync_platform_guard(self):
+        # Windows 分支必须在接触 os.open 之前返回（否则目录句柄 fsync 假失败）
+        with patch.object(engine.sys,"platform","win32"),patch.object(engine.os,"open",side_effect=AssertionError("dir fsync must be skipped on Windows")):
+            engine._fsync_dir(self.root)
+        # 当前平台真实就地保存不得因目录 fsync 平台差异假失败
+        path=self._annotation_path("annot-fsync.pdf")
+        result=self._save_annotations(path,[{"action":"add","id":"h","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        self.assertTrue(result["ok"])
+
+    def test_temp_leftover_cleanup(self):
+        folder=self.root/"temp-sweep";folder.mkdir(exist_ok=True)
+        stale=folder/".aipdf_tmp_stale";stale.write_text("x")
+        old=time.time()-3600;os.utime(stale,(old,old))
+        fresh=folder/".aipdf_tmp_fresh";fresh.write_text("y")
+        engine._record_temp_dir(folder)
+        engine.cleanup_temp_dirs()
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())  # 新 temp 可能属于并发保存，保留
+        fresh.unlink();engine.cleanup_temp_dirs()
+
+    def test_encrypted_annotation_save_preserves_encryption(self):
+        password="user-secret"
+        path=self._annotation_path("annot-encrypted.pdf",encrypted=True,password=password)
+        orig=PdfReader(str(path));orig_enc=orig.trailer["/Encrypt"]
+        orig_fp=tuple(str(orig_enc[k]) for k in ("/V","/R","/P","/Length","/Filter"))
+        # 引擎是一进程一请求；加密就地保存经真实 CLI 子进程验证。PyMuPDF 1.28.2 在
+        # 同一解释器内反复 AES 打开/保存会进入全局坏状态；子进程隔离复现生产形态。
+        request={"operation":"save_annotations","files":[str(path)],
+                 "options":{"password":password,"annotations":[
+                     {"action":"add","id":"n","kind":"note","page":0,"rect":[50,100,300,130],"text":"加密笔记"}]}}
+        done=subprocess.run([sys.executable,str(ROOT/"backend"/"engine.py")],input=json.dumps(request),
+                            capture_output=True,text=True,env={**os.environ},timeout=120)
+        self.assertEqual(done.returncode,0,done.stderr[-500:])
+        # 像 EngineBridge.ParseResult 一样从后向前找含 "ok" 的 JSON 行：MuPDF 会把
+        # C 层诊断写到进程 stdout，不能整体 json.loads（协议容忍混入行）。
+        result=engine_result_from_stdout(done.stdout)
+        self.assertTrue(result["ok"])
+        with fitz.open(str(path)) as d:
+            self.assertTrue(d.needs_pass or d.is_encrypted)  # AC-13.2：保存后仍加密
+            self.assertEqual(d.authenticate(password),2)     # 原用户密码可解
+            self.assertEqual(d.page_count,3)
+        out=PdfReader(str(path));out_enc=out.trailer["/Encrypt"]
+        out_fp=tuple(str(out_enc[k]) for k in ("/V","/R","/P","/Length","/Filter"))
+        # 算法（/V=5,/R=6,AESV3）与用户权限位（/P）保持；用户可见权限可保持
+        self.assertEqual(orig_fp,out_fp)
+        self.assertTrue(out.is_encrypted);self.assertEqual(out.decrypt(password),1)
+        annots=[a.get_object() for a in (out.pages[0].get("/Annots") or [])]
+        self.assertEqual(len(annots),2)
+        self.assertIn("/FreeText",[a.get("/Subtype") for a in annots])
+        self.assertIn("加密笔记",[str(a.get("/Contents") or "") for a in annots])
+        # 已知限制：仅持用户密码时 PyMuPDF 无法保留原 owner 密码，重加密会生成新 owner
+        # 密码（用户密码与权限位不变）。此处断言的不是「owner 保持」而是「可见性保持」。
+        self.assertEqual(out.decrypt("owner-secret"),0)  # 原 owner 密码不再可用（已知限制）
+
+    def test_plain_annotation_save_stays_unencrypted(self):
+        path=self._annotation_path("annot-plain.pdf")
+        self._save_annotations(path,[{"action":"add","id":"h","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        with fitz.open(str(path)) as d:
+            self.assertFalse(d.needs_pass);self.assertFalse(d.is_encrypted)
+        # 普通工具仍是解密输出（save_pdf 的 PDF_ENCRYPT_NONE 契约未变）
+        protected=self.run_tool("protect",{"newPassword":"contract-pw"})
+        with fitz.open(protected["outputs"][0]) as d:self.assertTrue(d.needs_pass)
+        unlocked=self.run_tool("unlock",{"password":"contract-pw"},protected["outputs"])
+        with self.pdf(unlocked) as d:self.assertFalse(d.needs_pass)
+
+    def test_corrupt_input_does_not_harm_original(self):
+        broken=self.root/"broken-annot.pdf";broken.write_bytes(b"%PDF-1.7\nnot really a pdf")
+        before=hashlib.sha256(broken.read_bytes()).hexdigest()
+        with self.assertRaises(engine.UserError):self._save_annotations(broken,[{"action":"add","kind":"highlight","page":0,"rect":[0,0,10,10]}])
+        self.assertEqual(hashlib.sha256(broken.read_bytes()).hexdigest(),before)
+        truncated=self.root/"truncated-annot.pdf"
+        data=self.source.read_bytes();truncated.write_bytes(data[:len(data)//2])
+        before2=hashlib.sha256(truncated.read_bytes()).hexdigest()
+        with self.assertRaises(engine.UserError):self._save_annotations(truncated,[{"action":"add","kind":"highlight","page":0,"rect":[0,0,10,10]}])
+        self.assertEqual(hashlib.sha256(truncated.read_bytes()).hexdigest(),before2)
 
     def test_encrypt_unlock(self):
         protected=self.run_tool("protect",{"newPassword":"local-test-password"})

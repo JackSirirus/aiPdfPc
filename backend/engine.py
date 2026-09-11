@@ -44,6 +44,27 @@ class UserError(Exception):
     pass
 
 
+class InPlaceSaveError(UserError):
+    """就地批注保存失败。携带机器可读 code，经 JSON 顶层 `errorCode` 传给 WPF 桥，
+    使 WPF 能区分「目标被占用」并提示关闭其他程序/另存为，而非盲目重试。"""
+
+    code = "inplace_save_failed"
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        if code:
+            self.code = code
+
+
+class TargetInUseError(InPlaceSaveError):
+    """os.replace 目标被其他进程占用（Windows 无 FILE_SHARE_DELETE）时的可辨识错误。"""
+
+    code = "target_in_use"
+
+    def __init__(self):
+        super().__init__("目标文件正被其他程序占用，无法写入。请关闭正在打开该文件的程序后重试，或另存为副本。", "target_in_use")
+
+
 CHILDREN: list[subprocess.Popen] = []
 
 
@@ -216,6 +237,11 @@ def open_pdf(path, password=""):
         doc = fitz.open(path)
     except Exception:
         raise UserError(f"无法读取 {Path(path).name}。文件可能损坏或格式不受支持。")
+    # Capture the encryption state before authenticate(): in PyMuPDF 1.28
+    # `is_encrypted` flips to False once a password is accepted, and an
+    # empty-user-password document never reports needs_pass. The in-place
+    # annotation save uses this to preserve (or drop) encryption on save.
+    doc._aipdf_encrypted = bool(doc.is_encrypted or doc.needs_pass)
     if not doc.is_pdf:
         doc.close()
         raise UserError("此工具需要 PDF 文件。")
@@ -279,6 +305,391 @@ def insert_text(page, rect, text, size=18, color=(0, 0, 0), opacity=1, align=0):
                                         fill_opacity=opacity, align=align)
     if remaining < 0:
         raise UserError("文字放不进所选区域，请扩大区域或减小字号。")
+
+
+# --- V2 批注写回 + 就地原子保存 -------------------------------------------------
+# 批注链路刻意不进 BY_ID（32 工具目录不变）：它就地写回源文件而非任务输出目录，
+# 并且是唯一允许在保存时保留源文件加密的路径（用已知用户密码显式 AES-256 重加密）。
+# 普通工具的 save_pdf 契约（输出到任务目录 + PDF_ENCRYPT_NONE）保持不变。
+TEMP_PREFIX = ".aipdf_tmp_"
+ANNOTATION_OPERATIONS = ("save_annotations", "add_highlight_annot", "add_freetext_annot")
+# 比这个更年轻的 temp 可能是并发的另一引擎进程（同目录不同文件）正在写，勿删。
+_TEMP_STALE_SECONDS = 600
+
+
+def _state_dir():
+    override = os.environ.get("AIPDF_STATE_DIR")
+    if override:
+        return Path(override)
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(base) / "AIPDF"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "AIPDF"
+    return Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "AIPDF"
+
+
+def _temp_registry_path():
+    return _state_dir() / "tmp-dirs.json"
+
+
+def _read_temp_dirs():
+    try:
+        data = json.loads(_temp_registry_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [str(item) for item in data if isinstance(item, str)] if isinstance(data, list) else []
+
+
+def _write_temp_dirs(dirs):
+    try:
+        target = _temp_registry_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(dirs, ensure_ascii=False), encoding="utf-8")
+        os.replace(str(temporary), str(target))
+    except OSError:
+        pass
+
+
+def _record_temp_dir(directory):
+    """记录曾就地保存的目录，供下次启动清扫崩溃残留（M-4）。"""
+    folder = str(Path(directory))
+    dirs = _read_temp_dirs()
+    if folder not in dirs:
+        dirs.append(folder)
+        _write_temp_dirs(dirs)
+
+
+def cleanup_temp_dirs(max_age=_TEMP_STALE_SECONDS):
+    """启动时清扫已记录目录中残留的 `.aipdf_tmp_*`。
+
+    只删除早于 max_age 的文件：新写的 temp 可能属于并发引擎进程（同目录不同
+    文件）。杀软/索引器瞬时锁导致删除失败时保留该目录登记，下次启动再扫（M-4）。
+    """
+    now = time.time()
+    survivors, removed = [], 0
+    for folder in _read_temp_dirs():
+        directory = Path(folder)
+        if not directory.is_dir():
+            continue
+        keep = False
+        for leftover in directory.glob(TEMP_PREFIX + "*"):
+            try:
+                if (now - leftover.stat().st_mtime) < max_age:
+                    keep = True  # 可能是在途 temp：保留登记，留待下次
+                    continue
+                leftover.unlink()
+                removed += 1
+            except FileNotFoundError:
+                pass
+            except OSError:
+                keep = True  # 杀软/索引器锁：保留登记，下次重试
+        if keep:
+            survivors.append(folder)
+    _write_temp_dirs(survivors)
+    return removed
+
+
+def _doc_is_encrypted(doc):
+    captured = getattr(doc, "_aipdf_encrypted", None)
+    if captured is not None:
+        return bool(captured)
+    return bool(doc.needs_pass or doc.is_encrypted)
+
+
+def _fsync_file(path):
+    # Windows 上 O_RDONLY 句柄 fsync 会 EBADF，必须 O_RDWR。
+    fd = os.open(str(path), os.O_RDWR)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(folder):
+    # H-3：Windows 无法对目录句柄 fsync（os.open(dir) 抛 PermissionError）。
+    # 同目录 os.replace 本身原子，目录 fsync 是 POSIX 额外的持久化保障，仅在那里保留。
+    if sys.platform == "win32":
+        return
+    try:
+        fd = os.open(str(folder), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _count_annots(doc):
+    # annot_xrefs() 只读 /Annots 引用，不解码注释字符串。加密文档上必须用它：
+    # PyMuPDF 1.28.2 读取 AES 文档的注释字符串时可能抛 aes padding/UnicodeDecodeError。
+    return sum(len(page.annot_xrefs() or []) for page in doc)
+
+
+def _validate_saved_temp(temp, expected_pages, expected_annots, encrypted, password):
+    """替换前校验 temp 可重新打开，且页数、注释数与内存一致。
+
+    加密文档额外用 pypdf 交叉校验注释数：MuPDF 1.28.2 读取 AES 注释字符串不可靠
+    （PyMuPDF 侧缺陷，文件本身有效，pypdf 可用原用户密码解密）；页面数仍以 PyMuPDF 校验。
+    """
+    with fitz.open(str(temp)) as check:
+        if check.needs_pass and password:
+            check.authenticate(password)
+        if check.page_count != expected_pages:
+            raise UserError("保存校验失败：输出页数与内存不一致，原文件未改动。")
+        if not encrypted and _count_annots(check) != expected_annots:
+            raise UserError("保存校验失败：输出注释数与内存不一致，原文件未改动。")
+    if encrypted:
+        from pypdf import PdfReader
+        reader = PdfReader(str(temp))
+        if reader.is_encrypted and not reader.decrypt(password):
+            raise UserError("保存校验失败：输出加密无法用原密码打开，原文件未改动。")
+        if len(reader.pages) != expected_pages:
+            raise UserError("保存校验失败：输出页数与内存不一致，原文件未改动。")
+        if sum(len(page.get("/Annots") or []) for page in reader.pages) != expected_annots:
+            raise UserError("保存校验失败：输出注释数与内存不一致，原文件未改动。")
+
+
+def _close_doc(doc):
+    # PyMuPDF 重复 close 会 ValueError("document closed")，用于 finally 的幂等关闭。
+    try:
+        doc.close()
+    except ValueError:
+        pass
+
+
+def _atomic_save_in_place(doc, path, password=""):
+    """原子替换源文件：temp（同目录）→ doc.save → 重开校验页数/注释数 → fsync temp
+    → 关闭原句柄 → os.replace → fsync 目标目录 → 清理。任一步失败都不改动原文件。
+
+    Windows 上 MuPDF 会持有源文件句柄，replace 前必须关闭（否则 WinError 5）。
+    本函数在成功路径会关闭 doc；调用方用 _close_doc() 幂等收尾。
+
+    加密：源文档加密且会话持有用户密码时，用相同的用户密码 + 原权限位显式 AES-256
+    重加密，保证仍加密且原用户密码可解（AC-13.2）。非加密文档保持不加密，与普通工具
+    契约一致。password 不写入磁盘、日志、argv 或临时文件名。
+    """
+    target = Path(path)
+    folder = target.parent
+    temporary = folder / f"{TEMP_PREFIX}{uuid.uuid4().hex}"
+    _record_temp_dir(folder)  # 先登记：save 与 replace 之间崩溃也能被下次启动清扫
+    kwargs = {"garbage": 4, "deflate": True}
+    encrypted = _doc_is_encrypted(doc)
+    if encrypted:
+        if doc.needs_pass and not password:
+            raise UserError("加密文档需要密码才能保存批注。")
+        # 显式重加密而非 PDF_ENCRYPT_KEEP：PyMuPDF 1.28.2 在用户密码会话下用 KEEP
+        # 复用原加密上下文时，可能把新增注释的字符串写成空/乱码（MuPDF AES 缺陷）。
+        # 用已知用户密码 + 新随机 owner 密码 + 原权限位重新加密，产物稳定可验证；
+        # 代价是 owner 密码无法保留（会话不持有，见已知限制）。
+        kwargs.update(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=password,
+                      owner_pw=uuid.uuid4().hex, permissions=doc.permissions)
+    else:
+        kwargs["encryption"] = fitz.PDF_ENCRYPT_NONE
+    expected_pages = expected_annots = None
+    try:
+        expected_pages = len(doc)
+        expected_annots = _count_annots(doc)
+        doc.save(str(temporary), **kwargs)
+        # 保存后立即关闭原句柄：① Windows 上 os.replace 需要它；② 避免同进程内两个
+        # AES 文档并存（MuPDF 1.28.2 的全局 AES 状态缺陷）。
+        _close_doc(doc)
+        # 替换前先校验：损坏/半成品 temp 绝不能进入源文件。
+        _validate_saved_temp(temporary, expected_pages, expected_annots, encrypted, password)
+    except UserError:
+        raise
+    except Exception as error:
+        # 损坏/畸形源文件可能由 MuPDF 抛非 UserError；统一为可解析错误，原文件保持不动。
+        raise UserError("保存失败，原文件未改动。") from error
+    try:
+        _fsync_file(temporary)
+        try:
+            os.replace(str(temporary), str(target))
+        except PermissionError as error:
+            # H-1：目标被其他程序以无 FILE_SHARE_DELETE 打开（Windows）。可辨识、不重试轰炸。
+            raise TargetInUseError() from error
+        _fsync_dir(folder)
+    finally:
+        # 失败时删除 temp（若 unlink 也被锁则留下，交由下次启动的 cleanup_temp_dirs 清扫）；
+        # 替换成功后 temp 已不存在。
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+    return target
+
+
+def _quad_rects(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, fitz.Rect):
+        return [raw]
+    if isinstance(raw, (list, tuple)):
+        if len(raw) == 4 and all(isinstance(v, (int, float)) for v in raw):
+            return [fitz.Rect(raw)]  # 单个 [x0, y0, x1, y1]
+        return [fitz.Rect(item) for item in raw]
+    raise UserError("批注选区坐标格式不正确。")
+
+
+def add_highlight_annot(page, quads=None, rect=None, color=(1, 1, 0)):
+    """添加标准 Highlight 注释（颜色 + 四边形点）。
+
+    坐标为可见页、左上原点的 pt（与 area() 和 WPF PdfCoordinateMapper 一致），
+    经 page.derotation_matrix 转换后再写入（V2 禁旋转页批注，非旋转页为恒等）。
+    """
+    raw = quads if quads is not None else ([rect] if rect is not None else None)
+    rects = _quad_rects(raw)
+    if not rects:
+        raise UserError("高亮批注缺少选区坐标。")
+    if isinstance(color, str):
+        color = rgb(color)
+    annot = page.add_highlight_annot(quads=[r * page.derotation_matrix for r in rects])
+    annot.set_colors(stroke=tuple(color))
+    annot.set_opacity(0.5)
+    annot.update()
+    return annot
+
+
+def _note_box(page, rect):
+    width = min(max(140.0, rect.width), max(140.0, page.rect.width))
+    height = min(max(60.0, rect.height + 24.0), max(60.0, page.rect.height))
+    left = min(max(rect.x0, 0.0), max(0.0, page.rect.width - width))
+    top = min(max(rect.y0, 0.0), max(0.0, page.rect.height - height))
+    return fitz.Rect(left, top, left + width, top + height)
+
+
+def add_freetext_annot(page, rect, text, color=(1, 1, 0.7), fontsize=11):
+    """添加 FreeText 笔记注释（Q7 裁决命名；不得复用 :269 的绘字函数 insert_text）。"""
+    text = str(text or "")
+    if not text.strip():
+        raise UserError("笔记内容不能为空。")
+    area = fitz.Rect(rect)
+    if area.is_empty:
+        raise UserError("笔记位置无效。")
+    fontname = "china-s" if any(ord(c) > 255 for c in text) else "helv"
+    box = _note_box(page, area)
+    annot = page.add_freetext_annot(box * page.derotation_matrix, text, fontsize=fontsize,
+                                    fontname=fontname, text_color=(0, 0, 0), fill_color=tuple(color), align=0)
+    annot.set_info(content=text)
+    annot.update()
+    return annot
+
+
+def _find_annots(doc, action):
+    """按稳定 /NM 名（name/handle）或同会话 xref 定位注释；跨保存 xref 会被 garbage
+    重编号，故名字才是 T4 应持久化的句柄。"""
+    wanted = action.get("name") or action.get("handle")
+    xref = action.get("xref")
+    found = []
+    for page in doc:
+        for annot in page.annots() or []:
+            if wanted is not None:
+                if annot.info.get("name") == str(wanted):
+                    found.append((page, annot))
+            elif xref is not None and annot.xref == xref:
+                found.append((page, annot))
+    return found
+
+
+def apply_annotation_actions(doc, actions):
+    """把 add/delete/setColor 批注动作应用到内存文档，返回 client id → 稳定注释名映射。"""
+    handles = {}
+    for action in actions:
+        what = str(action.get("action", "add")).strip().lower()
+        if what == "add":
+            try:
+                page_index = int(action.get("page", 0))
+            except (TypeError, ValueError):
+                raise UserError("批注页码格式不正确。")
+            if not 0 <= page_index < len(doc):
+                raise UserError("批注页码超出范围。")
+            page = doc[page_index]
+            kind = str(action.get("kind", "highlight")).strip().lower()
+            color = rgb(action.get("color") or "#FFFF00")
+            handle = str(action.get("id") or action.get("name") or uuid.uuid4().hex)
+            if kind == "highlight":
+                annot = add_highlight_annot(page, quads=action.get("quads"), rect=action.get("rect"), color=color)
+            elif kind == "note":
+                # 笔记 = 关联高亮 + FreeText；两者共用同一稳定名，删除时一并移除。
+                highlight = add_highlight_annot(page, quads=action.get("quads"), rect=action.get("rect"), color=color)
+                highlight.set_name(handle)
+                highlight.update()
+                annot = add_freetext_annot(page, action.get("noteRect") or action.get("rect"), action.get("text", ""))
+            else:
+                raise UserError("不支持的批注类型。")
+            # 注释 /NM 名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
+            annot.set_name(handle)
+            annot.update()
+            handles[str(action.get("id") or handle)] = handle
+        elif what in ("delete", "remove"):
+            targets = _find_annots(doc, action)
+            if not targets:
+                raise UserError("找不到要删除的批注。")
+            for page, annot in targets:
+                page.delete_annot(annot)
+        elif what in ("setcolor", "recolor", "color"):
+            targets = [item for item in _find_annots(doc, action) if item[1].type[1] == "Highlight"]
+            if not targets:
+                raise UserError("找不到要改色的批注。")
+            for _, annot in targets:
+                annot.set_colors(stroke=rgb(action.get("color") or "#FFFF00"))
+                annot.update()
+        else:
+            raise UserError("不支持的批注操作。")
+    return handles
+
+
+def _normalize_annotation_actions(request, operation):
+    options = request.get("options", {}) or {}
+    raw = request.get("annotations")
+    if raw is None:
+        raw = options.get("annotations")
+    if raw is None:
+        single = request.get("annotation", options.get("annotation"))
+        if isinstance(single, dict):
+            raw = [single]
+        elif operation in ("add_highlight_annot", "add_freetext_annot"):
+            raw = [options]
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise UserError("批注数据格式不正确。")
+    default_kind = {"add_highlight_annot": "highlight", "add_freetext_annot": "note"}.get(operation)
+    if default_kind:
+        for item in raw:
+            item.setdefault("action", "add")
+            item.setdefault("kind", default_kind)
+    return raw
+
+
+def save_annotations_request(request, operation="save_annotations"):
+    """专用批注保存 dispatch：在 BY_ID 与 outputDir 校验之前处理，故自建等价校验（M-1）。"""
+    files = [str(Path(p).expanduser().resolve()) for p in request.get("files", [])]
+    options = request.get("options", {}) or {}
+    if not files:
+        raise UserError("请先选择文件。")
+    if len(files) != 1:
+        raise UserError("批注保存一次处理一份文件。")
+    path = files[0]
+    if not Path(path).is_file():
+        raise UserError(f"文件不存在：{Path(path).name}")
+    if Path(path).suffix.lower().lstrip(".") != "pdf":
+        raise UserError(f"{Path(path).name} 的格式不适用于此工具。")
+    actions = _normalize_annotation_actions(request, operation)
+    if not actions:
+        raise UserError("没有需要保存的批注。")
+    password = str(options.get("password", "") or "")
+    doc = open_pdf(path, password)
+    try:
+        handles = apply_annotation_actions(doc, actions)
+        _atomic_save_in_place(doc, path, password)
+    finally:
+        _close_doc(doc)
+    return {"ok": True, "outputs": [path], "annotationHandles": handles}
 
 
 def position_rect(page, options, width, height):
@@ -903,6 +1314,9 @@ def dispatch(request):
     operation=request.get("operation", "")
     if operation=="health": return health()
     if operation=="inspect": return inspect_file(request["files"][0],request.get("options",{}).get("password",""))
+    # 批注保存就地写回原文件，无输出目录且非 catalog 工具，必须在 BY_ID/outputDir
+    # 校验之前处理；其内部自建 file/扩展名/multiple 等价校验（M-1）。
+    if operation in ANNOTATION_OPERATIONS: return save_annotations_request(request,operation)
     if operation not in BY_ID: raise UserError("未知的工具。")
     files=[str(Path(p).expanduser().resolve()) for p in request.get("files",[])]
     url=request.get("options",{}).get("url","").strip() if operation=="html_to_pdf" else ""
@@ -950,16 +1364,30 @@ def dispatch(request):
         raise UserError(f"{str(error) if isinstance(error,UserError) else '处理失败，请检查文件格式和参数。'}\n本次输出目录：{out}") from error
 
 
+def _failure_result(error):
+    """把异常转成 EngineResult（ok/error + 可选 errorCode）形状，供 WPF 桥解析。"""
+    result={"ok":False,"error":str(error) if isinstance(error,UserError) else "请求格式不正确。"}
+    code=getattr(error,"code",None)
+    if isinstance(error,UserError) and code:
+        result["errorCode"]=code
+    return result
+
+
 def main():
     signal.signal(signal.SIGTERM,stop)
     signal.signal(signal.SIGINT,stop)
+    try:
+        # 每次引擎启动时清扫历史崩溃残留的就地保存 temp（M-4）。
+        cleanup_temp_dirs()
+    except Exception:
+        pass
     try:
         request=json.load(sys.stdin)
         # Third-party parsers may print notices; keep stdout strictly machine-readable.
         with redirect_stdout(sys.stderr):
             result=dispatch(request)
     except (UserError,KeyError,ValueError,TypeError) as error:
-        result={"ok":False,"error":str(error) if isinstance(error,UserError) else "请求格式不正确。"}
+        result=_failure_result(error)
     except Exception:
         result={"ok":False,"error":"处理引擎发生错误。请检查文件是否正常并重新尝试。"}
     print(json.dumps(result,ensure_ascii=False),flush=True)
