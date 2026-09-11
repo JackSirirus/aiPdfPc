@@ -286,7 +286,8 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="TabControl">
                         <Grid KeyboardNavigation.TabNavigation="Local">
-                            <ContentPresenter ContentSource="SelectedContent" />
+                            <!-- PART_SelectedContentHost 是 TabControl 查找选中内容的模板部件名（缺失会导致选中内容不显示） -->
+                            <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent" />
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
@@ -352,6 +353,16 @@
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
                                 Margin="6,0,10,0">
+                        <!-- 工具箱入口：与是否有标签无关，始终可见；展开主区左对齐工具面板（T20） -->
+                        <Button Style="{StaticResource TopBarIconButton}"
+                                Click="OnToolboxClick"
+                                ToolTip="工具箱：全部工具入口"
+                                AutomationProperties.Name="工具箱">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE90F;" FontSize="13" VerticalAlignment="Center" />
+                                <TextBlock Text="工具箱" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
                         <Button Style="{StaticResource TopBarIconButton}"
                                 Click="OnNewTabClick"
                                 ToolTip="打开 PDF 文档（新建标签）"
@@ -378,7 +389,7 @@
                 </Grid>
             </Border>
 
-            <!-- 主区域：左栏（阅读面板骨架 + 工具箱）/ 右标签宿主 -->
+            <!-- 主区域：左栏（阅读面板）/ 右标签宿主（工具箱为顶栏入口 + 主区左对齐滑出面板） -->
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition x:Name="LeftPanelColumn" Width="264" MinWidth="220" />
@@ -386,14 +397,13 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <!-- 左栏：阅读面板容器骨架（T4 填充）+ 工具箱（现有工具入口，保持可用） -->
+                <!-- 左栏：阅读面板容器（T4 填充）。工具箱已移至顶栏按钮 + 主区左对齐滑出面板（T20），左栏仅保留阅读面板。 -->
                 <Border x:Name="LeftPanel" Grid.Column="0" Background="{StaticResource Brush.Sidebar}">
                     <Grid Margin="14,14,10,12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
+                            <!-- 1: 阅读面板宿主。必须 *（有界高度）：Auto 会让缩略图 ListBox 得到无限高、
+                                 一次性铺开全部项，既无法自身滚动，ScrollIntoView 联动也无效。 -->
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
@@ -407,33 +417,6 @@
 
                         <!-- 面板内容宿主：内容由代码后置按切换填充（T4 真实面板 / T8 搜索） -->
                         <ContentControl x:Name="ReaderPanelHost" Grid.Row="1" Margin="0,8,0,0" Visibility="Collapsed" />
-
-                        <TextBlock Grid.Row="2"
-                                   Margin="0,16,0,0"
-                                   Text="工具箱"
-                                   FontSize="20"
-                                   FontWeight="SemiBold"
-                                   Foreground="{StaticResource Brush.TextPrimary}" />
-                        <TextBlock Grid.Row="3"
-                                   Margin="0,4,0,8"
-                                   Text="{Binding Tools.Count, StringFormat={}{0} 个工具 · 全部本机处理}"
-                                   FontSize="11"
-                                   Foreground="{StaticResource Brush.TextTertiary}" />
-
-                        <ScrollViewer Grid.Row="4" VerticalScrollBarVisibility="Auto">
-                            <ListBox ItemsSource="{Binding ToolsView}"
-                                     SelectedItem="{Binding SelectedTool, Mode=TwoWay}"
-                                     ItemContainerStyle="{StaticResource SidebarToolItem}"
-                                     ItemTemplate="{StaticResource ToolItemTemplate}"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     Padding="0,0,2,8"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                                <ListBox.GroupStyle>
-                                    <GroupStyle HeaderTemplate="{StaticResource GroupHeaderTemplate}" />
-                                </ListBox.GroupStyle>
-                            </ListBox>
-                        </ScrollViewer>
                     </Grid>
                 </Border>
 
@@ -446,12 +429,13 @@
 
                 <!-- 主宿主：标签内容 / 未认领工具详情兜底 / 起始页空态 -->
                 <Grid x:Name="MainHost" Grid.Column="2">
-                    <!-- 标签宿主（原 xaml:241 ContentControl 位）：TabItem 内容 = 阅读占位 / 工具页（数据上下文 = TabHostViewModel） -->
-                    <TabControl x:Name="TabHostControl"
-                                Style="{StaticResource TabHostStyle}"
-                                ItemsSource="{Binding Tabs}"
-                                SelectedItem="{Binding SelectedTab, Mode=TwoWay}"
-                                Visibility="Collapsed" />
+                    <!-- 主区内容宿主：直接承载当前选中标签的 Content（阅读视图 / 工具页）。
+                         原先用 TabControl，但其自定义模板缺少 items host（TabPanel/ItemsPresenter），
+                         导致 TabItem 容器不生成、TabControl.SelectedContent 恒为 null，选中内容从不渲染
+                         （大文档主区白屏的根因）。标签头由顶栏 ListBox 承载，主区只需显示选中内容，故用 ContentControl。 -->
+                    <ContentControl x:Name="TabHostControl"
+                                    Content="{Binding SelectedTab.Content}"
+                                    Visibility="Collapsed" />
 
                     <!-- 详情区兜底：未被注册表认领的工具显示占位视图（保留原工具入口形态） -->
                     <Grid x:Name="DetailPlaceholder" Visibility="Collapsed">
@@ -482,7 +466,7 @@
                                            VerticalAlignment="Center" />
                             </Border>
                             <TextBlock Margin="0,20,0,0"
-                                       Text="从左侧选择一个工具开始"
+                                       Text="从顶部「工具箱」选择工具开始"
                                        FontSize="18"
                                        FontWeight="SemiBold"
                                        Foreground="{StaticResource Brush.TextPrimary}" />
@@ -549,6 +533,75 @@
 
                     <!-- 空态：零标签 → 起始页（T6：打开按钮 / 最近文件 / 常用工具 / 全部工具入口，FR-33/34/35） -->
                     <startPage:StartPageView x:Name="StartPage" Visibility="Collapsed" />
+
+                    <!-- 工具箱滑出面板（T20）：左对齐覆盖层，宽度 340；顶栏「工具箱」按钮展开，✕ / Esc 关闭。
+                         内容与左栏原工具箱同源（ToolsView 分组视图 + 既有模板），点击工具 → ShowToolPage 并关闭面板。
+                         配色与投影镜像右侧 RightDrawer。 -->
+                    <Border x:Name="ToolboxPanel"
+                            Width="340"
+                            HorizontalAlignment="Left"
+                            Background="{StaticResource Brush.Window}"
+                            BorderBrush="{StaticResource Brush.Border}"
+                            BorderThickness="0,0,1,0"
+                            Visibility="Collapsed">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="0" Direction="0" Opacity="0.14" Color="#000000" />
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- 面板头：标题「工具箱」+ 关闭 ✕ -->
+                            <Border Grid.Row="0"
+                                    Background="{StaticResource Brush.Sidebar}"
+                                    BorderBrush="{StaticResource Brush.Border}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="14,8,8,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="工具箱"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{StaticResource Brush.TextPrimary}" />
+                                        <TextBlock Margin="0,2,0,0"
+                                                   Text="{Binding Tools.Count, StringFormat={}{0} 个工具 · 全部本机处理}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource TopBarIconButton}"
+                                            Click="OnCloseToolboxClick"
+                                            ToolTip="关闭工具箱"
+                                            AutomationProperties.Name="关闭工具箱">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="12" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <!-- 分组工具列表：与左栏原工具箱同款容器/模板；选择 → ShowToolPage → 关闭面板 -->
+                            <ScrollViewer Grid.Row="1" Padding="10,4,6,8" VerticalScrollBarVisibility="Auto">
+                                <ListBox x:Name="ToolboxList"
+                                         ItemsSource="{Binding ToolsView}"
+                                         ItemContainerStyle="{StaticResource SidebarToolItem}"
+                                         ItemTemplate="{StaticResource ToolItemTemplate}"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         Padding="0,0,2,8"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         SelectionChanged="OnToolboxToolSelected">
+                                    <ListBox.GroupStyle>
+                                        <GroupStyle HeaderTemplate="{StaticResource GroupHeaderTemplate}" />
+                                    </ListBox.GroupStyle>
+                                </ListBox>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
 
                     <!-- 右抽屉（T7 / 决策 7）：单文件工具（organize / pdfa）内联参数面板宿主。
                          右对齐覆盖层，宽度 380；关闭只隐藏不销毁（页面实例缓存于代码后置【D16】）。

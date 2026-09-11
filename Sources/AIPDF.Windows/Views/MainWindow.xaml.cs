@@ -229,6 +229,35 @@ public partial class MainWindow : Window
         {
             main.SelectedTool = active.Tool; // 详情占位信息与激活标签保持一致
         }
+
+    }
+
+    // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
+
+    /// <summary>顶栏「工具箱」按钮：展开/收起左对齐工具面板；与是否有标签无关，始终可用。</summary>
+    private void OnToolboxClick(object sender, RoutedEventArgs e)
+        => ToolboxPanel.Visibility = ToolboxPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+    /// <summary>面板头 ✕ 关闭工具箱（只隐藏，工具页实例由各自宿主缓存，不重建）。</summary>
+    private void OnCloseToolboxClick(object sender, RoutedEventArgs e)
+        => ToolboxPanel.Visibility = Visibility.Collapsed;
+
+    /// <summary>
+    /// 工具箱条目选择：显式走 <see cref="ShowToolPage"/>（与起始页工具入口同一路径，刻意不另接
+    /// SelectedTool 绑定，避免出现第二条打开路径）；随即复位选中项以便重复点击同一工具，并关闭面板。
+    /// </summary>
+    private void OnToolboxToolSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ListBox list || list.SelectedItem is not Models.Tool tool)
+        {
+            return;
+        }
+
+        list.SelectedIndex = -1; // 复位：允许再次点击同一工具
+        ToolboxPanel.Visibility = Visibility.Collapsed;
+        ShowToolPage(tool, (DataContext as ViewModels.MainViewModel)?.Bridge);
     }
 
     // ---- 顶栏事件（FR-07/FR-08） ----
@@ -342,6 +371,12 @@ public partial class MainWindow : Window
         _lastKnownPage[docId] = zeroBased;
         _bookmarks.SetCurrentPage(zeroBased);
 
+        // 阅读位置联动：左栏缩略图面板滚动到当前阅读页（仅当该面板正在显示）
+        if (_thumbPanel is { IsVisible: true } && string.Equals(_attachedDocId, docId, StringComparison.OrdinalIgnoreCase))
+        {
+            _thumbPanel.ScrollToPage(zeroBased);
+        }
+
         if (DataContext is ViewModels.MainViewModel main)
         {
             main.StatusText = $"当前页 {vm.PageIndicatorText}";
@@ -437,10 +472,22 @@ public partial class MainWindow : Window
         ClearActiveSearchHighlight();
     }
 
-    /// <summary>窗口级 Esc：搜索面板激活时消费（恢复原面板）；其余 Esc 交给聚焦控件（如页码输入框）。</summary>
+    /// <summary>窗口级 Esc：先关闭最上层工具箱面板；其次搜索面板激活时消费（恢复原面板）；其余交给聚焦控件。</summary>
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && _panelState.IsSearchActive)
+        if (e.Key != Key.Escape)
+        {
+            return;
+        }
+
+        if (ToolboxPanel.Visibility == Visibility.Visible)
+        {
+            e.Handled = true;
+            ToolboxPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (_panelState.IsSearchActive)
         {
             e.Handled = true;
             ExitFullTextSearch();

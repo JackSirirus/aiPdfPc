@@ -122,6 +122,12 @@
                               VirtualizingPanel.VirtualizationMode="Standard"
                               VirtualizingPanel.ScrollUnit="Pixel"
                               VirtualizingPanel.CacheLength="0,0">
+                    <!-- 显式声明虚拟化面板：默认 StackPanel 不会虚拟化，会一次性生成全部页容器（与 T3 设计/注释不符）。 -->
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:ReaderPageItemViewModel}">
                             <!-- 惰性页容器：宽高始终绑定页尺寸缓存换算值（骨架保持正确宽高比，避免跳动【ST-10】）；
@@ -239,17 +245,18 @@
             <DockPanel LastChildFill="False">
                 <!-- 左：当前页/总页数 + 页码跳转输入框 -->
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{x:Static reader:ReaderStrings.PagePrefix}"
-                               Style="{StaticResource FieldLabel}" />
+                    <!-- 当前页 / 总页数（FR-05：滚动时状态区显示当前页/总页数） -->
+                    <TextBlock Style="{StaticResource FieldLabel}" VerticalAlignment="Center">
+                        <Run Text="{x:Static reader:ReaderStrings.PagePrefix}" />
+                        <Run Text="{Binding CurrentPageNumber, Mode=OneWay}" />
+                        <Run Text=" 页 / 共 " />
+                        <Run Text="{Binding PageCount, Mode=OneWay}" />
+                        <Run Text=" 页" />
+                    </TextBlock>
                     <TextBox x:Name="JumpBox"
                              Style="{StaticResource JumpBoxStyle}"
                              Text="{Binding JumpText, UpdateSourceTrigger=PropertyChanged}"
                              KeyDown="OnJumpBoxKeyDown" />
-                    <TextBlock Style="{StaticResource FieldLabel}" Margin="2,0,0,0">
-                        <Run Text="页 / 共 " />
-                        <Run Text="{Binding PageCount, Mode=OneWay}" />
-                        <Run Text=" 页" />
-                    </TextBlock>
                     <TextBlock Text="{x:Static reader:ReaderStrings.JumpInvalid}"
                                Margin="8,0,0,0"
                                VerticalAlignment="Center">

@@ -202,9 +202,18 @@ public sealed class StartPageTests
     [Fact]
     public void RequestClear_WithNoItems_DoesNotEnterPending()
     {
-        var vm = NewVm();
-        vm.RequestClear();
-        Assert.False(vm.IsClearPending);
+        // 隔离：不得依赖真实 %APPDATA%\AIPDF\recent-files.json（应用运行后会写入，导致环境相关失败）
+        var dir = NewTempDir();
+        try
+        {
+            var vm = NewVm(new RecentFilesStore(dir));
+            vm.RequestClear();
+            Assert.False(vm.IsClearPending);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     [Fact]

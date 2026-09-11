@@ -90,4 +90,19 @@ public partial class ThumbPanel : UserControl
         ThumbsList.SelectedIndex = -1; // 允许重复点击同一缩略图
         ViewModel.RequestNavigate(item.PageIndex);
     }
+
+    /// <summary>
+    /// 阅读位置联动：把缩略图列表滚动到当前阅读页。
+    /// 不改变选中项（避免触发 <see cref="OnThumbSelected"/> 造成「缩略图↔阅读」回跳循环）；
+    /// 已可见时 WPF ScrollIntoView 不会移动，无抖动。未挂接可视树时静默返回。
+    /// </summary>
+    public void ScrollToPage(int pageIndex)
+    {
+        if (!IsLoaded || ViewModel is null || pageIndex < 0 || pageIndex >= ThumbsList.Items.Count)
+        {
+            return;
+        }
+
+        ThumbsList.ScrollIntoView(ThumbsList.Items[pageIndex]);
+    }
 }
