@@ -66,8 +66,12 @@ public partial class ThumbItemViewModel : ObservableObject
 /// </summary>
 public partial class ThumbPanelViewModel : ObservableObject
 {
-    /// <summary>缩略图目标宽度（CSS 像素，PRD 3.1 FR-02）。</summary>
-    public const int ThumbWidth = 120;
+    /// <summary>
+    /// 缩略图目标宽度（CSS 像素，PRD 3.1 FR-02）。
+    /// 必须是 <c>double</c>：XAML 用 <c>x:Static</c> 把它绑到 <c>FrameworkElement.Width</c>（double DP），
+    /// 整型常量会被装箱成 Int32 存入 DP，测量期 <c>get_Width()</c> 拆箱抛 InvalidCastException 并崩溃进程。
+    /// </summary>
+    public const double ThumbWidth = 120;
 
     /// <summary>后台渲染并发：PDFium 全局锁已串行化，1 个工作线程避免排队竞争。</summary>
     private const int WorkerCount = 1;
