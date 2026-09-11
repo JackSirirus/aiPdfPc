@@ -172,6 +172,36 @@
                                        Stretch="Fill"
                                        RenderOptions.BitmapScalingMode="HighQuality"
                                        Visibility="{Binding IsRendered, Converter={StaticResource BoolToVisibility}}" />
+                                <!-- 搜索命中高亮叠加层（T8）：Canvas 绝对定位 DIP 矩形；IsHitTestVisible=False
+                                     保证滚动/选中/缩放事件照常穿透；矩形随缩放重算（DisplayWidth 变化）。 -->
+                                <ItemsControl ItemsSource="{Binding Highlights}"
+                                              IsHitTestVisible="False"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Width="{Binding DisplayWidth}"
+                                              Height="{Binding DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="{Binding Width}"
+                                                    Height="{Binding Height}"
+                                                    IsHitTestVisible="False"
+                                                    Background="{StaticResource Brush.SearchHighlight}"
+                                                    BorderBrush="{StaticResource Brush.SearchHighlightBorder}"
+                                                    BorderThickness="1" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

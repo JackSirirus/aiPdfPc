@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 AIPDF contributors
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using AIPDF.Windows.Rendering;
+using AIPDF.Windows.Search;
 using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
@@ -31,6 +34,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // T8：窗口级唯一搜索栈——一个文本层服务 + 一个索引服务（MUST：每窗口各一份）
+        _searchIndexService = new SearchIndexService(_searchTextService);
 
         // Wave 5 工具组导航注册：每组一行（并行任务合并约定，T14 起建立）。
         PageOrganizer.PageOrganizerPages.Register();
@@ -276,6 +282,8 @@ public partial class MainWindow : Window
         vm.LoadDocument(fullPath);
         var view = new ReaderView(vm);
 
+        AttachSearchDocument(fullPath); // 先挂接搜索（面板在标签激活时绑定该 docId）
+
         var tab = TabHost.OpenDocument(fullPath, () => view);
         RegisterReaderTab(tab, vm, fullPath);
 
@@ -365,21 +373,216 @@ public partial class MainWindow : Window
         {
             reader.ViewModel.PropertyChanged -= reader.Handler;
             reader.ViewModel.Dispose();
+            DetachSearchDocument(reader.DocId); // T8：解除索引 + 释放文本层句柄
         }
     }
 
     private void OnFullTextSearchClick(object sender, RoutedEventArgs e)
-        => ExecuteFullTextSearchStub();
+        => OpenFullTextSearch();
 
     private void OnFullTextSearchExecuted(object sender, ExecutedRoutedEventArgs e)
-        => ExecuteFullTextSearchStub();
+        => OpenFullTextSearch();
 
-    /// <summary>全文搜索事件桩：T8 将接管为搜索面板与页内高亮（PRD 3.3 FR-09/FR-10）。</summary>
-    private void ExecuteFullTextSearchStub()
+    /// <summary>
+    /// 全文搜索面板接管【D6】【R17】：仅在文档标签激活时（否则状态栏提示）。
+    /// 记住当前面板 → 切到搜索面板并聚焦搜索框；Esc/✕ 由 <see cref="ExitFullTextSearch"/> 恢复。
+    /// </summary>
+    private void OpenFullTextSearch()
     {
+        if (TabHost.SelectedTab is not { Kind: TabKind.Document, FilePath: { } path })
+        {
+            if (DataContext is ViewModels.MainViewModel main)
+            {
+                main.StatusText = "请先打开一篇 PDF 文档再使用全文搜索。";
+            }
+            return;
+        }
+
+        EnsureSearchPanel(path);
+        _panelState.OpenSearch();
+
+        // 程序化勾选「搜索」RadioButton：Checked 事件 → OnReaderPanelChecked（OpenSearch 幂等）→ ShowReaderPanel
+        PanelToggleSearch.IsChecked = true;
+        ShowReaderPanel(ReaderPanelState.Search);
+
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => _searchPanel?.FocusSearchBox()));
+    }
+
+    /// <summary>Esc / 面板 ✕：恢复进入搜索前的面板并清除高亮。</summary>
+    private void ExitFullTextSearch()
+    {
+        if (!_panelState.ExitSearch())
+        {
+            return; // 未处于搜索面板
+        }
+
+        var key = _panelState.ActiveKey;
+        var toggle = key switch
+        {
+            ReaderPanelState.Thumbs => PanelToggleThumbs,
+            ReaderPanelState.Outline => PanelToggleOutline,
+            ReaderPanelState.Bookmarks => PanelToggleBookmarks,
+            _ => null,
+        };
+
+        if (toggle is not null && toggle.IsChecked != true)
+        {
+            toggle.IsChecked = true; // Checked → OnReaderPanelChecked → ShowReaderPanel(key)
+        }
+        else
+        {
+            ShowReaderPanel(key);
+        }
+
+        ClearActiveSearchHighlight();
+    }
+
+    /// <summary>窗口级 Esc：搜索面板激活时消费（恢复原面板）；其余 Esc 交给聚焦控件（如页码输入框）。</summary>
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && _panelState.IsSearchActive)
+        {
+            e.Handled = true;
+            ExitFullTextSearch();
+        }
+    }
+
+    // ---- T8 搜索栈接线 ----
+
+    /// <summary>打开文档时挂接文本层句柄与索引（docId = 规范化路径，与阅读标签一致）。失败不阻断阅读。</summary>
+    private void AttachSearchDocument(string fullPath)
+    {
+        if (_searchDocs.ContainsKey(fullPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var doc = _searchTextService.OpenDocument(fullPath);
+            _searchDocs[fullPath] = doc;
+            _searchIndexService.Attach(fullPath, doc);
+        }
+        catch (Exception ex)
+        {
+            // 损坏/加密文件：阅读仍继续，搜索不可用（面板探测/搜索会给出提示）
+            Trace.WriteLine($"[MainWindow] 搜索索引挂接失败: {fullPath} ({ex.Message})");
+            if (DataContext is ViewModels.MainViewModel main)
+            {
+                main.StatusText = $"该文档搜索不可用：{ex.Message}";
+            }
+        }
+    }
+
+    /// <summary>关闭文档标签时解除索引并释放文本层句柄（避免句柄泄漏）。</summary>
+    private void DetachSearchDocument(string docId)
+    {
+        try
+        {
+            _searchIndexService.Detach(docId);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 搜索索引解除失败: {docId} ({ex.Message})");
+        }
+
+        if (_searchDocs.Remove(docId, out var doc))
+        {
+            doc.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 确保搜索面板绑定到指定文档：同 docId 幂等；换文档重建 VM（并反订阅旧事件）。
+    /// 面板打开时触发文本层探测（扫描件立即置灰 + 去 OCR）。
+    /// </summary>
+    private void EnsureSearchPanel(string docId)
+    {
+        if (!_searchIndexService.IsAttached(docId))
+        {
+            return; // 未挂接（打开失败）：不建 VM，搜索入口保持空态
+        }
+
+        _searchPanel ??= new SearchPanel();
+
+        if (_searchPanelVm is not null
+            && string.Equals(_searchPanelVm.DocId, docId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (_searchPanelVm is not null)
+        {
+            _searchPanelVm.HitActivated -= OnSearchHitActivated;
+            _searchPanelVm.OcrRequested -= OnSearchOcrRequested;
+            _searchPanelVm.CloseRequested -= OnSearchCloseRequested;
+            _searchPanelVm.Dispose();
+        }
+
+        _searchProvider ??= new SearchIndexProviderAdapter(_searchIndexService);
+        _searchPanelVm = new SearchPanelViewModel(_searchProvider, docId);
+        _searchPanelVm.HitActivated += OnSearchHitActivated;
+        _searchPanelVm.OcrRequested += OnSearchOcrRequested;
+        _searchPanelVm.CloseRequested += OnSearchCloseRequested;
+        _searchPanel.DataContext = _searchPanelVm;
+        _searchPanelVm.BeginProbe();
+    }
+
+    /// <summary>命中激活：跳页 + 页内高亮（点击命中至少高亮其全部行矩形）。</summary>
+    private void OnSearchHitActivated(object? sender, SearchResultItem item)
+    {
+        if (TabHost.SelectedTab is { Kind: TabKind.Document } active
+            && _readerTabs.TryGetValue(active.TabId, out var reader))
+        {
+            var rects = item.Rects.Count > 0 ? item.Rects : [item.BoundingRect];
+            reader.ViewModel.SetSearchHighlight(item.PageIndex, rects);
+            reader.ViewModel.GoToPage(item.PageIndex + 1);
+        }
+
+        if (_attachedDocId is not null)
+        {
+            _lastKnownPage[_attachedDocId] = item.PageIndex;
+            _bookmarks.SetCurrentPage(item.PageIndex);
+        }
+
         if (DataContext is ViewModels.MainViewModel main)
         {
-            main.StatusText = "全文搜索将在后续版本提供（Ctrl+F）。";
+            main.StatusText = $"第 {item.PageIndex + 1} 页 · 搜索命中";
+        }
+    }
+
+    /// <summary>无文本层 → 去 OCR：复用 T7 工具流打开 ocr 工具（幂等，已开仅激活【D16】）。</summary>
+    private void OnSearchOcrRequested(object? sender, EventArgs e)
+    {
+        if (DataContext is not ViewModels.MainViewModel main)
+        {
+            return;
+        }
+
+        var ocr = main.Tools.FirstOrDefault(t => string.Equals(t.Id, "ocr", StringComparison.Ordinal));
+        if (ocr is null)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(main.SelectedTool, ocr))
+        {
+            main.SelectedTool = ocr; // 触发既有关联流（OnViewModelPropertyChanged → ShowToolPage）
+        }
+        ShowToolPage(ocr, main.Bridge);
+        main.StatusText = "已打开 OCR 工具：识别完成后再回来搜索。";
+    }
+
+    private void OnSearchCloseRequested(object? sender, EventArgs e)
+        => ExitFullTextSearch();
+
+    /// <summary>清除激活文档阅读视图的页内搜索高亮。</summary>
+    private void ClearActiveSearchHighlight()
+    {
+        if (TabHost.SelectedTab is { Kind: TabKind.Document } active
+            && _readerTabs.TryGetValue(active.TabId, out var reader))
+        {
+            reader.ViewModel.ClearSearchHighlight();
         }
     }
 
@@ -401,8 +604,25 @@ public partial class MainWindow : Window
     /// <summary>各文档最近已知阅读页（0 基；书签「收藏当前页」的数据源，T7 接 ReaderView 后实时推送）。</summary>
     private readonly Dictionary<string, int> _lastKnownPage = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>当前显示的面板键（thumbs/outline/bookmarks/search）。</summary>
-    private string _readerPanelKey = "thumbs";
+    /// <summary>左栏面板接管状态机（T8）：Ctrl+F 记住原面板，Esc/✕ 恢复【D6】【R17】。</summary>
+    private readonly ReaderPanelState _panelState = new();
+
+    // ---- T8 全文搜索（面板接管 + 页内高亮 + 无文本层降级） ----
+
+    /// <summary>窗口级唯一文本层服务（T2）；<see cref="_searchIndexService"/> 共用其句柄生命周期。</summary>
+    private readonly PdfiumTextService _searchTextService = new();
+
+    /// <summary>窗口级唯一搜索索引服务（T2）：挂接多个文档（docId = 规范化路径）。</summary>
+    private readonly SearchIndexService _searchIndexService;
+
+    /// <summary>T2 服务 → 搜索面板消费接口的适配器（窗口内单例）。</summary>
+    private SearchIndexProviderAdapter? _searchProvider;
+
+    /// <summary>docId → 文本层文档句柄（与 <see cref="_readerTabs"/> 的 docId 同一规范化路径）。</summary>
+    private readonly Dictionary<string, PdfiumTextService.TextDocument> _searchDocs = new(StringComparer.OrdinalIgnoreCase);
+
+    private SearchPanel? _searchPanel;
+    private SearchPanelViewModel? _searchPanelVm;
 
     /// <summary>
     /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
@@ -434,6 +654,8 @@ public partial class MainWindow : Window
         _attachedDocId = docId;
         var pageCount = Math.Max(0, _panelRenderer.GetPageCount(docId));
 
+        EnsureSearchPanel(docId); // T8：搜索面板绑定到该文档（同一 docId）
+
         _thumbPanel = new ThumbPanel
         {
             DataContext = new ThumbPanelViewModel(
@@ -454,7 +676,7 @@ public partial class MainWindow : Window
         _bookmarks.AttachDocument(docId);
         _bookmarks.SetCurrentPage(_lastKnownPage.GetValueOrDefault(docId, 0));
 
-        ShowReaderPanel(_readerPanelKey); // 若当前正显示某面板，切换到新文档的实例
+        ShowReaderPanel(_panelState.ActiveKey); // 若当前正显示某面板，切换到新文档的实例
     }
 
     /// <summary>
@@ -481,21 +703,34 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>面板切换器事件（RadioButton Tag = 面板键）。</summary>
+    /// <summary>面板切换器事件（RadioButton Tag = 面板键）。搜索入口等同 Ctrl+F 的接管语义。</summary>
     private void OnReaderPanelChecked(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioButton { Tag: string key })
+        if (sender is RadioButton { Tag: string key, IsChecked: true })
         {
+            if (key == ReaderPanelState.Search)
+            {
+                _panelState.OpenSearch();
+            }
+            else
+            {
+                _panelState.Activate(key);
+            }
             ShowReaderPanel(key);
         }
     }
 
     private void ShowReaderPanel(string key)
     {
-        _readerPanelKey = key;
         if (ReaderPanelHost is null)
         {
             return; // InitializeComponent 期间初始 IsChecked 触发（T5 已知时序）
+        }
+
+        // 离开搜索面板：清除页内高亮（避免切到缩略图/目录后残留）
+        if (key != ReaderPanelState.Search)
+        {
+            ClearActiveSearchHighlight();
         }
 
         ReaderPanelHost.Content = key switch
@@ -503,7 +738,7 @@ public partial class MainWindow : Window
             "thumbs" => (object?)_thumbPanel,
             "outline" => (object?)_outlinePanel,
             "bookmarks" => (object?)_bookmarkPanel,
-            "search" => (object?)new SearchSlotPanel(), // T8 填充真实搜索 UI
+            "search" => (object?)_searchPanel,
             _ => null,
         };
     }

@@ -75,6 +75,41 @@ public partial class ReaderPageItemViewModel : ObservableObject
     /// <summary>是否已持有位图（决定占位/位图切换）。</summary>
     public bool IsRendered => Bitmap is not null;
 
+    /// <summary>页内搜索高亮（DIP，相对页左上角）。由 <see cref="ReaderViewModel.SetSearchHighlight"/> 填充，
+    /// 缩放变更时按新显示尺寸重算（见 <see cref="RebuildHighlights"/>）。</summary>
+    public ObservableCollection<SearchHighlight> Highlights { get; } = [];
+
+    /// <summary>本页是否持有搜索命中矩形（缩放重算的触发条件，避免空集合无谓清空通知）。</summary>
+    internal bool HasSearchRects => _searchRects.Count > 0;
+
+    /// <summary>搜索命中的源矩形（PDF 点，左上原点）；缩放重算的真源。</summary>
+    private IReadOnlyList<PdfRect> _searchRects = [];
+
+    /// <summary>设置本页高亮源矩形并立即按当前显示比例换算（命中跳转时调用）。</summary>
+    internal void SetSearchRects(IReadOnlyList<PdfRect> rects)
+    {
+        _searchRects = rects ?? [];
+        RebuildHighlights();
+    }
+
+    /// <summary>清空本页高亮（切换命中/退出搜索）。</summary>
+    internal void ClearSearchRects()
+    {
+        _searchRects = [];
+        if (Highlights.Count > 0) Highlights.Clear();
+    }
+
+    /// <summary>按当前 <see cref="DisplayWidth"/> 重新换算全部高亮（缩放变更/首次设置）。</summary>
+    internal void RebuildHighlights()
+    {
+        Highlights.Clear();
+        if (_searchRects.Count == 0 || WidthPt <= 0) return;
+        foreach (var rect in _searchRects)
+        {
+            Highlights.Add(PageLayoutCalculator.ToSearchHighlightDip(rect, WidthPt, DisplayWidth));
+        }
+    }
+
     /// <summary>在途渲染请求的规格（dpi, zoomPct）；结果到达时规格不匹配即丢弃（无取消 API 的适配）。</summary>
     internal (int Dpi, int ZoomPct)? PendingKey { get; set; }
 
@@ -108,6 +143,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private double _viewportWidth;
     private double _appliedZoom = 100;
     private bool _hasLayout;
+
+    /// <summary>当前持有高亮的页索引（-1 = 无）；切换命中时只清上一页，避免遍历全部页。</summary>
+    private int _searchHighlightPage = -1;
 
     /// <summary>构造。renderService 为空时首次打开文档自建并持有（随 Dispose 释放）；测试/宿主可注入。</summary>
     public ReaderViewModel(PdfiumRenderService? renderService = null, int bufferPages = DefaultBufferPages)
@@ -399,6 +437,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         {
             Pages[i].DisplayWidth = _pageSizes[i].Width * scale;
             Pages[i].DisplayHeight = _pageSizes[i].Height * scale;
+            // 缩放变更：搜索高亮按新显示尺寸重算（源矩形为 pt，不随缩放变化）
+            if (Pages[i].HasSearchRects) Pages[i].RebuildHighlights();
         }
     }
 
@@ -489,6 +529,36 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     partial void OnJumpTextChanged(string value) => IsJumpInvalid = false;
+
+    // ------------------------------------------------------------------ 搜索高亮（T8）
+
+    /// <summary>
+    /// 在指定页绘制搜索命中高亮（矩形为 PDF 点、左上原点；源矩形保存后按当前显示比例换 DIP）。
+    /// 只保留一页高亮（切换命中先清上一页）：高亮层由 ReaderView 叠加，命中测试穿透。
+    /// </summary>
+    public void SetSearchHighlight(int pageIndex, IReadOnlyList<PdfRect> rects)
+    {
+        ArgumentNullException.ThrowIfNull(rects);
+        if (pageIndex < 0 || pageIndex >= Pages.Count) return;
+
+        if (_searchHighlightPage >= 0 && _searchHighlightPage < Pages.Count && _searchHighlightPage != pageIndex)
+        {
+            Pages[_searchHighlightPage].ClearSearchRects();
+        }
+
+        Pages[pageIndex].SetSearchRects(rects);
+        _searchHighlightPage = pageIndex;
+    }
+
+    /// <summary>清除全部搜索高亮（退出搜索面板 / 切换面板）。</summary>
+    public void ClearSearchHighlight()
+    {
+        if (_searchHighlightPage >= 0 && _searchHighlightPage < Pages.Count)
+        {
+            Pages[_searchHighlightPage].ClearSearchRects();
+        }
+        _searchHighlightPage = -1;
+    }
 
     // ------------------------------------------------------------------ 释放
 

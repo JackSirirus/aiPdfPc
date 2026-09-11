@@ -19,6 +19,9 @@
         <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
         <SolidColorBrush x:Key="Brush.Error" Color="#C4321F" />
         <SolidColorBrush x:Key="Brush.FieldBackground" Color="#FFFFFF" />
+        <!-- 搜索命中高亮（T8）：半透明琥珀填充 + 较深边框，叠加在渲染页上仍清晰可辨且不遮字符 -->
+        <SolidColorBrush x:Key="Brush.SearchHighlight" Color="#66FFD84D" />
+        <SolidColorBrush x:Key="Brush.SearchHighlightBorder" Color="#CCFFB300" />
 
         <!-- 字号阶梯：26 页标题 / 15 区块标题 / 13 正文与字段 / 12 辅助 / 11 脚注（与 MainWindow 一致） -->
         <Style x:Key="PageTitle" TargetType="TextBlock">

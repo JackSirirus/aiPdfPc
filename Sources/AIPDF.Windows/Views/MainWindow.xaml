@@ -10,6 +10,7 @@
         FontFamily="Segoe UI Variable Display, Segoe UI"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
+        PreviewKeyDown="OnWindowPreviewKeyDown"
         WindowStartupLocation="CenterScreen">
 
     <Window.DataContext>
@@ -396,12 +397,12 @@
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
-                        <!-- 面板切换器：缩略图/目录/书签/搜索（搜索面板本体 T8 填充，当前占位） -->
+                        <!-- 面板切换器：缩略图/目录/书签/搜索（搜索面板 T8 已实现） -->
                         <StackPanel x:Name="ReaderPanelSwitcher" Grid.Row="0" Orientation="Horizontal" Visibility="Collapsed">
-                            <RadioButton Content="缩略图" Tag="thumbs" Style="{StaticResource ReaderPanelToggle}" IsChecked="True" Checked="OnReaderPanelChecked" />
-                            <RadioButton Content="目录" Tag="outline" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" />
-                            <RadioButton Content="书签" Tag="bookmarks" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" />
-                            <RadioButton Content="搜索" Tag="search" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" />
+                            <RadioButton x:Name="PanelToggleThumbs" Content="缩略图" Tag="thumbs" Style="{StaticResource ReaderPanelToggle}" IsChecked="True" Checked="OnReaderPanelChecked" AutomationProperties.Name="缩略图面板" />
+                            <RadioButton x:Name="PanelToggleOutline" Content="目录" Tag="outline" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" AutomationProperties.Name="目录面板" />
+                            <RadioButton x:Name="PanelToggleBookmarks" Content="书签" Tag="bookmarks" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" AutomationProperties.Name="书签面板" />
+                            <RadioButton x:Name="PanelToggleSearch" Content="搜索" Tag="search" Style="{StaticResource ReaderPanelToggle}" Checked="OnReaderPanelChecked" AutomationProperties.Name="搜索面板" />
                         </StackPanel>
 
                         <!-- 面板内容宿主：内容由代码后置按切换填充（T4 真实面板 / T8 搜索） -->
