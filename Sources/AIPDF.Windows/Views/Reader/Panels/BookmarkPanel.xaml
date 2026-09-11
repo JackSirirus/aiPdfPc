@@ -141,7 +141,7 @@
                            FontWeight="SemiBold"
                            Foreground="{StaticResource Brush.TextSecondary}" />
                 <TextBlock Margin="0,4,0,0"
-                           Text="点「收藏当前页」记录常看位置；书签在本次会话内有效。"
+                           Text="点「收藏当前页」记录常看位置；书签会随阅读状态保存，下次打开同一文件仍在。"
                            FontSize="11"
                            LineHeight="16"
                            TextWrapping="Wrap"

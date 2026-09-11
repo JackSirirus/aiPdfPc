@@ -40,6 +40,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // T8：窗口级唯一搜索栈——一个文本层服务 + 一个索引服务（MUST：每窗口各一份）
         _searchIndexService = new SearchIndexService(_searchTextService);
 
+        // T8：书签并入 T5 每文件阅读状态（Q3）；标题取目标页首行（FR-04，复用搜索文本层索引）。
+        _bookmarks = new BookmarkPanelViewModel(_readingStates)
+        {
+            TitleProvider = new SearchTextFirstLineProvider(_searchIndexService),
+        };
+
         // Wave 5 工具组导航注册：每组一行（并行任务合并约定，T14 起建立）。
         PageOrganizer.PageOrganizerPages.Register();
         Converter.ConverterPages.Register(); // T16 格式转换组：图片 / Office / 网址 / PDF-A / Markdown
@@ -869,8 +875,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private OutlinePanel? _outlinePanel;
     private BookmarkPanel? _bookmarkPanel;
 
-    /// <summary>会话书签 VM（单实例，按 docId 分存；关闭应用即失效，V2 持久化挂点见 VM 注释）。</summary>
-    private readonly BookmarkPanelViewModel _bookmarks = new();
+    /// <summary>书签 VM（单实例，按 docId 分存；T8 注入 T5 阅读状态存储 → 书签并入每文件 reading-state，Q3）。</summary>
+    private readonly BookmarkPanelViewModel _bookmarks;
 
     /// <summary>当前挂接的文档标识（渲染服务返回的规范化路径）。</summary>
     private string? _attachedDocId;
@@ -944,8 +950,32 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         => Math.Clamp(width <= 0 ? DefaultLeftPanelWidth : width, MinLeftPanelWidth, MaxLeftPanelWidth);
 
     /// <summary>
+    /// T8：书签自动标题适配器（FR-04）——从窗口级搜索文本层索引取目标页文本首行。
+    /// 未挂接 / 无文本层 / 提取失败返回 null，面板回退页码。
+    /// </summary>
+    private sealed class SearchTextFirstLineProvider : IBookmarkTitleProvider
+    {
+        private readonly SearchIndexService _index;
+
+        public SearchTextFirstLineProvider(SearchIndexService index) => _index = index;
+
+        public string? GetFirstLine(string docId, int pageIndex)
+        {
+            if (!_index.IsAttached(docId)) return null;
+            var text = _index.GetPageText(docId, pageIndex);
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            foreach (var raw in text.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length > 0) return line;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
-    /// V2 挂点：标签关闭时应 renderer.CloseDocument + 书签清理，V1 会话内保留。
+    /// T8：Tab 关闭时按 T5 键写入 reading-state 并清理会话书签（见 OnTabClosed）。
     /// </summary>
     private void AttachPanelsToDocument(string path)
     {
@@ -992,15 +1022,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         (_outlinePanel.DataContext as OutlinePanelViewModel)!.NavigateRequested += OnPanelNavigateRequested;
         _bookmarks.NavigateRequested += OnPanelNavigateRequested;
 
-        _bookmarks.AttachDocument(docId);
-        // T5：恢复该文档的阅读状态书签与面板选择（Q3 书签并入 reading-state；M-6 面板 SoT）
+        _bookmarks.AttachDocument(docId); // T8：内部在会话未跟踪时从 reading-state 回读书签（Q3 并入每文件状态）
+        // T5：恢复该文档的面板选择（书签已由 AttachDocument 回读，见上；此处不再重复应用）。
         if (_pendingRestore.TryGetValue(docId, out var pending))
         {
-            if (pending.Bookmarks.Count > 0)
-            {
-                _bookmarks.RestoreDocument(docId, pending.Bookmarks.Select(b => (b.PageIndex, b.CreatedAt)));
-            }
-
             if (!string.IsNullOrEmpty(pending.PanelKey))
             {
                 ApplyPanelSelection(pending.PanelKey);
@@ -1274,20 +1299,19 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
             var page = vm.CurrentPageNumber > 0 ? vm.CurrentPageNumber : 1;
             var zoom = vm.ZoomPercent > 0 ? vm.ZoomPercent : 100;
-            var state = new ReadingState
-            {
-                Path = path,
-                LastPage = page,
-                LastZoom = zoom,
-                PanelKey = _panelKeys.GetValueOrDefault(path, ReaderPanelState.Thumbs),
-                Bookmarks = [.. _bookmarks.SnapshotBookmarks(path).Select(b => new ReadingStateBookmark
-                {
-                    PageIndex = b.PageIndex,
-                    CreatedAt = b.CreatedAt,
-                })],
-                LastAccessUtc = DateTime.UtcNow,
-            };
+
+            // 读改写：保留已落盘书签（未挂接的左栏标签在此不丢书签）；
+            // 紧接着由面板 PersistAsync 以会话书签覆盖（含删除），书签仍是同一 reading-state 文件。
+            var state = _readingStates.Load(stamp.Value.Key) ?? new ReadingState { Path = path };
+            state.Path = path;
+            state.LastPage = page;
+            state.LastZoom = zoom;
+            state.PanelKey = _panelKeys.GetValueOrDefault(path, ReaderPanelState.Thumbs);
+            state.LastAccessUtc = DateTime.UtcNow;
             _readingStates.Save(stamp.Value.Key, state);
+
+            // T8/Q3：书签写入同一 reading-state 文件（面板读改写，不另设 bookmarks.json）。
+            _ = _bookmarks.PersistAsync(path);
 
             // 最近记录镜像（兜底投影；与 reading-state 不矛盾——同一时刻同源写入）
             _recentFiles.UpdateProgress(path, vm.PageCount, stamp.Value.Size, page, zoom);
