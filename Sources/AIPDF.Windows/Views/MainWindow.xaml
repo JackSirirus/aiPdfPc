@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels"
         xmlns:views="clr-namespace:AIPDF.Windows.Views"
+        xmlns:startPage="clr-namespace:AIPDF.Windows.Views.StartPage"
         Title="AIPDF · 本地 PDF 工作台"
         Width="1080" Height="700"
         MinWidth="860" MinHeight="560"
@@ -575,36 +576,8 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- 空态：零标签 → 起始页占位（T6 填充：打开按钮/最近文件/常用工具/完整工具入口） -->
-                    <Border x:Name="StartPagePlaceholder" Background="{StaticResource Brush.Window}">
-                        <StackPanel HorizontalAlignment="Center"
-                                    VerticalAlignment="Center"
-                                    MaxWidth="460"
-                                    TextBlock.TextAlignment="Center">
-                            <Border Width="72" Height="72"
-                                    CornerRadius="18"
-                                    Background="{StaticResource Brush.AccentSoft}"
-                                    HorizontalAlignment="Center">
-                                <TextBlock Text="A"
-                                           FontSize="34"
-                                           FontWeight="Bold"
-                                           Foreground="{StaticResource Brush.Accent}"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Margin="0,20,0,0"
-                                       Text="起始页（建设中）"
-                                       FontSize="24"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource Brush.TextPrimary}" />
-                            <TextBlock Margin="0,10,0,0"
-                                       Text="后续版本将在此提供最近文件、常用工具与全部工具入口。点击顶栏 ＋ 打开 PDF 文档。"
-                                       FontSize="13"
-                                       LineHeight="20"
-                                       Foreground="{StaticResource Brush.TextSecondary}"
-                                       TextWrapping="Wrap" />
-                        </StackPanel>
-                    </Border>
+                    <!-- 空态：零标签 → 起始页（T6：打开按钮 / 最近文件 / 常用工具 / 全部工具入口，FR-33/34/35） -->
+                    <startPage:StartPageView x:Name="StartPage" Visibility="Collapsed" />
                 </Grid>
             </Grid>
 

@@ -1,0 +1,396 @@
+<UserControl x:Class="AIPDF.Windows.Views.StartPage.StartPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels"
+             xmlns:local="clr-namespace:AIPDF.Windows.Views.StartPage"
+             AllowDrop="True"
+             PreviewDragOver="OnPreviewDragOver"
+             PreviewDrop="OnPreviewDrop"
+             Background="{StaticResource Brush.Window}">
+
+    <!-- 起始页（PRD 3.10 FR-33/34/35）：打开入口 + 最近文件卡片 + 常用工具网格【R19】+ 全部工具完整入口。
+         色板与字号全部引用应用级设计 token（App.xaml），不新增色值。 -->
+
+    <UserControl.Resources>
+        <!-- 视图本地转换器：显隐切换 / 取反 / 工具名首字母徽标 -->
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:InverseBoolToVisibilityConverter x:Key="BoolToVisibilityInverse" />
+        <local:InitialLetterConverter x:Key="InitialLetterConverter" />
+
+        <!-- 品牌 / 工具字母徽标：沿用应用「A」徽标的既有视觉语言（T5 空态同款） -->
+        <Style x:Key="ToolBadge" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="ToolBadgeText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- 最近文件卡片：hover 提亮；失效【ST-05】= 整卡降透明 + 文件名划线 + 「文件不存在」标注 -->
+        <Style x:Key="RecentCard" TargetType="Border">
+            <Setter Property="Width" Value="252" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="{StaticResource Brush.Window}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CardName" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="ToolTip" Value="{Binding Path}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Exists}" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                    <Setter Property="TextDecorations" Value="Strikethrough" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 常用工具 / 全部工具条目按钮：无 chrome，hover 提亮（PRD FR-35：图标 + 名称 + hover 背景变化） -->
+        <Style x:Key="ToolTileButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 区块标题右侧的轻量文字按钮（清除记录 / 全部工具切换） -->
+        <Style x:Key="TextLinkButton" TargetType="Button">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <Border MaxWidth="840"
+                    Margin="40,36,40,28"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top">
+
+                <StackPanel>
+                    <!-- ===== 英雄区：打开入口（FR-33） ===== -->
+                    <StackPanel HorizontalAlignment="Center" TextBlock.TextAlignment="Center">
+                        <Border Width="56" Height="56"
+                                CornerRadius="14"
+                                Background="{StaticResource Brush.AccentSoft}"
+                                HorizontalAlignment="Center">
+                            <TextBlock Text="A"
+                                       FontSize="26"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource Brush.Accent}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Margin="0,16,0,0"
+                                   Text="开始使用 AIPDF"
+                                   FontSize="24"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource Brush.TextPrimary}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="打开 PDF 文档开始阅读，或使用下方工具处理文件。所有操作都在本机完成，文档不会上传。"
+                                   FontSize="13"
+                                   LineHeight="20"
+                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   TextWrapping="Wrap" />
+                        <Button Margin="0,18,0,0"
+                                Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Center"
+                                Content="打开 PDF 文档"
+                                ToolTip="选择本地 PDF 文件打开"
+                                AutomationProperties.Name="打开 PDF 文档"
+                                Click="OnOpenClick" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Text="或将 PDF 文件拖入本窗口"
+                                   FontSize="12"
+                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                    </StackPanel>
+
+                    <!-- ===== 最近打开（FR-34）：无记录整体隐藏【ST-02】，不显示空占位 ===== -->
+                    <StackPanel Margin="0,32,0,0"
+                                Visibility="{Binding HasRecentFiles, Converter={StaticResource BoolToVisibility}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="最近打开"
+                                       Style="{StaticResource SectionTitle}" />
+                            <Button Grid.Column="1"
+                                    Style="{StaticResource TextLinkButton}"
+                                    Content="清除记录"
+                                    ToolTip="清空最近文件记录（需二次确认）"
+                                    AutomationProperties.Name="清除记录"
+                                    Click="OnClearClick"
+                                    Visibility="{Binding IsClearPending, Converter={StaticResource BoolToVisibilityInverse}}" />
+                        </Grid>
+
+                        <!-- 清空二次确认（PRD FR-34）：内联确认条，确认按钮红色强调 -->
+                        <Border Margin="0,8,0,0"
+                                Padding="12,8"
+                                CornerRadius="8"
+                                Background="{StaticResource Brush.Sidebar}"
+                                BorderBrush="{StaticResource Brush.Border}"
+                                BorderThickness="1"
+                                Visibility="{Binding IsClearPending, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="确定清除所有最近文件记录？此操作同时清除阅读进度。"
+                                           FontSize="12"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource Brush.TextPrimary}" />
+                                <Button Margin="12,0,0,0"
+                                        Style="{StaticResource TextLinkButton}"
+                                        Foreground="{StaticResource Brush.Error}"
+                                        FontWeight="SemiBold"
+                                        Content="清除"
+                                        AutomationProperties.Name="确认清除记录"
+                                        Click="OnConfirmClearClick" />
+                                <Button Margin="4,0,0,0"
+                                        Style="{StaticResource TextLinkButton}"
+                                        Content="取消"
+                                        AutomationProperties.Name="取消清除记录"
+                                        Click="OnCancelClearClick" />
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl Margin="0,12,0,0" ItemsSource="{Binding RecentFiles}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border MouseLeftButtonUp="OnRecentCardClick">
+                                        <Border.Style>
+                                            <Style TargetType="Border" BasedOn="{StaticResource RecentCard}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Exists}" Value="False">
+                                                        <Setter Property="Opacity" Value="0.62" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Style="{StaticResource ToolBadge}" Margin="0,0,10,0">
+                                                <TextBlock Style="{StaticResource ToolBadgeText}" Text="P" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Style="{StaticResource CardName}" Text="{Binding Name}" />
+                                                <TextBlock FontSize="11"
+                                                           Foreground="{StaticResource Brush.TextTertiary}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding DisplayDate}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Exists}" Value="False">
+                                                                    <Setter Property="Text" Value="文件不存在" />
+                                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <!-- 卡片移除入口（含失效卡片的「从最近列表移除」，PRD ST-05） -->
+                                            <Button Grid.Column="2"
+                                                    Style="{StaticResource TextLinkButton}"
+                                                    Margin="6,0,0,0"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="从最近列表移除"
+                                                    AutomationProperties.Name="从最近列表移除"
+                                                    Click="OnRemoveRecentClick">
+                                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="10"
+                                                           Foreground="{StaticResource Brush.TextTertiary}" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- ===== 常用工具网格：8 项静态清单【R19】 ===== -->
+                    <StackPanel Margin="0,8,0,0">
+                        <TextBlock Text="常用工具" Style="{StaticResource SectionTitle}" />
+                        <ItemsControl Margin="0,12,0,0" ItemsSource="{Binding FavoriteTools}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource ToolTileButton}"
+                                            Width="118" Height="84"
+                                            Margin="0,0,12,12"
+                                            ToolTip="{Binding Subtitle}"
+                                            AutomationProperties.Name="{Binding Name}"
+                                            Click="OnToolClick">
+                                        <StackPanel>
+                                            <Border Width="40" Height="40" CornerRadius="10"
+                                                    Background="{StaticResource Brush.AccentSoft}"
+                                                    HorizontalAlignment="Center">
+                                                <TextBlock Style="{StaticResource ToolBadgeText}"
+                                                           FontSize="17"
+                                                           Text="{Binding Name, Converter={StaticResource InitialLetterConverter}}" />
+                                            </Border>
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Text="{Binding Name}"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource Brush.TextPrimary}"
+                                                       HorizontalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- ===== 全部工具完整入口（FR-35）：分类分组，数据源 = backend/catalog.json ===== -->
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="全部工具" Style="{StaticResource SectionTitle}" />
+                        <Button Grid.Column="1"
+                                Style="{StaticResource TextLinkButton}"
+                                Content="{Binding AllToolsToggleText}"
+                                AutomationProperties.Name="切换全部工具列表"
+                                Click="OnToggleAllToolsClick" />
+                    </Grid>
+                    <ItemsControl Margin="0,4,0,0"
+                                  ItemsSource="{Binding ToolGroups}"
+                                  Visibility="{Binding IsAllToolsExpanded, Converter={StaticResource BoolToVisibility}}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel>
+                                    <TextBlock Margin="0,14,0,2"
+                                               Text="{Binding Name}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource Brush.TextTertiary}" />
+                                    <ItemsControl ItemsSource="{Binding Tools}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Style="{StaticResource ToolTileButton}"
+                                                        MinWidth="180"
+                                                        Margin="0,0,12,8"
+                                                        HorizontalContentAlignment="Left"
+                                                        ToolTip="{Binding Subtitle}"
+                                                        AutomationProperties.Name="{Binding Name}"
+                                                        Click="OnToolClick">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Border Style="{StaticResource ToolBadge}" Width="28" Height="28" Margin="0,0,8,0">
+                                                            <TextBlock Style="{StaticResource ToolBadgeText}"
+                                                                       FontSize="12"
+                                                                       Text="{Binding Name, Converter={StaticResource InitialLetterConverter}}" />
+                                                        </Border>
+                                                        <StackPanel VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{StaticResource Brush.TextPrimary}" />
+                                                            <TextBlock Text="{Binding Subtitle}"
+                                                                       FontSize="10"
+                                                                       MaxWidth="150"
+                                                                       Foreground="{StaticResource Brush.TextTertiary}"
+                                                                       TextTrimming="CharacterEllipsis" />
+                                                        </StackPanel>
+                                                    </StackPanel>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </ScrollViewer>
+
+        <!-- 轻量 Toast（ST-07 拒绝 / ST-05 失效提示）：底部浮层，动效由代码后置处理 -->
+        <Border x:Name="ToastHost"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,28"
+                Padding="16,10"
+                CornerRadius="8"
+                Background="{StaticResource Brush.TextPrimary}"
+                Visibility="Collapsed">
+            <TextBlock x:Name="ToastText"
+                       FontSize="12"
+                       Foreground="White" />
+        </Border>
+    </Grid>
+</UserControl>

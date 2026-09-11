@@ -57,8 +57,38 @@ public partial class MainWindow : Window
             {
                 ShowToolPage(viewModel.SelectedTool, viewModel.Bridge);
             }
+
+            InitStartPage(viewModel);
         }
     }
+
+    // ---- T6 起始页（空态主界面，FR-33/34/35） ----
+
+    /// <summary>起始页 VM：目录工具与主窗口同源（MainViewModel.Tools，避免重复加载 catalog.json）。</summary>
+    private StartPageViewModel? _startPage;
+
+    private void InitStartPage(MainViewModel main)
+    {
+        if (_startPage is not null)
+        {
+            return; // DataContext 重复变更不重建（最近列表状态保留）
+        }
+
+        _startPage = new StartPageViewModel(main.Tools);
+        StartPage.DataContext = _startPage;
+        _startPage.DocumentOpenRequested += OnStartPageDocumentOpenRequested;
+        _startPage.ToolRequested += OnStartPageToolRequested;
+    }
+
+    private void OnStartPageDocumentOpenRequested(object? sender, string path)
+        => OpenDocumentTab(path); // 最近列表记录已由 VM（OpenPickedFile/TryOpenRecent）完成
+
+    /// <summary>
+    /// 起始页点击工具 → T5 既有工具打开流（EnsureToolTab → 临时标签）。
+    /// T7 挂点：单文件工具将改路由到右抽屉【D7】。
+    /// </summary>
+    private void OnStartPageToolRequested(object? sender, Models.Tool tool)
+        => ShowToolPage(tool, (DataContext as MainViewModel)?.Bridge);
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -102,7 +132,7 @@ public partial class MainWindow : Window
         var hasTabs = TabHost.HasTabs;
         var active = TabHost.SelectedTab;
 
-        StartPagePlaceholder.Visibility = hasTabs ? Visibility.Collapsed : Visibility.Visible;
+        StartPage.Visibility = hasTabs ? Visibility.Collapsed : Visibility.Visible;
         TabHostControl.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
         LeftPanel.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
         LeftSplitter.Visibility = hasTabs ? Visibility.Visible : Visibility.Collapsed;
@@ -133,10 +163,9 @@ public partial class MainWindow : Window
 
     // ---- 顶栏事件（FR-07/FR-08） ----
 
-    /// <summary>＋ 新建标签：打开 .pdf 文件对话框；取消不产生空标签。</summary>
+    /// <summary>＋ 新建标签：打开 .pdf 文件对话框；取消不产生空标签。经起始页 VM 记录最近列表（FR-34）。</summary>
     private void OnNewTabClick(object sender, RoutedEventArgs e)
     {
-        // V2 挂点：拖拽落区与最近文件入口由 T6 起始页提供；此处保留最小「＋ → 打开」行为。
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "打开 PDF 文档",
@@ -147,7 +176,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        OpenDocumentTab(dialog.FileName);
+        if (_startPage is not null)
+        {
+            _startPage.OpenPickedFile(dialog.FileName); // 记录最近列表 + DocumentOpenRequested → 建标签
+        }
+        else
+        {
+            OpenDocumentTab(dialog.FileName);
+        }
     }
 
     /// <summary>
