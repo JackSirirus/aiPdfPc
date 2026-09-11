@@ -176,6 +176,13 @@ public sealed class PdfiumRenderService : IDisposable
         /// <summary>本次打开的代际戳（Close-first 重载后必变，供测试/诊断断言句柄已换代）。</summary>
         public long Generation;
 
+        // ---- 预览表单填充环境（Q5/B2，T2）----
+        // 仅“预览专用实例”经 EnableFormFill 启用；阅读器 ScreenRenderFlags 路径完全不触碰，
+        // 保证既有渲染逐字节不变。环境引用本句柄，退出必须先于 FPDF_CloseDocument。
+        public FPDF_FORMFILLINFO? FormInfo;
+        public FpdfFormHandleT? FormHandle;
+        internal FormFillDelegateHolder? FormDelegates;
+
         public void Dispose()
         {
             if (Disposed) return;
@@ -185,6 +192,16 @@ public sealed class PdfiumRenderService : IDisposable
                 Closing = true;
                 while (InFlight > 0) Monitor.Wait(Gate);
             }
+
+            // 退出表单环境（引用文档句柄），再释放原生 FPDF_FORMFILLINFO 与保活委托。
+            if (FormHandle is not null)
+            {
+                lock (PdfiumLock.Global) fpdf_formfill.FPDFDOC_ExitFormFillEnvironment(FormHandle);
+                FormHandle = null;
+            }
+            FormInfo?.Dispose();
+            FormInfo = null;
+            FormDelegates = null;
 
             if (Handle is not null)
             {
@@ -208,11 +225,7 @@ public sealed class PdfiumRenderService : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var fullPath = System.IO.Path.GetFullPath(path);
 
-        lock (_stateLock)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_documents.TryGetValue(fullPath, out var existing)) return existing.Path;
-        }
+        if (TryGetRegistered(fullPath, out var existing)) return existing;
 
         if (!File.Exists(fullPath))
             throw new PdfiumOpenException(fullPath, 0, $"文件不存在: {fullPath}");
@@ -228,6 +241,73 @@ public sealed class PdfiumRenderService : IDisposable
             throw new PdfiumOpenException(fullPath, 0, $"文件读取失败: {fullPath} ({ex.Message})");
         }
 
+        return RegisterDocument(fullPath, bytes, password);
+    }
+
+    /// <summary>
+    /// 【T2 预览内部入口】共享读打开（FileShare.ReadWrite，等价旧 PdfPreviewDocument.OpenFile）：
+    /// 允许预览刚被引擎写入/被其他进程以 ReadWrite 持有的文件，避免 <see cref="OpenDocument"/>
+    /// 的 File.ReadAllBytes（FileShare.Read）回归失败。仅服务预览/打印；阅读器既有路径不变。
+    /// </summary>
+    internal string OpenDocumentSharedRead(string path, string? password = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+        var fullPath = System.IO.Path.GetFullPath(path);
+
+        if (TryGetRegistered(fullPath, out var existing)) return existing;
+
+        byte[] bytes;
+        try
+        {
+            using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            bytes = memory.ToArray();
+        }
+        catch (Exception ex)
+        {
+            throw new PdfiumOpenException(fullPath, 0, $"文件读取失败: {fullPath} ({ex.Message})");
+        }
+
+        return RegisterDocument(fullPath, bytes, password);
+    }
+
+    /// <summary>
+    /// 【T2 预览内部入口】从内存字节打开（复用 <c>FPDF_LoadMemDocument64</c> 路径）。
+    /// 字节在句柄生命周期内固定（GCHandle.Pinned）；docId 为唯一 <c>mem://</c> 标识。
+    /// </summary>
+    internal string OpenDocumentFromBytes(byte[] pdfBytes, string? password = null)
+    {
+        ArgumentNullException.ThrowIfNull(pdfBytes);
+        if (pdfBytes.Length == 0)
+            throw new PdfiumOpenException("mem://empty", 0, "PDF 字节为空");
+
+        return RegisterDocument("mem://" + Guid.NewGuid().ToString("N"), pdfBytes, password);
+    }
+
+    /// <summary>已注册键的快速判定（锁内；含 _disposed 守卫）；未注册返回 false 且 docId=key。</summary>
+    private bool TryGetRegistered(string key, out string docId)
+    {
+        lock (_stateLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_documents.TryGetValue(key, out var existing))
+            {
+                docId = existing.Path;
+                return true;
+            }
+        }
+
+        docId = key;
+        return false;
+    }
+
+    /// <summary>
+    /// 加载字节 → 持久句柄 → 一次性解析全部页尺寸/旋转 → 注册（双检防并发重复）。
+    /// path / 共享读 / 内存三种入口复用；失败路径确保 pin.Free()，无句柄泄漏。
+    /// </summary>
+    private string RegisterDocument(string key, byte[] bytes, string? password)
+    {
         var pin = GCHandle.Alloc(bytes, GCHandleType.Pinned);
         FpdfDocumentT handle;
         lock (PdfiumLock.Global)
@@ -240,7 +320,7 @@ public sealed class PdfiumRenderService : IDisposable
             pin.Free();
             ulong err;
             lock (PdfiumLock.Global) err = fpdfview.FPDF_GetLastError();
-            throw new PdfiumOpenException(fullPath, err);
+            throw new PdfiumOpenException(key, err);
         }
 
         // 打开时一次性解析全部页尺寸与旋转（后续零解析）
@@ -259,7 +339,7 @@ public sealed class PdfiumRenderService : IDisposable
                 {
                     fpdfview.FPDF_CloseDocument(handle);
                     pin.Free();
-                    throw new PdfiumOpenException(fullPath, fpdfview.FPDF_GetLastError(), $"第 {i} 页加载失败: {fullPath}");
+                    throw new PdfiumOpenException(key, fpdfview.FPDF_GetLastError(), $"第 {i} 页加载失败: {key}");
                 }
                 try
                 {
@@ -277,7 +357,7 @@ public sealed class PdfiumRenderService : IDisposable
 
         var entry = new DocumentEntry
         {
-            Path = fullPath,
+            Path = key,
             Handle = handle,
             Pin = pin,
             Bytes = bytes,
@@ -290,13 +370,13 @@ public sealed class PdfiumRenderService : IDisposable
         lock (_stateLock)
         {
             // 双检：并发打开同一路径时保留先到者
-            if (_documents.TryGetValue(fullPath, out var winner))
+            if (_documents.TryGetValue(key, out var winner))
             {
                 entry.Dispose();
                 return winner.Path;
             }
-            _documents[fullPath] = entry;
-            return fullPath;
+            _documents[key] = entry;
+            return key;
         }
     }
 
@@ -486,6 +566,176 @@ public sealed class PdfiumRenderService : IDisposable
         if (zoomPct <= 0) throw new ArgumentOutOfRangeException(nameof(zoomPct));
 
         return Task.Run(() => RenderPageCore(entry, pageIndex, dpi, zoomPct, renderFlags));
+    }
+
+    // ------------------------------------------------------------------ 预览表单填充（T2 / Q5）
+
+    /// <summary>
+    /// 【T2 预览内部入口】在指定文档条目上创建表单填充环境（FPDFDOC_InitFormFillEnvironment）。
+    /// 仅预览专用实例调用；阅读器路径不调用。<see cref="DocumentEntry.FormDelegates"/> 为实例字段保活
+    /// （CppSharp 只写函数指针，不持托管引用，委托被 GC 后原生回调 = 崩溃）。
+    /// 幂等；所有 FPDF_* 在 <see cref="PdfiumLock.Global"/> 内，并经在途计数防 Close-first 竞态。
+    /// 失败抛 <see cref="InvalidOperationException"/>（Q5：不得静默跳过 Widget）。
+    /// </summary>
+    internal void EnableFormFill(string docId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(docId);
+        DocumentEntry entry = GetEntryOrThrow(docId);
+
+        lock (entry.Gate)
+        {
+            if (entry.Closing || entry.Disposed) throw new DocumentReloadingException(entry.Path);
+            if (entry.FormHandle is not null) return;
+            entry.InFlight++;
+        }
+
+        try
+        {
+            lock (PdfiumLock.Global)
+            {
+                var delegates = new FormFillDelegateHolder();
+                var info = new FPDF_FORMFILLINFO { Version = 2 };
+                delegates.Attach(info);
+
+                var handle = fpdf_formfill.FPDFDOC_InitFormFillEnvironment(entry.Handle, info);
+                if (handle is null || handle.__Instance == IntPtr.Zero)
+                {
+                    info.Dispose();
+                    throw new InvalidOperationException($"表单填充环境初始化失败: {entry.Path}");
+                }
+
+                entry.FormDelegates = delegates;
+                entry.FormInfo = info;
+                entry.FormHandle = handle;
+            }
+        }
+        finally
+        {
+            ExitEntry(entry);
+        }
+    }
+
+    /// <summary>
+    /// 【T2 预览内部入口】按显式像素尺寸渲染一页并绘制表单 Widget。
+    /// 与阅读器 <see cref="RenderPageAsync(string,int,double,int)"/> 的区别：
+    ///   1) 像素尺寸由调用方给定（保持 <c>PdfCoordinateMapper.PixelSize</c> 契约，避免舍入漂移）；
+    ///   2) 若该文档条目已 <see cref="EnableFormFill"/>，在同一 bitmap/page 上追加 <c>FPDF_FFLDraw</c>
+    ///      （Q5：旧栈 WithFormFill=true 的等价物）；未启用则退化为纯 <see cref="ScreenRenderFlags"/> 渲染。
+    /// 不进 LRU（表单位图与屏幕位图键无法区分，避免污染；预览按需渲染）。
+    /// 返回冻结 <see cref="BitmapSource"/>，可跨线程绑定（F3-BLK-1）。
+    /// </summary>
+    internal Task<BitmapSource> RenderPagePreviewAsync(string docId, int pageIndex, int pixelWidth, int pixelHeight)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(docId);
+        if (pixelWidth <= 0) throw new ArgumentOutOfRangeException(nameof(pixelWidth));
+        if (pixelHeight <= 0) throw new ArgumentOutOfRangeException(nameof(pixelHeight));
+
+        DocumentEntry entry = GetEntryOrThrow(docId);
+        if (pageIndex < 0 || pageIndex >= entry.PageCount)
+            throw new ArgumentOutOfRangeException(nameof(pageIndex), $"页索引越界: {pageIndex}/{entry.PageCount}");
+
+        return Task.Run(() => RenderPagePreviewCore(entry, pageIndex, pixelWidth, pixelHeight));
+    }
+
+    private BitmapSource RenderPagePreviewCore(DocumentEntry entry, int pageIndex, int pxW, int pxH)
+    {
+        EnterEntry(entry);
+        try
+        {
+            RenderCoreStartedForTest?.Invoke();
+            // 超纹理限幅【R9】：与 RenderBitmap 同规则
+            if (pxW > _maxTextureEdge || pxH > _maxTextureEdge)
+            {
+                var ratio = Math.Min((double)_maxTextureEdge / pxW, (double)_maxTextureEdge / pxH);
+                pxW = Math.Max(1, (int)Math.Round(pxW * ratio));
+                pxH = Math.Max(1, (int)Math.Round(pxH * ratio));
+                lock (_stateLock) _clampedCount++;
+            }
+
+            var stride = pxW * 4;
+            var buffer = new byte[(long)stride * pxH];
+            var bufferPin = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            try
+            {
+                lock (PdfiumLock.Global)
+                {
+                    var page = fpdfview.FPDF_LoadPage(entry.Handle, pageIndex);
+                    if (page is null || page.__Instance == IntPtr.Zero)
+                        throw new PdfiumOpenException(entry.Path, fpdfview.FPDF_GetLastError(), $"第 {pageIndex} 页加载失败: {entry.Path}");
+                    try
+                    {
+                        var bmp = fpdfview.FPDFBitmapCreateEx(pxW, pxH, 4, bufferPin.AddrOfPinnedObject(), stride);
+                        if (bmp is null || bmp.__Instance == IntPtr.Zero)
+                            throw new InvalidOperationException($"FPDFBitmap_CreateEx 失败 ({pxW}x{pxH})");
+                        try
+                        {
+                            fpdfview.FPDFBitmapFillRect(bmp, 0, 0, pxW, pxH, 0xFFFFFFFFUL);
+                            var form = entry.FormHandle;
+                            if (form is not null) fpdf_formfill.FORM_OnAfterLoadPage(page, form);
+                            fpdfview.FPDF_RenderPageBitmap(bmp, page, 0, 0, pxW, pxH, 0, ScreenRenderFlags);
+                            if (form is not null)
+                            {
+                                // Q5：同一 bitmap/page 上绘制 Widget（表单填充环境）
+                                fpdf_formfill.FPDF_FFLDraw(form, bmp, page, 0, 0, pxW, pxH, 0, ScreenRenderFlags);
+                                fpdf_formfill.FORM_OnBeforeClosePage(page, form);
+                            }
+                        }
+                        finally
+                        {
+                            fpdfview.FPDFBitmapDestroy(bmp);
+                        }
+                    }
+                    finally
+                    {
+                        fpdfview.FPDF_ClosePage(page);
+                    }
+                }
+            }
+            finally
+            {
+                bufferPin.Free();
+            }
+
+            var bitmap = BitmapSource.Create(pxW, pxH, 96, 96, PixelFormats.Bgra32, null, buffer, stride);
+            bitmap.Freeze();
+            return bitmap;
+        }
+        finally
+        {
+            ExitEntry(entry);
+        }
+    }
+
+    /// <summary>
+    /// 表单填充回调保活持有者：委托作为实例字段持有，防 GC 回收后原生回调崩溃。
+    /// 仅持有无需 unsafe 指针的回调（指针参数回调留空；PDFium 对版本 2 的扩展回调按需调用）。
+    /// </summary>
+    internal sealed class FormFillDelegateHolder
+    {
+        private readonly PDFiumCore.Delegates.Action___IntPtr _release = static _ => { };
+        private readonly PDFiumCore.Delegates.Action___IntPtr___IntPtr_double_double_double_double _invalidate =
+            static (_, _, _, _, _, _) => { };
+        private readonly PDFiumCore.Delegates.Action___IntPtr_int _setCursor = static (_, _) => { };
+        private readonly PDFiumCore.Delegates.Action___IntPtr_int _killTimer = static (_, _) => { };
+        private readonly PDFiumCore.Delegates.Action___IntPtr _onChange = static _ => { };
+        private readonly PDFiumCore.Delegates.Func_int___IntPtr___IntPtr _getRotation = static (_, _) => 0;
+        private readonly PDFiumCore.Delegates.Func___IntPtr___IntPtr___IntPtr_int _getPage = static (_, _, _) => IntPtr.Zero;
+        private readonly PDFiumCore.Delegates.Func___IntPtr___IntPtr___IntPtr _getCurrentPage = static (_, _) => IntPtr.Zero;
+        private readonly PDFiumCore.Delegates.Action___IntPtr___IntPtr_int _setCurrentPage = static (_, _, _) => { };
+
+        internal void Attach(FPDF_FORMFILLINFO info)
+        {
+            info.Version = 2;
+            info.Release = _release;
+            info.FFI_Invalidate = _invalidate;
+            info.FFI_SetCursor = _setCursor;
+            info.FFI_KillTimer = _killTimer;
+            info.FFI_OnChange = _onChange;
+            info.FFI_GetRotation = _getRotation;
+            info.FFI_GetPage = _getPage;
+            info.FFI_GetCurrentPage = _getCurrentPage;
+            info.FFI_SetCurrentPage = _setCurrentPage;
+        }
     }
 
     private DocumentEntry GetEntryOrThrow(string docId)

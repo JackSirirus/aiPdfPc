@@ -49,6 +49,50 @@ internal static class TestPdfFactory
     }
 
     /// <summary>
+    /// 生成带 /Rotate 的合成 PDF（T2 旋转实证用）：每页 MediaBox 相同，/Rotate 取 0/90/180/270。
+    /// 每页画主体色块 + 左上角深色小方块（旋转可见性标记）。
+    /// </summary>
+    public static byte[] CreateRotated(double widthPt, double heightPt, params int[] rotations)
+    {
+        if (rotations.Length == 0) rotations = new[] { 0 };
+
+        var objects = new List<string>
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            $"<< /Type /Pages /Kids [{string.Join(" ", Enumerable.Range(0, rotations.Length).Select(i => $"{3 + i * 2} 0 R"))}] /Count {rotations.Length} >>",
+        };
+
+        for (var i = 0; i < rotations.Length; i++)
+        {
+            var contentIndex = 4 + i * 2;
+            objects.Add(
+                $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {Fmt(widthPt)} {Fmt(heightPt)}] /Rotate {rotations[i]} /Contents {contentIndex} 0 R >>");
+            var content =
+                $"q 0 0 1 rg 20 20 {Fmt(widthPt - 40)} {Fmt(heightPt - 40)} re f Q " +
+                $"q 0 0 0 rg 0 0 40 40 re f Q";
+            objects.Add($"<< /Length {content.Length} >>\nstream\n{content}\nendstream");
+        }
+
+        var builder = new StringBuilder("%PDF-1.4\n");
+        var offsets = new int[objects.Count];
+        for (var i = 0; i < objects.Count; i++)
+        {
+            offsets[i] = ByteLength(builder);
+            builder.Append($"{i + 1} 0 obj\n{objects[i]}\nendobj\n");
+        }
+
+        var xrefOffset = ByteLength(builder);
+        builder.Append($"xref\n0 {objects.Count + 1}\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+        {
+            builder.Append($"{offset:D10} 00000 n \n");
+        }
+
+        builder.Append($"trailer\n<< /Size {objects.Count + 1} /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n");
+        return Encoding.ASCII.GetBytes(builder.ToString());
+    }
+
+    /// <summary>
     /// 带文字的合成 PDF：每页除色块外用标准 14 字体 Helvetica 写一行 ASCII 文本，
     /// 供 pypdf extract_text 校验（如加密/解锁往返后文本仍可读）。
     /// </summary>

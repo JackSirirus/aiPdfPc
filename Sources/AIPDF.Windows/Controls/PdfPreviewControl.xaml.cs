@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace AIPDF.Windows.Controls;
 
@@ -27,11 +28,17 @@ public partial class PdfPreviewControl : UserControl
 {
     private static readonly double[] ZoomPresets = [0.25, 0.33, 0.5, 0.67, 1.0, 1.5, 2.0, 3.0, 4.0];
 
-    private PdfPreviewDocument? _document;
+    private PdfiumPreviewDocument? _document;
     private PdfCoordinateMapper? _mapper;
     private int _currentPage;
     private double _zoom = 1.0;
     private Point? _selectionAnchor;
+
+    /// <summary>渲染代际号：结果到达时若已翻页/换文档/再缩放则丢弃，避免旧位图覆盖新位图。</summary>
+    private int _renderGeneration;
+
+    /// <summary>构造时捕获的 UI Dispatcher：后台渲染完成后封送回 UI 线程绑定（F3-BLK-1）。</summary>
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
 
     public PdfPreviewControl()
     {
@@ -54,23 +61,26 @@ public partial class PdfPreviewControl : UserControl
     public int PageCount => _document?.PageCount ?? 0;
 
     /// <summary>打开 PDF 并渲染第 1 页。文件以 FileShare.ReadWrite 共享读；
-    /// 格式非法或密码错误时抛异常，由调用方处理。</summary>
+    /// 格式非法或密码错误时抛异常，由调用方处理。渲染为后台异步，位图完成后封送 UI 线程。</summary>
     public void OpenPdf(string filePath, string? password = null)
     {
-        _document = PdfPreviewDocument.OpenFile(filePath, password);
+        ClosePdf();
+        _document = PdfiumPreviewDocument.OpenFile(filePath, password);
         _currentPage = 0;
         ClearSelection();
-        RenderCurrentPage();
+        RenderCurrentPageAsync();
     }
 
-    /// <summary>关闭当前文档，回到空态。</summary>
+    /// <summary>关闭当前文档，回到空态（释放本预览独占的 PDFium 句柄）。</summary>
     public void ClosePdf()
     {
+        var old = _document;
         _document = null;
         _mapper = null;
         _currentPage = 0;
         ClearSelection();
         PageImage.Source = null;
+        old?.Dispose();
         UpdateState();
     }
 
@@ -155,7 +165,7 @@ public partial class PdfPreviewControl : UserControl
 
         _currentPage = pageIndex;
         ClearSelection();
-        RenderCurrentPage();
+        RenderCurrentPageAsync();
     }
 
     private void SetZoom(double zoom)
@@ -168,11 +178,15 @@ public partial class PdfPreviewControl : UserControl
 
         _zoom = zoom;
         ClearSelection();
-        RenderCurrentPage();
+        RenderCurrentPageAsync();
     }
 
-    /// <summary>渲染当前页（96dpi 基准位图，1 px = 1 DIP）。pdfium 渲染单页耗时短，同步完成即可。</summary>
-    private void RenderCurrentPage()
+    /// <summary>
+    /// 后台渲染当前页，完成后封送回 UI 线程绑定（F3-BLK-1：绝不在后台线程改 UI 绑定状态）。
+    /// PDFium 后端返回冻结 BitmapSource；<see cref="_renderGeneration"/> 丢弃过期结果
+    /// （快速翻页/缩放时旧渲染晚到不得覆盖新位图）。
+    /// </summary>
+    private async void RenderCurrentPageAsync()
     {
         var document = _document;
         if (document is null)
@@ -185,19 +199,42 @@ public partial class PdfPreviewControl : UserControl
             return;
         }
 
-        _mapper = document.CreateMapper(_currentPage, _zoom);
-        var rendered = document.RenderPage(_currentPage, _zoom);
+        var pageIndex = _currentPage;
+        var mapper = document.CreateMapper(pageIndex, _zoom);
+        _mapper = mapper;
+        var generation = ++_renderGeneration;
 
-        var bitmap = new WriteableBitmap(rendered.PixelWidth, rendered.PixelHeight, 96, 96, PixelFormats.Bgra32, null);
-        bitmap.WritePixels(
-            new Int32Rect(0, 0, rendered.PixelWidth, rendered.PixelHeight),
-            rendered.BgraPixels,
-            rendered.PixelWidth * 4,
-            0);
+        BitmapSource bitmap;
+        try
+        {
+            bitmap = await document.RenderPageAsync(pageIndex, _zoom).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return; // 文档已关闭/切换，静默丢弃
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine($"[PdfPreviewControl] 渲染失败: {ex.Message}");
+            return;
+        }
 
+        _dispatcher.InvokeAsync(() =>
+        {
+            if (generation != _renderGeneration || !ReferenceEquals(_document, document))
+            {
+                return; // 过期结果：已翻页/缩放/换文档
+            }
+            ApplyBitmap(bitmap);
+        });
+    }
+
+    /// <summary>UI 线程应用已渲染位图（尺寸沿用像素尺寸，1px = 1DIP，与旧栈一致）。</summary>
+    private void ApplyBitmap(BitmapSource bitmap)
+    {
         PageImage.Source = bitmap;
-        PageImage.Width = rendered.PixelWidth;
-        PageImage.Height = rendered.PixelHeight;
+        PageImage.Width = bitmap.PixelWidth;
+        PageImage.Height = bitmap.PixelHeight;
         PageImage.Visibility = Visibility.Visible;
         SelectionCanvas.Visibility = IsRegionSelectionEnabled ? Visibility.Visible : Visibility.Collapsed;
         UpdateState();
