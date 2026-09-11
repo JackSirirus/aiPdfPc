@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 AIPDF contributors
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.ViewModels;
+using AIPDF.Windows.Views.Reader;
 using AIPDF.Windows.Views.Reader.Panels;
 
 namespace AIPDF.Windows.Views;
@@ -187,15 +189,92 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 打开文档标签；同路径已存在则激活现有标签【D14】。
-    /// 当前内容为阅读视图占位；T3/T7 将真实 ReaderView 写入标签 Content（挂点不变）。
+    /// 打开文档标签并承载真实阅读视图（连续滚动/缩放/跳页，FR-01/05/06）；同路径已存在则激活现有标签【D14】。
+    /// ReaderViewModel 必须在本方法（UI 线程）构造——其构造捕获 SynchronizationContext 用于渲染结果回传。
+    /// LoadDocument 同步且失败不抛：错误经 ErrorMessage/HasError 由 ReaderView 错误条呈现，故不做 try/catch 兜底。
     /// </summary>
     private void OpenDocumentTab(string path)
     {
-        var tab = TabHost.OpenDocument(path, () => FindResource("ReaderPlaceholderView"));
+        var fullPath = Path.GetFullPath(path);
+
+        // 先判重：命中时只激活现有标签，不构造多余的阅读实例（避免 PDFium 句柄泄漏）
+        var existing = TabHost.Tabs.FirstOrDefault(t =>
+            t.Kind == TabKind.Document && string.Equals(t.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            TabHost.SelectedTab = existing;
+            if (DataContext is ViewModels.MainViewModel active)
+            {
+                active.StatusText = $"已打开 {existing.Title}";
+            }
+            return;
+        }
+
+        var vm = new ReaderViewModel();
+        vm.LoadDocument(fullPath);
+        var view = new ReaderView(vm);
+
+        var tab = TabHost.OpenDocument(fullPath, () => view);
+        RegisterReaderTab(tab, vm, fullPath);
+
         if (DataContext is ViewModels.MainViewModel main)
         {
             main.StatusText = $"已打开 {tab.Title}";
+        }
+    }
+
+    // ---- 阅读视图接线（T3 ReaderViewModel ↔ 标签/面板联动） ----
+
+    /// <summary>文档标签的阅读实例登记：TabId → VM + 规范化文档标识 + 页码订阅句柄（供关闭时反订阅与释放）。</summary>
+    private sealed class ReaderTabState
+    {
+        public ReaderTabState(ReaderViewModel viewModel, string docId, PropertyChangedEventHandler handler)
+        {
+            ViewModel = viewModel;
+            DocId = docId;
+            Handler = handler;
+        }
+
+        public ReaderViewModel ViewModel { get; }
+
+        public string DocId { get; }
+
+        public PropertyChangedEventHandler Handler { get; }
+    }
+
+    /// <summary>已打开文档标签的阅读实例（键 = DocumentTabViewModel.TabId）。</summary>
+    private readonly Dictionary<string, ReaderTabState> _readerTabs = new(StringComparer.Ordinal);
+
+    /// <summary>登记新建文档标签的阅读实例并订阅其页码变化。</summary>
+    private void RegisterReaderTab(DocumentTabViewModel tab, ReaderViewModel vm, string docId)
+    {
+        PropertyChangedEventHandler handler = (_, e) => OnReaderPageChanged(vm, docId, e);
+        vm.PropertyChanged += handler;
+        _readerTabs[tab.TabId] = new ReaderTabState(vm, docId, handler);
+    }
+
+    /// <summary>
+    /// 阅读滚动/跳页 → 记录最近阅读页（书签「收藏当前页」数据源）+ 推送书签面板当前页 + 状态栏页码指示（FR-05）。
+    /// </summary>
+    private void OnReaderPageChanged(ReaderViewModel vm, string docId, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(ReaderViewModel.CurrentPageNumber))
+        {
+            return;
+        }
+
+        var zeroBased = vm.CurrentPageNumber - 1;
+        if (zeroBased < 0)
+        {
+            return; // 无文档/加载失败（页码 0）不推送
+        }
+
+        _lastKnownPage[docId] = zeroBased;
+        _bookmarks.SetCurrentPage(zeroBased);
+
+        if (DataContext is ViewModels.MainViewModel main)
+        {
+            main.StatusText = $"当前页 {vm.PageIndicatorText}";
         }
     }
 
@@ -205,12 +284,27 @@ public partial class MainWindow : Window
         // V1 无批注：直接关闭。
         if ((sender as FrameworkElement)?.DataContext is DocumentTabViewModel tab)
         {
-            TabHost.CloseTab(tab);
+            CloseTab(tab);
         }
     }
 
     private void OnCloseActiveTabExecuted(object sender, ExecutedRoutedEventArgs e)
-        => TabHost.CloseTab(TabHost.SelectedTab);
+        => CloseTab(TabHost.SelectedTab);
+
+    /// <summary>关闭标签：文档标签关闭后反订阅并释放其阅读实例（关闭 PDFium 持久句柄，避免泄漏）。</summary>
+    private void CloseTab(DocumentTabViewModel? tab)
+    {
+        if (tab is null || !TabHost.CloseTab(tab))
+        {
+            return;
+        }
+
+        if (_readerTabs.Remove(tab.TabId, out var reader))
+        {
+            reader.ViewModel.PropertyChanged -= reader.Handler;
+            reader.ViewModel.Dispose();
+        }
+    }
 
     private void OnFullTextSearchClick(object sender, RoutedEventArgs e)
         => ExecuteFullTextSearchStub();
@@ -301,17 +395,27 @@ public partial class MainWindow : Window
         ShowReaderPanel(_readerPanelKey); // 若当前正显示某面板，切换到新文档的实例
     }
 
-    /// <summary>面板跳页事件桩：记录最近阅读页；真实滚动由 T7 的 ReaderView 消费此事件（T3 API 接线挂点）。</summary>
+    /// <summary>
+    /// 面板跳页（缩略图/目录/书签，0 基）：滚动激活文档标签的阅读视图到位（ReaderViewModel.GoToPage 为 1 基）。
+    /// 保留最近阅读页与书签当前页的既有记账。
+    /// </summary>
     private void OnPanelNavigateRequested(object? sender, int pageIndex)
     {
+        if (TabHost.SelectedTab is { Kind: TabKind.Document } active
+            && _readerTabs.TryGetValue(active.TabId, out var reader))
+        {
+            reader.ViewModel.GoToPage(pageIndex + 1);
+        }
+
         if (_attachedDocId is not null)
         {
             _lastKnownPage[_attachedDocId] = pageIndex;
             _bookmarks.SetCurrentPage(pageIndex);
         }
+
         if (DataContext is ViewModels.MainViewModel main)
         {
-            main.StatusText = $"跳转到第 {pageIndex + 1} 页（阅读视图滚动接线挂点：T7）。";
+            main.StatusText = $"第 {pageIndex + 1} 页";
         }
     }
 

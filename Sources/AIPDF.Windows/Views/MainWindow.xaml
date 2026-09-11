@@ -291,36 +291,6 @@
                 </Setter.Value>
             </Setter>
         </Style>
-
-        <!-- 文档标签内容占位（ReaderView 挂点：T3/T7 阶段把真实阅读视图写入标签 Content） -->
-        <Border x:Key="ReaderPlaceholderView" x:Shared="False" Background="{StaticResource Brush.Window}">
-            <StackPanel HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        MaxWidth="420"
-                        TextBlock.TextAlignment="Center">
-                <Border Width="64" Height="64"
-                        CornerRadius="16"
-                        Background="{StaticResource Brush.AccentSoft}"
-                        HorizontalAlignment="Center">
-                    <TextBlock FontFamily="Segoe MDL2 Assets"
-                               Text="&#xE8A5;"
-                               FontSize="26"
-                               Foreground="{StaticResource Brush.Accent}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </Border>
-                <TextBlock Margin="0,16,0,0"
-                           Text="阅读视图建设中"
-                           FontSize="17"
-                           FontWeight="SemiBold"
-                           Foreground="{StaticResource Brush.TextPrimary}" />
-                <TextBlock Margin="0,6,0,0"
-                           Text="文档已在标签页中打开；连续滚动阅读视图将在后续版本接线。"
-                           FontSize="12"
-                           Foreground="{StaticResource Brush.TextSecondary}"
-                           TextWrapping="Wrap" />
-            </StackPanel>
-        </Border>
     </Window.Resources>
 
     <Border Background="{StaticResource Brush.Window}">
