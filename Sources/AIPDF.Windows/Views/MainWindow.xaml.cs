@@ -60,6 +60,9 @@ public partial class MainWindow : Window
         SavePill.DataContext = _savePill;
         _savePill.RetryRequested += async (_, _) => await RetryActiveDocumentSaveAsync();
 
+        // T5：启动时孤儿 GC 一次（>90 天未访问删除、超 100 条淘汰最旧，FR-27）；后台执行不阻塞启动。
+        RunReadingStateGarbageCollect();
+
         DataContextChanged += (_, _) => HookViewModel();
         HookViewModel();
         UpdateTabAreaState();
@@ -386,6 +389,9 @@ public partial class MainWindow : Window
         vm.LoadDocument(fullPath);
         var view = new ReaderView(vm);
 
+        // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
+        RestoreReadingState(fullPath, vm);
+
         // T2：浮菜单「用工具处理」接线（可用性探测 + 置顶/页范围预填交回宿主）
         view.ToolAvailabilityProvider = ToolAvailabilityProbe.Check;
         view.ToolLaunchRequested += OnReaderToolLaunchRequested;
@@ -541,6 +547,9 @@ public partial class MainWindow : Window
     {
         if (_readerTabs.Remove(tab.TabId, out var reader))
         {
+            // T5：关闭标签时批量写阅读状态（页码/缩放/面板/书签）+ 同步最近卡片镜像（FR-24）
+            SaveReadingState(reader.ViewModel, reader.DocId);
+
             reader.ViewModel.PropertyChanged -= reader.Handler;
             reader.ViewModel.AnnotationChanged -= reader.AnnotationHandler;
             reader.ViewModel.Dispose();
@@ -843,15 +852,24 @@ public partial class MainWindow : Window
     /// <summary>状态栏 savepill 状态（四态 + 重试）。</summary>
     private readonly SavePillViewModel _savePill = new();
 
-    /// <summary>阅读状态键迁移（T5 ReadingStateStore 未落地前的契约占位：记录调用、不落盘）。</summary>
-    private readonly NullReadingStateMigrator _readingStateMigrator = new();
+    /// <summary>阅读状态存储（T5：键 = SHA256(路径|size|mtime)，实现 IReadingStateMigrator 供 T4 保存后迁移）。</summary>
+    private readonly ReadingStateStore _readingStates = new();
+
+    /// <summary>待恢复的阅读状态（打开时命中；面板挂接时消费书签/面板选择）。</summary>
+    private readonly Dictionary<string, ReadingStateRestore> _pendingRestore = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>按文档记录左栏面板选择（reading-state 的每文件面板字段；M-6 单一真相源）。</summary>
+    private readonly Dictionary<string, string> _panelKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>ST-12 恢复提示条计时器（2s 自动消失）。</summary>
+    private DispatcherTimer? _restoreHintTimer;
 
     /// <summary>本地内存冲突基线（T4 保存成功后刷新；T11 在此之上做保存前 size/mtime 对比）。</summary>
     private readonly Dictionary<string, (long Size, DateTimeOffset Modified)> _conflictBaselines =
         new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>最近文件存储（保存成功后同步卡片体积/进度/缩放）。</summary>
-    private RecentFilesStore? _recentFiles;
+    /// <summary>最近文件存储（保存成功 / 关闭标签时同步卡片体积/进度/缩放镜像）。</summary>
+    private readonly RecentFilesStore _recentFiles = new();
 
     /// <summary>
     /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
@@ -903,6 +921,22 @@ public partial class MainWindow : Window
         _bookmarks.NavigateRequested += OnPanelNavigateRequested;
 
         _bookmarks.AttachDocument(docId);
+        // T5：恢复该文档的阅读状态书签与面板选择（Q3 书签并入 reading-state；M-6 面板 SoT）
+        if (_pendingRestore.TryGetValue(docId, out var pending))
+        {
+            if (pending.Bookmarks.Count > 0)
+            {
+                _bookmarks.RestoreDocument(docId, pending.Bookmarks.Select(b => (b.PageIndex, b.CreatedAt)));
+            }
+
+            if (!string.IsNullOrEmpty(pending.PanelKey))
+            {
+                ApplyPanelSelection(pending.PanelKey);
+            }
+
+            _pendingRestore.Remove(docId);
+        }
+
         _bookmarks.SetCurrentPage(_lastKnownPage.GetValueOrDefault(docId, 0));
 
         ShowReaderPanel(_panelState.ActiveKey); // 若当前正显示某面板，切换到新文档的实例
@@ -937,6 +971,11 @@ public partial class MainWindow : Window
     {
         if (sender is RadioButton { Tag: string key, IsChecked: true })
         {
+            if (_attachedDocId is not null)
+            {
+                _panelKeys[_attachedDocId] = key; // T5：每文件面板选择（FR-24 / M-6）
+            }
+
             if (key == ReaderPanelState.Search)
             {
                 _panelState.OpenSearch();
@@ -995,7 +1034,7 @@ public partial class MainWindow : Window
             new AnnotationSaveOptions
             {
                 ReloadAsync = ReloadDocumentHandlesAsync,
-                Migrator = _readingStateMigrator,
+                Migrator = _readingStates,
                 RefreshConflictBaseline = RefreshConflictBaseline,
                 SyncRecentCard = SyncRecentCard,
             });
@@ -1059,20 +1098,167 @@ public partial class MainWindow : Window
     {
         try
         {
-            _recentFiles ??= new RecentFilesStore();
-            var document = _recentFiles.Load();
-            var entry = document.Items.FirstOrDefault(
-                i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
-            if (entry is null) return;
+            var pageCount = 0;
+            var reader = _readerTabs.Values.FirstOrDefault(
+                r => string.Equals(r.DocId, path, StringComparison.OrdinalIgnoreCase));
+            if (reader?.ViewModel.HasDocument == true) pageCount = reader.ViewModel.PageCount;
 
-            entry.Bytes = bytes;
-            if (lastPage > 0) entry.LastPage = lastPage;
-            if (lastZoom > 0) entry.LastZoom = lastZoom;
-            _recentFiles.Save(document);
+            _recentFiles.UpdateProgress(path, pageCount, bytes, lastPage, lastZoom);
+            _startPage?.ReloadRecentFiles();
         }
         catch (Exception ex)
         {
             Trace.WriteLine($"[MainWindow] 同步最近卡片失败: {path} ({ex.Message})");
+        }
+    }
+
+    // ------------------------------------------------------------ T5 阅读状态持久化（恢复 / 保存 / GC / 迁移）
+
+    /// <summary>启动时孤儿 GC（FR-27）：后台执行、静默；失败只记录诊断。</summary>
+    private void RunReadingStateGarbageCollect()
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                _readingStates.GarbageCollect();
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[MainWindow] 阅读状态 GC 失败: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// 打开文件时恢复（M-6/BA-6）：reading-state 命中（size/mtime 键匹配）则为页码/缩放/面板/书签的单一真相源，
+    /// 并显示 ST-12 提示条；未命中回退最近记录镜像（仅当其 Bytes 与当前 size 一致）；否则从第 1 页（AC-24.1/25.1）。
+    /// </summary>
+    private void RestoreReadingState(string path, ReaderViewModel vm)
+    {
+        if (!vm.HasDocument) return;
+        try
+        {
+            var entry = _recentFiles.Load().Items.FirstOrDefault(
+                i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+            var restore = _readingStates.ResolveRestore(path, entry);
+            if (restore is null) return;
+
+            ApplyReadingState(path, vm, restore);
+            _pendingRestore[path] = restore; // 面板挂接时消费书签/面板选择
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 恢复阅读状态失败: {path} ({ex.Message})");
+        }
+    }
+
+    private void ApplyReadingState(string path, ReaderViewModel vm, ReadingStateRestore restore)
+    {
+        // 先缩放（重建布局），再定位页码——避免缩放锚定覆盖目标页。
+        if (restore.LastZoom > 0) vm.ZoomPercent = restore.LastZoom;
+        if (restore.LastPage >= 1 && restore.LastPage <= vm.PageCount) vm.GoToPage(restore.LastPage);
+
+        _panelKeys[path] = restore.PanelKey;
+
+        // 仅 reading-state 命中（键校验通过）才显示 ST-12；最近记录兜底不提示（PRD 阅读状态恢复规则）。
+        if (restore.FromReadingState) ShowRestoreHint(restore.LastPage, restore.LastAccessUtc);
+    }
+
+    /// <summary>显示 ST-12 一次性提示条（阅读区顶部居中，2s 自动消失，不打断阅读）。</summary>
+    private void ShowRestoreHint(int page, DateTime lastAccessUtc)
+    {
+        RestoreHintText.Text = $"↩ 已恢复到第 {page} 页 · 上次阅读于 {FormatRelativeTime(lastAccessUtc)}";
+        RestoreHint.Visibility = Visibility.Visible;
+
+        _restoreHintTimer?.Stop();
+        _restoreHintTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _restoreHintTimer.Tick += (_, _) =>
+        {
+            _restoreHintTimer?.Stop();
+            RestoreHint.Visibility = Visibility.Collapsed;
+        };
+        _restoreHintTimer.Start();
+    }
+
+    private static string FormatRelativeTime(DateTime lastAccessUtc)
+    {
+        if (lastAccessUtc == default) return "最近";
+        var local = lastAccessUtc.Kind == DateTimeKind.Utc ? lastAccessUtc.ToLocalTime() : lastAccessUtc;
+        var today = DateTime.Today;
+        if (local.Date == today) return local.ToString("HH:mm");
+        if (local.Date == today.AddDays(-1)) return $"昨天 {local:HH:mm}";
+        return local.ToString("yyyy/M/d HH:mm");
+    }
+
+    /// <summary>按当前 size/mtime 计算键并写入阅读状态（仅标签关闭 / 应用退出时批量写，FR-24）。</summary>
+    private void SaveReadingState(ReaderViewModel vm, string path)
+    {
+        if (!vm.HasDocument) return; // 打开失败（加载错误）：不写空状态覆盖既有有效状态
+        try
+        {
+            var stamp = ReadingStateKey.TryCapture(path);
+            if (stamp is null) return;
+
+            var page = vm.CurrentPageNumber > 0 ? vm.CurrentPageNumber : 1;
+            var zoom = vm.ZoomPercent > 0 ? vm.ZoomPercent : 100;
+            var state = new ReadingState
+            {
+                Path = path,
+                LastPage = page,
+                LastZoom = zoom,
+                PanelKey = _panelKeys.GetValueOrDefault(path, ReaderPanelState.Thumbs),
+                Bookmarks = [.. _bookmarks.SnapshotBookmarks(path).Select(b => new ReadingStateBookmark
+                {
+                    PageIndex = b.PageIndex,
+                    CreatedAt = b.CreatedAt,
+                })],
+                LastAccessUtc = DateTime.UtcNow,
+            };
+            _readingStates.Save(stamp.Value.Key, state);
+
+            // 最近记录镜像（兜底投影；与 reading-state 不矛盾——同一时刻同源写入）
+            _recentFiles.UpdateProgress(path, vm.PageCount, stamp.Value.Size, page, zoom);
+
+            _pendingRestore.Remove(path);
+            _panelKeys.Remove(path);
+            _startPage?.ReloadRecentFiles();
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 保存阅读状态失败: {path} ({ex.Message})");
+        }
+    }
+
+    /// <summary>应用退出：批量保存全部打开标签的阅读状态（FR-24）。</summary>
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        foreach (var reader in _readerTabs.Values.ToList())
+        {
+            SaveReadingState(reader.ViewModel, reader.DocId);
+        }
+    }
+
+    /// <summary>恢复/切换面板选择（勾选对应 RadioButton → Checked → ShowReaderPanel；幂等）。</summary>
+    private void ApplyPanelSelection(string key)
+    {
+        _panelState.Activate(key);
+        var toggle = key switch
+        {
+            ReaderPanelState.Thumbs => PanelToggleThumbs,
+            ReaderPanelState.Outline => PanelToggleOutline,
+            ReaderPanelState.Bookmarks => PanelToggleBookmarks,
+            ReaderPanelState.Search => PanelToggleSearch,
+            _ => null,
+        };
+
+        if (toggle is not null && toggle.IsChecked != true)
+        {
+            toggle.IsChecked = true; // OnReaderPanelChecked → ShowReaderPanel
+        }
+        else
+        {
+            ShowReaderPanel(key);
         }
     }
 

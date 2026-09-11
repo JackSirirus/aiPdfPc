@@ -11,7 +11,8 @@
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
         PreviewKeyDown="OnWindowPreviewKeyDown"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Closing="OnWindowClosing">
 
     <Window.DataContext>
         <vm:MainViewModel />
@@ -654,6 +655,21 @@
                             <!-- 工具页内容宿主：代码后置按工具 id 挂现有工具页实例 -->
                             <ContentControl x:Name="RightDrawerContent" Grid.Row="1" />
                         </Grid>
+                    </Border>
+
+                    <!-- ST-12：恢复上次阅读位置的一次性提示条（阅读区顶部居中，2s 自动消失，不打断阅读） -->
+                    <Border x:Name="RestoreHint"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Top"
+                            Margin="0,12,0,0"
+                            Padding="14,7"
+                            CornerRadius="8"
+                            Background="{StaticResource Brush.TextPrimary}"
+                            Visibility="Collapsed"
+                            IsHitTestVisible="False">
+                        <TextBlock x:Name="RestoreHintText"
+                                   FontSize="12"
+                                   Foreground="White" />
                     </Border>
                 </Grid>
             </Grid>

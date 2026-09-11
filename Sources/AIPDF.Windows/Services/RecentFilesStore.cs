@@ -115,4 +115,30 @@ public sealed class RecentFilesStore
         Directory.CreateDirectory(StoreDirectory);
         File.WriteAllText(FilePath, JsonSerializer.Serialize(document, JsonOptions), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
+
+    /// <summary>
+    /// 同步某条目的 reading-state 镜像（BLK-1(c) / M-6）：T4 保存成功后与 T5 关闭标签/退出时调用。
+    /// <para>
+    /// 该镜像是 <b>兜底投影</b>，不是页码/缩放的真相源（真相源为 reading-state，见 ReadingStateStore）。
+    /// 仅在条目已存在时更新未知字段（0 → 保留旧值）；条目不存在返回 false（不凭空新建，避免污染最近列表）。
+    /// </para>
+    /// </summary>
+    /// <returns>命中并写入返回 true；无该条目返回 false。</returns>
+    public bool UpdateProgress(string path, int pageCount, long bytes, int lastPage, double lastZoom)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        var document = Load();
+        var entry = document.Items.FirstOrDefault(
+            i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (entry is null) return false;
+
+        if (pageCount > 0) entry.PageCount = pageCount;
+        if (bytes > 0) entry.Bytes = bytes;
+        if (lastPage > 0) entry.LastPage = lastPage;
+        if (lastZoom > 0) entry.LastZoom = lastZoom;
+
+        Save(document);
+        return true;
+    }
 }

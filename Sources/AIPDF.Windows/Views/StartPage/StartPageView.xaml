@@ -254,6 +254,19 @@
                                                         </Style>
                                                     </TextBlock.Style>
                                                 </TextBlock>
+                                                <!-- V2 进度元信息（FR-33 / AC-33.2）：页数 · 体积 + 上次阅读进度 -->
+                                                <TextBlock Margin="0,2,0,0"
+                                                           FontSize="10.5"
+                                                           Foreground="{StaticResource Brush.TextSecondary}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Text="{Binding MetaText}"
+                                                           Visibility="{Binding HasMeta, Converter={StaticResource BoolToVisibility}}" />
+                                                <TextBlock Margin="0,1,0,0"
+                                                           FontSize="10.5"
+                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Text="{Binding ProgressText}"
+                                                           Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}" />
                                             </StackPanel>
                                             <!-- 卡片移除入口（含失效卡片的「从最近列表移除」，PRD ST-05） -->
                                             <Button Grid.Column="2"

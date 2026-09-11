@@ -20,10 +20,69 @@ public partial class RecentFileItem : ObservableObject
 
     public string Path => Entry.Path;
 
-    /// <summary>卡片显示名：文件名（V1 降级点①——无页数/体积/进度元信息，V2 挂点见 RecentFileEntry）。</summary>
+    /// <summary>卡片显示名：文件名。</summary>
     public string Name => Entry.Name;
 
     public string DisplayDate => Entry.LastOpenedAt.ToString("yyyy/M/d HH:mm");
+
+    // ---- V2 进度元信息（FR-33 / AC-33.2）：页数 · 体积 · 上次阅读进度 ----
+
+    /// <summary>文档页数（0 = 未知）。</summary>
+    public int PageCount => Entry.PageCount;
+
+    /// <summary>文件字节数（0 = 未知）。</summary>
+    public long Bytes => Entry.Bytes;
+
+    /// <summary>上次阅读页（1 基；0 = 未知）。</summary>
+    public int LastPage => Entry.LastPage;
+
+    /// <summary>上次缩放百分比（0 = 未知）。</summary>
+    public double LastZoom => Entry.LastZoom;
+
+    /// <summary>是否具备页数/体积元信息（控制卡片元信息行显隐）。</summary>
+    public bool HasMeta => Entry.PageCount > 0 || Entry.Bytes > 0;
+
+    /// <summary>是否具备阅读进度（控制进度行显隐）。</summary>
+    public bool HasProgress => Entry.LastPage > 0;
+
+    /// <summary>元信息行：页数 · 体积（如「120 页 · 2.4 MB」）。无数据返回空串。</summary>
+    public string MetaText
+    {
+        get
+        {
+            var parts = new List<string>(2);
+            if (Entry.PageCount > 0) parts.Add($"{Entry.PageCount} 页");
+            if (Entry.Bytes > 0) parts.Add(FormatBytes(Entry.Bytes));
+            return string.Join(" · ", parts);
+        }
+    }
+
+    /// <summary>阅读进度行：上次读到第 N 页 · Z%（如「上次读到第 47 页 · 150%」）。无数据返回空串。</summary>
+    public string ProgressText
+    {
+        get
+        {
+            if (Entry.LastPage <= 0) return "";
+            var text = $"上次读到第 {Entry.LastPage} 页";
+            if (Entry.LastZoom > 0) text += $" · {Entry.LastZoom.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)}%";
+            return text;
+        }
+    }
+
+    /// <summary>字节数人性化（B/KB/MB/GB，保留 1 位小数）。</summary>
+    public static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        double value = bytes;
+        string[] units = ["KB", "MB", "GB", "TB"];
+        var unit = -1;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)} {units[unit]}";
+    }
 
     /// <summary>文件是否仍存在。缺失 → 卡片置灰 + 划线 + 「文件不存在」标注（不自动删除，PRD FR-34）。</summary>
     [ObservableProperty]
@@ -76,6 +135,16 @@ public partial class StartPageViewModel : ObservableObject
             .Where(tool => tool is not null)
             .Select(tool => tool!)];
 
+        ReloadRecentFiles();
+    }
+
+    /// <summary>
+    /// 重新从存储加载最近列表（T5：标签关闭/退出时同步进度元信息后刷新起始页卡片，
+    /// 使页数/体积/阅读进度即时反映；不动清空二次确认状态）。
+    /// </summary>
+    public void ReloadRecentFiles()
+    {
+        RecentFiles.Clear();
         foreach (var entry in _store.Load().Items)
         {
             RecentFiles.Add(new RecentFileItem(entry));
@@ -84,7 +153,6 @@ public partial class StartPageViewModel : ObservableObject
         RefreshExistence();
         OnPropertyChanged(nameof(HasRecentFiles));
     }
-
     /// <summary>点击打开按钮 / 拖入合法 PDF / 点击最近卡片时触发；宿主负责建标签（TabHostViewModel.OpenDocument）。</summary>
     public event EventHandler<string>? DocumentOpenRequested;
 

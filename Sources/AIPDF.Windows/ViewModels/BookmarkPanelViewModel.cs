@@ -105,6 +105,46 @@ public partial class BookmarkPanelViewModel : ObservableObject
         }
     }
 
+    // ------------------------------------------------------------------ V2 持久化（并入 reading-state）
+
+    /// <summary>
+    /// 导出某文档的全部书签快照（0 基页码 + 加入时间），供 T5 写入每文件阅读状态（Q3：不另设 bookmarks.json）。
+    /// 未挂接/无书签返回空列表。
+    /// </summary>
+    public IReadOnlyList<(int PageIndex, DateTime CreatedAt)> SnapshotBookmarks(string docId)
+    {
+        if (string.IsNullOrWhiteSpace(docId) || !_store.TryGetValue(docId, out var list))
+        {
+            return [];
+        }
+
+        return [.. list.Select(b => (b.PageIndex, b.CreatedAt))];
+    }
+
+    /// <summary>
+    /// 从阅读状态恢复某文档的书签（T5 打开时调用）：写入会话存储；若该文档当前已挂接，同步刷新列表。
+    /// 同页去重、越界（负数）忽略；按传入顺序保留（即保存时的加入顺序）。
+    /// </summary>
+    public void RestoreDocument(string docId, IEnumerable<(int PageIndex, DateTime CreatedAt)> bookmarks)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(docId);
+        ArgumentNullException.ThrowIfNull(bookmarks);
+
+        var restored = new ObservableCollection<BookmarkItemViewModel>();
+        foreach (var (pageIndex, createdAt) in bookmarks)
+        {
+            if (pageIndex < 0) continue;
+            if (restored.Any(b => b.PageIndex == pageIndex)) continue;
+            restored.Add(new BookmarkItemViewModel(pageIndex, createdAt));
+        }
+
+        _store[docId] = restored;
+        if (string.Equals(CurrentDocId, docId, StringComparison.OrdinalIgnoreCase))
+        {
+            ReplaceItems(restored);
+        }
+    }
+
     /// <summary>收藏当前页（宿主推送的 CurrentPageIndex）。重复页幂等不重复加行。</summary>
     [RelayCommand]
     private void AddCurrentPage()
