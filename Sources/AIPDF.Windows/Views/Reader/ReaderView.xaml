@@ -2,7 +2,8 @@
 <!-- Copyright (C) 2026 AIPDF contributors -->
 <!-- T3 虚拟化连续阅读视图：VirtualizingStackPanel 承载惰性页容器（可见页 ± 缓冲页渲染，其余骨架占位）
      + 状态栏（页码跳转 / 九档缩放阶梯 / 适配宽度·页面）。
-     布局与视觉沿用 App.xaml 应用级设计 token（色板 / 字号阶梯 / 4 的倍数间距网格）。 -->
+     T2 增设：拖选叠加层 + 选中浮菜单（复制/高亮/笔记/用工具处理▾）+ 悬停编辑/删除/改色 + 笔记输入 + Toast。
+     布局与视觉沿用 App.xaml 应用级设计 token（色板 / 字号阶梯 / 4 的倍数间距网格），不新增浮菜单专用 token（Q12）。 -->
 <UserControl x:Class="AIPDF.Windows.Views.Reader.ReaderView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -62,6 +63,44 @@
                     <Setter Property="BorderBrush" Value="{StaticResource Brush.Error}" />
                 </DataTrigger>
             </Style.Triggers>
+        </Style>
+
+        <!-- T2 浮菜单/悬停操作条：与右抽屉同一视觉语言（App 级色板 + SecondaryButton 基类） -->
+        <Style x:Key="FlyoutPanel" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource Brush.Window}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+
+        <!-- 菜单项：扁平、左对齐、悬停用全局 Hover 底色（同一视觉语言，不新增 token） -->
+        <Style x:Key="MenuItemButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="MinWidth" Value="148" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.Hover}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 色板色块 -->
+        <Style x:Key="ColorSwatchButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
         </Style>
     </UserControl.Resources>
 
@@ -131,12 +170,18 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:ReaderPageItemViewModel}">
                             <!-- 惰性页容器：宽高始终绑定页尺寸缓存换算值（骨架保持正确宽高比，避免跳动【ST-10】）；
-                                 底部 16px 即 FR-01 页间距，与 PageLayoutCalculator.PageGap 一致 -->
+                                 底部 16px 即 FR-01 页间距，与 PageLayoutCalculator.PageGap 一致。
+                                 T2：承载拖选/悬停鼠标事件（Background=Transparent 保证空白区也可命中）。 -->
                             <Grid Width="{Binding DisplayWidth}"
                                   Height="{Binding DisplayHeight}"
                                   HorizontalAlignment="Center"
                                   VerticalAlignment="Top"
-                                  Margin="0,0,0,16">
+                                  Margin="0,0,0,16"
+                                  Background="Transparent"
+                                  MouseLeftButtonDown="OnPageMouseLeftButtonDown"
+                                  MouseMove="OnPageMouseMove"
+                                  MouseLeftButtonUp="OnPageMouseLeftButtonUp"
+                                  MouseLeave="OnPageMouseLeave">
                                 <!-- 骨架占位：快速滚动未渲染页状态 -->
                                 <Border Background="{StaticResource Brush.Hover}"
                                         BorderBrush="{StaticResource Brush.Border}"
@@ -260,11 +305,197 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- T2 选区叠加层：拖选中的临时矩形（DIP）。用全局 Accent 半透明填充，
+                                     与搜索高亮的琥珀色/批注黄色区分；IsHitTestVisible=False 不阻塞拖选。 -->
+                                <ItemsControl ItemsSource="{Binding SelectionRects}"
+                                              IsHitTestVisible="False"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Width="{Binding DisplayWidth}"
+                                              Height="{Binding DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="{Binding Width}"
+                                                    Height="{Binding Height}"
+                                                    IsHitTestVisible="False"
+                                                    Background="{StaticResource Brush.Accent}"
+                                                    BorderBrush="{StaticResource Brush.Accent}"
+                                                    BorderThickness="1"
+                                                    Opacity="0.28" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
+
+            <!-- ============ T2 选中浮菜单（复制/高亮/笔记/用工具处理▾；含工具子菜单）============ -->
+            <Popup x:Name="SelectionPopup"
+                   AllowsTransparency="True"
+                   StaysOpen="False"
+                   Placement="Relative"
+                   PlacementTarget="{Binding ElementName=ScrollHost}"
+                   PopupAnimation="Fade"
+                   Closed="OnSelectionPopupClosed">
+                <Border Style="{StaticResource FlyoutPanel}">
+                    <Grid>
+                        <!-- 主菜单 -->
+                        <StackPanel x:Name="SelectionMainPanel" Orientation="Vertical">
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuCopy}"
+                                    Click="OnCopyClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuHighlight}"
+                                    Click="OnHighlightClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuNote}"
+                                    Click="OnNoteClick" />
+                            <Separator Margin="4,3" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuTools}"
+                                    Click="OnToolsClick" />
+                        </StackPanel>
+
+                        <!-- 工具子菜单 -->
+                        <StackPanel x:Name="SelectionToolPanel" Orientation="Vertical" Visibility="Collapsed">
+                            <Button x:Name="ToolCompressButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Content="压缩 PDF"
+                                    Click="OnToolItemClick" Tag="compress" />
+                            <Button x:Name="ToolSplitButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Content="拆分 PDF"
+                                    Click="OnToolItemClick" Tag="split" />
+                            <Button x:Name="ToolRotateButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Content="旋转 PDF"
+                                    Click="OnToolItemClick" Tag="rotate" />
+                            <Button x:Name="ToolWordButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Content="转 Word"
+                                    Click="OnToolItemClick" Tag="pdf_to_word" />
+                            <Separator Margin="4,3" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuMoreTools}"
+                                    Click="OnMoreToolsClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuBack}"
+                                    Click="OnMenuBackClick" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Popup>
+
+            <!-- ============ T2 悬停操作条（编辑/删除/改色；FR-13/H-9）============ -->
+            <Popup x:Name="HoverPopup"
+                   AllowsTransparency="True"
+                   StaysOpen="True"
+                   Placement="Relative"
+                   PlacementTarget="{Binding ElementName=ScrollHost}"
+                   PopupAnimation="Fade"
+                   Closed="OnHoverPopupClosed">
+                <Border Style="{StaticResource FlyoutPanel}"
+                        MouseEnter="OnHoverPopupMouseEnter"
+                        MouseLeave="OnHoverPopupMouseLeave">
+                    <Grid>
+                        <StackPanel x:Name="HoverMainPanel" Orientation="Vertical">
+                            <Button x:Name="HoverEditButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.HoverEdit}"
+                                    Click="OnHoverEditClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.HoverDelete}"
+                                    Click="OnHoverDeleteClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.HoverRecolor}"
+                                    Click="OnHoverRecolorClick" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="HoverColorPanel" Orientation="Vertical" Visibility="Collapsed">
+                            <TextBlock Text="{x:Static reader:ReaderStrings.ColorPanelTitle}"
+                                       Style="{StaticResource FieldHint}"
+                                       Margin="8,4,8,6" />
+                            <StackPanel Orientation="Horizontal" Margin="4,0,4,6">
+                                <Button Style="{StaticResource ColorSwatchButton}"
+                                        Background="#FFFF00" Tag="#FFFF00"
+                                        ToolTip="黄色" Click="OnColorSwatchClick" />
+                                <Button Style="{StaticResource ColorSwatchButton}"
+                                        Background="#A6E22E" Tag="#A6E22E"
+                                        ToolTip="绿色" Click="OnColorSwatchClick" />
+                                <Button Style="{StaticResource ColorSwatchButton}"
+                                        Background="#5AC8FA" Tag="#5AC8FA"
+                                        ToolTip="蓝色" Click="OnColorSwatchClick" />
+                                <Button Style="{StaticResource ColorSwatchButton}"
+                                        Background="#FF9EC4" Tag="#FF9EC4"
+                                        ToolTip="粉色" Click="OnColorSwatchClick" />
+                            </StackPanel>
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuBack}"
+                                    Click="OnMenuBackClick" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Popup>
+
+            <!-- ============ T2 笔记输入弹层 ============ -->
+            <Popup x:Name="NotePopup"
+                   AllowsTransparency="True"
+                   StaysOpen="True"
+                   Placement="Relative"
+                   PlacementTarget="{Binding ElementName=ScrollHost}"
+                   PopupAnimation="Fade">
+                <Border Style="{StaticResource FlyoutPanel}" Padding="10">
+                    <StackPanel Width="264">
+                        <TextBlock Text="{x:Static reader:ReaderStrings.NoteEditorTitle}"
+                                   Style="{StaticResource FieldLabel}"
+                                   Margin="0,0,0,6" />
+                        <TextBox x:Name="NoteBox"
+                                 Style="{StaticResource FieldTextBox}"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 Height="92"
+                                 VerticalScrollBarVisibility="Auto" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Content="{x:Static reader:ReaderStrings.Cancel}"
+                                    Click="OnNoteCancelClick" />
+                            <Button Style="{StaticResource PrimaryButton}"
+                                    Margin="8,0,0,0"
+                                    Content="{x:Static reader:ReaderStrings.Confirm}"
+                                    Click="OnNoteConfirmClick" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
+
+            <!-- ============ T2 Toast（复制反馈等，2s 自动消失）============ -->
+            <Border x:Name="Toast"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,24"
+                    Padding="14,7"
+                    CornerRadius="6"
+                    Background="{StaticResource Brush.TextPrimary}"
+                    Opacity="0.92"
+                    Visibility="Collapsed"
+                    IsHitTestVisible="False">
+                <TextBlock x:Name="ToastText"
+                           Foreground="White"
+                           FontSize="12" />
+            </Border>
         </Grid>
 
         <!-- ============ 错误条（ST-06 加载失败 / 渲染失败汇总） ============ -->

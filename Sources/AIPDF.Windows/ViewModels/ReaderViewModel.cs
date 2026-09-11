@@ -15,9 +15,11 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AIPDF.Windows.Annotations;
+using AIPDF.Windows.Controls;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Views.Reader;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -125,6 +127,18 @@ public partial class ReaderPageItemViewModel : ObservableObject
     /// </summary>
     public ObservableCollection<AnnotationOverlay> Annotations { get; } = [];
 
+    /// <summary>拖选中的选区显示矩形（DIP，相对页左上角）。由 ReaderView 交互临时填充，
+    /// 释放/清除后为空；与持久批注层分离，避免交互态污染批注记录。</summary>
+    public ObservableCollection<SearchHighlight> SelectionRects { get; } = [];
+
+    /// <summary>设置本页临时选区矩形（DIP）。传空即清除。</summary>
+    internal void SetSelectionRects(IReadOnlyList<SearchHighlight> rects)
+    {
+        SelectionRects.Clear();
+        if (rects is null) return;
+        foreach (var r in rects) SelectionRects.Add(r);
+    }
+
     /// <summary>批注真源记录（PDF 点，左上原点）。叠加层为其 DIP 投影；滚出视口只释放投影不丢记录。</summary>
     private readonly List<AnnotationRecord> _annotationRecords = [];
 
@@ -158,6 +172,17 @@ public partial class ReaderPageItemViewModel : ObservableObject
         var removed = _annotationRecords.RemoveAll(a => a.Id == annotationId);
         if (removed > 0) RebuildAnnotations();
         return removed > 0;
+    }
+
+    /// <summary>按 Id 替换批注记录（FR-13 编辑笔记 / 改色后就地更新，Id 不变）并重建投影。</summary>
+    internal bool UpdateAnnotationRecord(AnnotationRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var index = _annotationRecords.FindIndex(a => a.Id == record.Id);
+        if (index < 0) return false;
+        _annotationRecords[index] = record;
+        RebuildAnnotations();
+        return true;
     }
 
     /// <summary>按当前 <see cref="DisplayWidth"/> 重算全部批注叠加（缩放变更/记录变化）。</summary>
@@ -202,6 +227,15 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private readonly ConcurrentDictionary<int, (int Dpi, int ZoomPct)> _inFlight = new();
     private readonly SynchronizationContext? _syncContext = SynchronizationContext.Current;
 
+    // ---- 选区文本命中（T2 H-5）：惰性打开的独立文本层句柄 ----
+    // 渲染/文本各持句柄是 V1 刻意取舍（notepad）；此处选区命中再持一份，仅在首次拖选时惰性打开，
+    // 不选中的用户零开销。独立于 MainWindow 搜索栈，保证 ReaderView 可独立实例化与测试。
+    private readonly PdfiumTextService? _injectedTextService;
+    private PdfiumTextService? _textService;
+    private PdfiumTextService.TextDocument? _textDoc;
+    private string? _documentPath;
+    private readonly Dictionary<int, bool> _textLayerCache = new();
+
     private string? _docId;
     private List<PageSize> _pageSizes = [];
     private int[] _pageRotations = [];
@@ -216,11 +250,14 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>当前持有高亮的页索引（-1 = 无）；切换命中时只清上一页，避免遍历全部页。</summary>
     private int _searchHighlightPage = -1;
 
-    /// <summary>构造。renderService 为空时首次打开文档自建并持有（随 Dispose 释放）；测试/宿主可注入。</summary>
-    public ReaderViewModel(PdfiumRenderService? renderService = null, int bufferPages = DefaultBufferPages)
+    /// <summary>构造。renderService 为空时首次打开文档自建并持有（随 Dispose 释放）；测试/宿主可注入。
+    /// textService 同样为空时惰性自建（仅首次选区命中）；测试可注入独立实例。</summary>
+    public ReaderViewModel(PdfiumRenderService? renderService = null, int bufferPages = DefaultBufferPages,
+        PdfiumTextService? textService = null)
     {
         _injectedService = renderService;
         _ownsService = renderService is null;
+        _injectedTextService = textService;
         BufferPages = Math.Max(0, bufferPages);
     }
 
@@ -236,6 +273,14 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
     /// <summary>请求视图滚动到指定偏移（跳页、缩放锚定均经此事件，由视图执行实际滚动）。</summary>
     public event EventHandler<ReaderScrollRequestEventArgs>? ScrollRequested;
+
+    /// <summary>
+    /// 批注集合发生变化（新增/移除/更新）。T4 保存链路据此重置 2s 防抖并提交引擎；
+    /// T2 只创建/修改客户端批注，不实现保存。
+    /// </summary>
+    public event EventHandler? AnnotationsChanged;
+
+    private void RaiseAnnotationsChanged() => AnnotationsChanged?.Invoke(this, EventArgs.Empty);
 
     // ------------------------------------------------------------------ 绑定状态
 
@@ -337,6 +382,14 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             _pageRotations = rotations;
             _inFlight.Clear();
             _scrollTop = 0;
+
+            // 文档切换：关闭旧选区文本句柄并清空缓存（新路径惰性重开）
+            if (!string.Equals(_documentPath, docId, StringComparison.OrdinalIgnoreCase))
+            {
+                CloseTextDocument();
+            }
+            _documentPath = docId;
+            _textLayerCache.Clear();
 
             Pages.Clear();
             for (var i = 0; i < count; i++) Pages.Add(new ReaderPageItemViewModel(i, sizes[i].Width, sizes[i].Height));
@@ -667,15 +720,33 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     {
         ArgumentNullException.ThrowIfNull(record);
         if (!CanAnnotate(record.PageIndex)) return null;
-        return Pages[record.PageIndex].AddAnnotationRecord(record) ? record : null;
+        if (!Pages[record.PageIndex].AddAnnotationRecord(record)) return null;
+        RaiseAnnotationsChanged();
+        return record;
     }
 
     /// <summary>按 Id 移除批注（T2 悬停删除消费）。返回是否命中。</summary>
     public bool RemoveAnnotation(int pageIndex, string annotationId)
     {
         if (pageIndex < 0 || pageIndex >= Pages.Count) return false;
-        return Pages[pageIndex].RemoveAnnotationRecord(annotationId);
+        if (!Pages[pageIndex].RemoveAnnotationRecord(annotationId)) return false;
+        RaiseAnnotationsChanged();
+        return true;
     }
+
+    /// <summary>按 Id 替换批注（T2 悬停编辑笔记/改色消费，Id 不变）。返回是否命中。</summary>
+    public bool UpdateAnnotation(AnnotationRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (record.PageIndex < 0 || record.PageIndex >= Pages.Count) return false;
+        if (!Pages[record.PageIndex].UpdateAnnotationRecord(record)) return false;
+        RaiseAnnotationsChanged();
+        return true;
+    }
+
+    /// <summary>按 Id 查批注记录（悬停操作消费）。未命中返回 null。</summary>
+    public AnnotationRecord? FindAnnotation(int pageIndex, string annotationId)
+        => GetAnnotations(pageIndex).FirstOrDefault(a => a.Id == annotationId);
 
     /// <summary>本页批注记录快照（T3/T4 保存链路消费）。</summary>
     public IReadOnlyList<AnnotationRecord> GetAnnotations(int pageIndex)
@@ -685,6 +756,143 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private static PdfRect Normalize(PdfRect rect)
         => new(Math.Min(rect.Left, rect.Right), Math.Min(rect.Top, rect.Bottom),
                Math.Max(rect.Left, rect.Right), Math.Max(rect.Top, rect.Bottom));
+
+    // ------------------------------------------------------------------ 选区命中（V2 T2 / H-5）
+
+    /// <summary>
+    /// 当页是否有文本层：按当页 <c>CountPageChars(page) &gt; 0</c> 即时判定（不依赖 SearchIndexService
+    /// 的惰性索引进度，H-5）；结果按页缓存，文档切换时清空。打不开文本句柄时保守返回 false。
+    /// </summary>
+    public bool PageHasTextLayer(int pageIndex)
+    {
+        if (!HasDocument || pageIndex < 0 || pageIndex >= Pages.Count) return false;
+        if (_textLayerCache.TryGetValue(pageIndex, out var cached)) return cached;
+
+        var has = false;
+        try
+        {
+            var doc = EnsureTextDocument();
+            if (doc is not null && _textService is not null)
+            {
+                has = _textService.CountPageChars(doc, pageIndex) > 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 文本层判定失败: 第 {pageIndex} 页 ({ex.Message})");
+        }
+
+        _textLayerCache[pageIndex] = has;
+        return has;
+    }
+
+    /// <summary>
+    /// 页容器内 DIP 点 → 字符下标（FPDFText_GetCharIndexAtPos，容差 8pt）。
+    /// 仅当页非旋转（<see cref="CanAnnotate"/>）且有文本层时命中；坐标经 <see cref="PdfCoordinateMapper"/>
+    /// 单一换算层（PRD 4.2.2），不新建换算。
+    /// </summary>
+    public bool TryHitCharAtPoint(int pageIndex, double viewXDip, double viewYDip, out int charIndex)
+    {
+        charIndex = -1;
+        if (!HasDocument || pageIndex < 0 || pageIndex >= Pages.Count) return false;
+        if (!CanAnnotate(pageIndex)) return false;      // 旋转页禁选（M-11）
+        if (!PageHasTextLayer(pageIndex)) return false; // 无文本层不命中（ST-23）
+        if (double.IsNaN(viewXDip) || double.IsNaN(viewYDip)) return false;
+
+        var page = Pages[pageIndex];
+        if (page.DisplayWidth <= 0 || page.WidthPt <= 0 || page.HeightPt <= 0) return false;
+
+        try
+        {
+            var doc = EnsureTextDocument();
+            if (doc is null || _textService is null) return false;
+
+            var mapper = new PdfCoordinateMapper
+            {
+                PageWidthPt = page.WidthPt,
+                PageHeightPt = page.HeightPt,
+                Zoom = ZoomPercent / 100.0,
+            };
+            var pdfTopLeft = mapper.ViewToPdf(new Point(viewXDip, viewYDip));
+            // PDFium 文本坐标为 PDF 左下原点：y = pageHeight - topLeftY
+            var yBottomLeft = page.HeightPt - pdfTopLeft.Y;
+            var hit = _textService.GetCharIndexAtPoint(doc, pageIndex, pdfTopLeft.X, yBottomLeft);
+            if (hit < 0) return false;
+            charIndex = hit;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 字符命中失败: 第 {pageIndex} 页 ({ex.Message})");
+            return false;
+        }
+    }
+
+    /// <summary>两个字符下标之间的选区矩形（含端点，按行合并；PDF 点、左上原点）。</summary>
+    public IReadOnlyList<PdfRect> GetSelectionRects(int pageIndex, int charIndexA, int charIndexB)
+    {
+        if (!HasDocument || pageIndex < 0 || pageIndex >= Pages.Count) return [];
+        var start = Math.Min(charIndexA, charIndexB);
+        var end = Math.Max(charIndexA, charIndexB);
+        if (start < 0 || end < start) return [];
+
+        try
+        {
+            var doc = EnsureTextDocument();
+            return doc is null || _textService is null
+                ? []
+                : _textService.GetTextRects(doc, pageIndex, start, end - start + 1);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 选区矩形失败: 第 {pageIndex} 页 ({ex.Message})");
+            return [];
+        }
+    }
+
+    /// <summary>两个字符下标之间的选中文本（含端点）。</summary>
+    public string GetSelectionText(int pageIndex, int charIndexA, int charIndexB)
+    {
+        if (!HasDocument || pageIndex < 0 || pageIndex >= Pages.Count) return string.Empty;
+        var start = Math.Min(charIndexA, charIndexB);
+        var end = Math.Max(charIndexA, charIndexB);
+        if (start < 0 || end < start) return string.Empty;
+
+        try
+        {
+            var doc = EnsureTextDocument();
+            return doc is null || _textService is null
+                ? string.Empty
+                : _textService.GetTextRange(doc, pageIndex, start, end - start + 1);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 选区文本失败: 第 {pageIndex} 页 ({ex.Message})");
+            return string.Empty;
+        }
+    }
+
+    private PdfiumTextService.TextDocument? EnsureTextDocument()
+    {
+        if (_textDoc is not null) return _textDoc;
+        if (_documentPath is null) return null;
+
+        var svc = _injectedTextService ?? _textService;
+        if (svc is null)
+        {
+            svc = new PdfiumTextService();
+            _textService = svc;
+        }
+        _textDoc = svc.OpenDocument(_documentPath);
+        return _textDoc;
+    }
+
+    private void CloseTextDocument()
+    {
+        try { _textDoc?.Dispose(); }
+        catch (Exception ex) { Trace.WriteLine($"[ReaderViewModel] 关闭文本句柄失败: {ex.Message}"); }
+        _textDoc = null;
+    }
 
     // ------------------------------------------------------------------ 释放
 
@@ -696,6 +904,12 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             catch (Exception ex) { Trace.WriteLine($"[ReaderViewModel] 关闭文档失败: {ex.Message}"); }
             _docId = null;
         }
+
+        // 选区文本句柄（独立于渲染/搜索栈）；PdfiumTextService 无 IDisposable，仅释放句柄
+        CloseTextDocument();
+        _textService = null;
+        _textLayerCache.Clear();
+        _documentPath = null;
 
         if (_ownsService)
         {

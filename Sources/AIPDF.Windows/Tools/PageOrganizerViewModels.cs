@@ -37,7 +37,7 @@ public sealed class PageResultItem
 /// 页面整理组工具页视图模型基类：文件输入（拖拽 + 浏览）→ 参数表单 → 输出目录 → 执行/取消 → 进度与结果。
 /// 输出约定：outputDir 只传父目录，引擎在其下新建 AIPDF-日期-编号 任务子目录，绝不覆盖源文件。
 /// </summary>
-public abstract partial class PageOrganizerViewModelBase : ObservableObject, IToolDocumentReceiver
+public abstract partial class PageOrganizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
 {
     /// <summary>与 backend/engine.py parse_pages 的单项格式一致（数字或 a-b）。</summary>
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
@@ -63,6 +63,50 @@ public abstract partial class PageOrganizerViewModelBase : ObservableObject, ITo
 
     /// <summary>是否支持多文件（决定文件选择语义与排序按钮可见性）。</summary>
     public bool SupportsMultipleFiles => Tool.Multiple;
+
+    // ---------- 浮菜单「用工具处理」置顶/预填（V2 T2） ----------
+
+    /// <summary>被浮菜单固定的当前文档路径（null = 无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPinnedDocument))]
+    [NotifyPropertyChangedFor(nameof(PinnedDocumentLabel))]
+    private string? _pinnedDocumentPath;
+
+    /// <summary>是否有「当前文档」标记（XAML 徽标显隐）。</summary>
+    public bool HasPinnedDocument => !string.IsNullOrEmpty(PinnedDocumentPath);
+
+    /// <summary>「当前文档：文件名」标记文案。</summary>
+    public string? PinnedDocumentLabel => HasPinnedDocument
+        ? $"当前文档：{System.IO.Path.GetFileName(PinnedDocumentPath!)}"
+        : null;
+
+    /// <summary>是否有页范围字段可预填（基类默认无）。</summary>
+    public virtual bool SupportsPageRangePrefill => false;
+
+    /// <summary>预填页范围（基类默认空实现）。</summary>
+    public virtual void PrefillPageRange(int startPage, int endPage)
+    {
+    }
+
+    /// <summary>把当前文档加入并置顶、标记「当前文档」（浮菜单子菜单入口）。</summary>
+    public void PinCurrentDocument(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string fullPath;
+        try { fullPath = System.IO.Path.GetFullPath(path); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException) { return; }
+
+        AddFiles([fullPath]);
+
+        var item = Files.FirstOrDefault(f => string.Equals(f.Path, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (item is not null)
+        {
+            var index = Files.IndexOf(item);
+            if (index > 0) Files.Move(index, 0);
+        }
+
+        PinnedDocumentPath = fullPath;
+    }
 
     /// <summary>合并是引擎硬约束：至少两份 PDF。</summary>
     public bool NeedsAtLeastTwoFiles => Tool.Id == "merge";
@@ -413,6 +457,13 @@ public sealed partial class SplitViewModel : PageOrganizerViewModelBase
 
         return null;
     }
+
+    /// <summary>浮菜单「拆分」有页范围字段（RangesText），可预填当前页（H-6）。</summary>
+    public override bool SupportsPageRangePrefill => true;
+
+    /// <summary>预填拆分范围为「startPage-endPage」（1 基）。</summary>
+    public override void PrefillPageRange(int startPage, int endPage)
+        => RangesText = $"{startPage}-{endPage}";
 }
 
 /// <summary>删除页面：pages 必填，原文件保持不变。</summary>

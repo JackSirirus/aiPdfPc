@@ -51,6 +51,16 @@ internal static class PdfiumTextNative
 
     [DllImport(Lib, EntryPoint = "FPDFText_GetRect", CallingConvention = CallingConvention.Cdecl)]
     public static extern int FPDFText_GetRect(IntPtr text_page, int rect_index, out double left, out double top, out double right, out double bottom);
+
+    // 选区前置缺口【H-5】：鼠标点 → 字符下标。坐标 = PDF 页坐标（左下原点、pt、未旋转空间）。
+    // 返回命中字符下标；-1 表示容差内无字符。无字符串/缓冲参数，但为与文件头「携带缓冲的 FPDFText_* 一律手写」纪律一致，仍走手写导出。
+    [DllImport(Lib, EntryPoint = "FPDFText_GetCharIndexAtPos", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFText_GetCharIndexAtPos(IntPtr text_page, double x, double y, double x_tolerance, double y_tolerance);
+
+    // 字符矩形【H-5】：注意参数序为 (left, right, bottom, top)，与 FPDFText_GetRect（left, top, right, bottom）不同！
+    // 输出为 PDF 页坐标（左下原点、pt），消费方负责换算左上原点（见 CharBoxToPdfRect）。
+    [DllImport(Lib, EntryPoint = "FPDFText_GetCharBox", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int FPDFText_GetCharBox(IntPtr text_page, int index, out double left, out double right, out double bottom, out double top);
 }
 
 /// <summary>矩形（左上原点、pt 单位），与 PdfCoordinateMapper 的坐标口径一致。</summary>
@@ -312,6 +322,112 @@ public sealed class PdfiumTextService
                 fpdfview.FPDF_ClosePage(page);
             }
         }
+    }
+
+    // ------------------------------------------------------------------ 选区命中（H-5，T2）
+
+    /// <summary>
+    /// 页面坐标（PDF 左下原点、pt、未旋转空间）→ 最近字符下标；容差内无字符返回 -1。
+    /// 缺省容差 8pt（点击靠近字符边缘仍可命中）。仅在 <see cref="PdfiumLock.Global"/> 内调用原生（R12）。
+    /// 已知限制：/Rotate 旋转页坐标为未旋转页面空间；旋转校正由消费方禁用（M-11）。
+    /// </summary>
+    public int GetCharIndexAtPoint(TextDocument doc, int pageIndex, double xPt, double yPt, double tolerance = 8.0)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        doc.ThrowIfDisposed();
+        ValidatePageIndex(doc, pageIndex);
+        if (tolerance < 0) tolerance = 0;
+        if (double.IsNaN(xPt) || double.IsNaN(yPt)) return -1;
+
+        lock (PdfiumLock.Global)
+        {
+            var page = fpdfview.FPDF_LoadPage(doc.Handle, pageIndex);
+            if (page is null || page.__Instance == IntPtr.Zero)
+                throw new InvalidOperationException($"页加载失败: {doc.Path} 第 {pageIndex} 页");
+            try
+            {
+                var textPage = fpdf_text.FPDFTextLoadPage(page);
+                if (textPage is null || textPage.__Instance == IntPtr.Zero)
+                    throw new InvalidOperationException($"FPDFText_LoadPage 失败: {doc.Path} 第 {pageIndex} 页");
+                try
+                {
+                    return PdfiumTextNative.FPDFText_GetCharIndexAtPos(
+                        textPage.__Instance, xPt, yPt, tolerance, tolerance);
+                }
+                finally
+                {
+                    fpdf_text.FPDFTextClosePage(textPage);
+                }
+            }
+            finally
+            {
+                fpdfview.FPDF_ClosePage(page);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 单字符矩形（左上原点、pt），换算自 FPDFText_GetCharBox 的 PDF 左下原点坐标。
+    /// 下标越界/无字符返回 null（不抛，命中测试应容错）。
+    /// </summary>
+    public PdfRect? GetCharPageRect(TextDocument doc, int pageIndex, int charIndex)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        doc.ThrowIfDisposed();
+        ValidatePageIndex(doc, pageIndex);
+
+        lock (PdfiumLock.Global)
+        {
+            var page = fpdfview.FPDF_LoadPage(doc.Handle, pageIndex);
+            if (page is null || page.__Instance == IntPtr.Zero)
+                throw new InvalidOperationException($"页加载失败: {doc.Path} 第 {pageIndex} 页");
+            try
+            {
+                var pageHeight = fpdfview.FPDF_GetPageHeightF(page);
+                var textPage = fpdf_text.FPDFTextLoadPage(page);
+                if (textPage is null || textPage.__Instance == IntPtr.Zero)
+                    throw new InvalidOperationException($"FPDFText_LoadPage 失败: {doc.Path} 第 {pageIndex} 页");
+                try
+                {
+                    var ok = PdfiumTextNative.FPDFText_GetCharBox(
+                        textPage.__Instance, charIndex, out var l, out var r, out var b, out var t);
+                    return ok == 0 ? null : CharBoxToPdfRect(l, r, b, t, pageHeight);
+                }
+                finally
+                {
+                    fpdf_text.FPDFTextClosePage(textPage);
+                }
+            }
+            finally
+            {
+                fpdfview.FPDF_ClosePage(page);
+            }
+        }
+    }
+
+    /// <summary>
+    /// FPDFText_GetCharBox 原始输出（PDF 左下原点）→ 左上原点矩形（与 <see cref="PdfRect"/> 口径一致）。
+    /// 纯函数（可单测，无需原生）：参数序为 (left, right, bottom, top)。
+    /// </summary>
+    public static PdfRect CharBoxToPdfRect(double left, double right, double bottom, double top, double pageHeightPt)
+        => new(
+            Math.Min(left, right),
+            pageHeightPt - Math.Max(top, bottom),
+            Math.Max(left, right),
+            pageHeightPt - Math.Min(top, bottom));
+
+    /// <summary>提取字符区间 [charStart, charStart + charCount) 的文本（UTF-16）。空区间/越界返回空串。</summary>
+    public string GetTextRange(TextDocument doc, int pageIndex, int charStart, int charCount)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        doc.ThrowIfDisposed();
+        ValidatePageIndex(doc, pageIndex);
+        if (charStart < 0 || charCount <= 0) return string.Empty;
+
+        var full = ExtractPageText(doc, pageIndex);
+        if (charStart >= full.Length) return string.Empty;
+        var count = Math.Min(charCount, full.Length - charStart);
+        return count <= 0 ? string.Empty : full.Substring(charStart, count);
     }
 
     // ------------------------------------------------------------------ 原生命中测试

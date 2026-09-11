@@ -24,6 +24,29 @@
                        Text="{Binding Tool.Note}"
                        Margin="0,10,0,0" />
 
+            <!-- T2：浮菜单「用工具处理」置顶标记（当前文档） -->
+            <Border HorizontalAlignment="Left"
+                    Margin="0,10,0,0"
+                    Padding="8,2"
+                    CornerRadius="4"
+                    Background="{StaticResource Brush.AccentSoft}"
+                    BorderBrush="{StaticResource Brush.Accent}"
+                    BorderThickness="1">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasPinnedDocument}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <TextBlock Text="{Binding PinnedDocumentLabel}"
+                           FontSize="11"
+                           Foreground="{StaticResource Brush.AccentText}" />
+            </Border>
+
             <!-- ① 文件输入：拖拽 + 浏览按钮 -->
             <TextBlock Style="{StaticResource SectionTitleText}" Text="文件" />
             <Border AllowDrop="True"

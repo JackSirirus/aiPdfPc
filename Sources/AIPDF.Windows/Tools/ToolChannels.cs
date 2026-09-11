@@ -77,3 +77,24 @@ public interface IToolDocumentReceiver
     /// <summary>接收宿主交接的文档路径；语义与各工具页既有的 AddFiles（过滤/去重/单文件替换）一致。</summary>
     void AddFiles(IEnumerable<string> paths);
 }
+
+/// <summary>
+/// V2 阅读器浮菜单「用工具处理 ▾」的统一入口：把当前文档置顶并标记「当前文档」，
+/// 并在工具确有页范围字段时预填「当前页-当前页」（H-6）。
+/// <para>
+/// 与 <see cref="IToolDocumentReceiver"/> 的区别：后者只把路径加入文件列表；
+/// 本接口额外要求（a）当前文档置顶 + 可观察标记，（b）页范围预填契约。
+/// 各工具组基类实现置顶与标记；页范围预填由确有该字段的工具（split/rotate）覆写。
+/// </para>
+/// </summary>
+public interface ICurrentDocumentPinnable
+{
+    /// <summary>把当前文档加入并置顶，同时标记为「当前文档」（不改变既有 AddFiles 语义）。</summary>
+    void PinCurrentDocument(string path);
+
+    /// <summary>该工具是否有页范围字段可预填（H-6：compress/pdf_to_word 为 false）。</summary>
+    bool SupportsPageRangePrefill { get; }
+
+    /// <summary>预填页范围（1 基，含端点）。仅在 <see cref="SupportsPageRangePrefill"/> 为真时由宿主调用。</summary>
+    void PrefillPageRange(int startPage, int endPage);
+}

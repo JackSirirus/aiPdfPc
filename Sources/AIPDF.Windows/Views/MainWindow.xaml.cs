@@ -184,6 +184,70 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---- T2 浮菜单「用工具处理」：既有通道打开 + 当前文档置顶 + 页范围预填 ----
+
+    /// <summary>
+    /// 阅读视图浮菜单子菜单发起：经 <see cref="ShowToolPage"/> 走既有宿主（右抽屉 / 临时标签），
+    /// 再把当前文档置顶并标记「当前文档」；仅对确有页范围字段的工具（split/rotate）预填「当前页-当前页」。
+    /// <see cref="ToolLaunchRequest.ToolId"/> 为 null 表示「更多工具…」，打开工具箱面板。
+    /// </summary>
+    private void OnReaderToolLaunchRequested(object? sender, ToolLaunchRequest e)
+    {
+        if (DataContext is not ViewModels.MainViewModel main)
+        {
+            return;
+        }
+
+        if (e.ToolId is null)
+        {
+            ToolboxPanel.Visibility = ToolboxPanel.Visibility == Visibility.Visible
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            return;
+        }
+
+        var tool = main.Tools.FirstOrDefault(t => string.Equals(t.Id, e.ToolId, StringComparison.Ordinal));
+        if (tool is null)
+        {
+            main.StatusText = $"未找到工具：{e.ToolId}";
+            return;
+        }
+
+        ShowToolPage(tool, main.Bridge); // 既有通道（右抽屉 / 临时标签）
+
+        var hosted = ResolveHostedToolPage(tool);
+        if (hosted?.DataContext is not ICurrentDocumentPinnable pinnable)
+        {
+            return; // 该工具页未实现统一置顶契约：不降级为仅传路径
+        }
+
+        if (ActiveDocumentPath() is { } path)
+        {
+            pinnable.PinCurrentDocument(path); // 入选 + 置顶 + 标记「当前文档」
+        }
+
+        if (e.PrefillPageRange && pinnable.SupportsPageRangePrefill)
+        {
+            pinnable.PrefillPageRange(e.PageStart, e.PageEnd);
+        }
+
+        main.StatusText = $"已用「{tool.Name}」处理当前文档";
+    }
+
+    /// <summary>解析工具页当前承载的视图（右抽屉实例缓存 / 临时标签内容）。</summary>
+    private FrameworkElement? ResolveHostedToolPage(Models.Tool tool)
+    {
+        if (ToolChannels.RoutesToRightDrawer(tool))
+        {
+            return _rightDrawerPages.GetValueOrDefault(tool.Id);
+        }
+
+        var tab = TabHost.Tabs.FirstOrDefault(t =>
+            t.Kind == TabKind.Tool && t.Tool is not null
+            && string.Equals(t.Tool.Id, tool.Id, StringComparison.Ordinal));
+        return tab?.Content as FrameworkElement;
+    }
+
     private void OnTabHostPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(TabHostViewModel.HasTabs) or nameof(TabHostViewModel.SelectedTab))
@@ -310,6 +374,10 @@ public partial class MainWindow : Window
         var vm = new ReaderViewModel();
         vm.LoadDocument(fullPath);
         var view = new ReaderView(vm);
+
+        // T2：浮菜单「用工具处理」接线（可用性探测 + 置顶/页范围预填交回宿主）
+        view.ToolAvailabilityProvider = ToolAvailabilityProbe.Check;
+        view.ToolLaunchRequested += OnReaderToolLaunchRequested;
 
         AttachSearchDocument(fullPath); // 先挂接搜索（面板在标签激活时绑定该 docId）
 

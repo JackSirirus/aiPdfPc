@@ -7,6 +7,28 @@
     <!-- 编辑组共用的执行条：文件、输出文件夹、预检错误与开始按钮。
          DataContext 由宿主工具页继承（EditorToolViewModel）。 -->
     <StackPanel>
+        <!-- T2：浮菜单「用工具处理」置顶标记（当前文档） -->
+        <Border HorizontalAlignment="Left"
+                Margin="0,0,0,10"
+                Padding="8,2"
+                CornerRadius="4"
+                Background="{StaticResource Brush.AccentSoft}"
+                BorderBrush="{StaticResource Brush.Accent}"
+                BorderThickness="1">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasPinnedDocument}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Text="{Binding PinnedDocumentLabel}"
+                       FontSize="11"
+                       Foreground="{StaticResource Brush.AccentText}" />
+        </Border>
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="96" />

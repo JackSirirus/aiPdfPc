@@ -21,4 +21,24 @@ public static class ReaderStrings
     public const string FitPageToolTip = "按窗口大小完整显示一页";
     public const string LoadErrorPrefix = "无法打开文档：";
     public const string RenderErrorPrefix = "页面渲染失败：";
+
+    // ---- T2 选中浮菜单 / 悬停操作 / 笔记 ----
+    public const string MenuCopy = "复制";
+    public const string MenuHighlight = "高亮";
+    public const string MenuNote = "笔记";
+    public const string MenuTools = "用工具处理 ▾";
+    public const string MenuMoreTools = "更多工具…";
+    public const string MenuBack = "返回";
+    public const string HoverEdit = "编辑";
+    public const string HoverDelete = "删除";
+    public const string HoverRecolor = "改色";
+    public const string ColorPanelTitle = "选择高亮颜色";
+    public const string NoteEditorTitle = "输入笔记内容";
+    public const string Confirm = "确定";
+    public const string Cancel = "取消";
+    public const string Copied = "已复制";
+    public const string NoteApplied = "已添加笔记";
+    public const string HighlightApplied = "已高亮";
+    public const string AnnotationDeleted = "已删除批注";
+    public const string ToolUnavailable = "不可用";
 }

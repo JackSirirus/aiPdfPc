@@ -41,7 +41,7 @@ public sealed class OptimizerResultItem
 /// 引擎返回新任务目录（AIPDF-日期-编号），源文件保持不变。
 /// 文件条目为本组自包含定义（与 T14 的 PageFileItem/PageResultItem 同构，便于终审合并）。
 /// </summary>
-public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDocumentReceiver
+public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
 {
     private readonly EngineBridge? _bridge;
     private CancellationTokenSource? _cancellation;
@@ -63,6 +63,50 @@ public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDo
 
     /// <summary>是否支持多文件（文件选择对话框的 Multiselect）。</summary>
     public bool SupportsMultipleFiles => Tool.Multiple;
+
+    // ---------- 浮菜单「用工具处理」置顶/预填（V2 T2） ----------
+
+    /// <summary>被浮菜单固定的当前文档路径（null = 无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPinnedDocument))]
+    [NotifyPropertyChangedFor(nameof(PinnedDocumentLabel))]
+    private string? _pinnedDocumentPath;
+
+    /// <summary>是否有「当前文档」标记（XAML 徽标显隐）。</summary>
+    public bool HasPinnedDocument => !string.IsNullOrEmpty(PinnedDocumentPath);
+
+    /// <summary>「当前文档：文件名」标记文案。</summary>
+    public string? PinnedDocumentLabel => HasPinnedDocument
+        ? $"当前文档：{System.IO.Path.GetFileName(PinnedDocumentPath!)}"
+        : null;
+
+    /// <summary>是否有页范围字段可预填（基类默认无；compress 无页范围）。</summary>
+    public virtual bool SupportsPageRangePrefill => false;
+
+    /// <summary>预填页范围（基类默认空实现）。</summary>
+    public virtual void PrefillPageRange(int startPage, int endPage)
+    {
+    }
+
+    /// <summary>把当前文档加入并置顶、标记「当前文档」（浮菜单子菜单入口）。</summary>
+    public void PinCurrentDocument(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string fullPath;
+        try { fullPath = System.IO.Path.GetFullPath(path); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException) { return; }
+
+        AddFiles([fullPath]);
+
+        var item = Files.FirstOrDefault(f => string.Equals(f.Path, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (item is not null)
+        {
+            var index = Files.IndexOf(item);
+            if (index > 0) Files.Move(index, 0);
+        }
+
+        PinnedDocumentPath = fullPath;
+    }
 
     [ObservableProperty]
     private string _outputDir = "";

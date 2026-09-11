@@ -104,5 +104,12 @@ public sealed record AnnotationRecord
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };
 
+    /// <summary>返回笔记文本更新后的副本（FR-13 编辑笔记，Id 不变）。</summary>
+    public AnnotationRecord WithNote(string note)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(note);
+        return this with { Note = note };
+    }
+
     private static string NewId() => Guid.NewGuid().ToString("N");
 }

@@ -151,7 +151,7 @@ public sealed class ConverterResultItem
 /// 输出目录 → 执行/取消 → 进度与结果。引擎调用直接走注入的 EngineBridge；
 /// 依赖缺失在构造时探测为 DependencyWarning，执行前校验拦截，引擎仍是权威。
 /// </summary>
-public abstract partial class ConverterToolViewModelBase : ObservableObject, IToolDocumentReceiver
+public abstract partial class ConverterToolViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
 {
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
 
@@ -182,6 +182,50 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
 
     /// <summary>是否支持多文件（决定文件选择语义）。</summary>
     public bool SupportsMultipleFiles => Tool.Multiple;
+
+    // ---------- 浮菜单「用工具处理」置顶/预填（V2 T2） ----------
+
+    /// <summary>被浮菜单固定的当前文档路径（null = 无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPinnedDocument))]
+    [NotifyPropertyChangedFor(nameof(PinnedDocumentLabel))]
+    private string? _pinnedDocumentPath;
+
+    /// <summary>是否有「当前文档」标记（XAML 徽标显隐）。</summary>
+    public bool HasPinnedDocument => !string.IsNullOrEmpty(PinnedDocumentPath);
+
+    /// <summary>「当前文档：文件名」标记文案。</summary>
+    public string? PinnedDocumentLabel => HasPinnedDocument
+        ? $"当前文档：{System.IO.Path.GetFileName(PinnedDocumentPath!)}"
+        : null;
+
+    /// <summary>是否有页范围字段可预填（基类默认无；pdf_to_word 无页范围）。</summary>
+    public virtual bool SupportsPageRangePrefill => false;
+
+    /// <summary>预填页范围（基类默认空实现）。</summary>
+    public virtual void PrefillPageRange(int startPage, int endPage)
+    {
+    }
+
+    /// <summary>把当前文档加入并置顶、标记「当前文档」（浮菜单子菜单入口）。</summary>
+    public void PinCurrentDocument(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string fullPath;
+        try { fullPath = System.IO.Path.GetFullPath(path); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException) { return; }
+
+        AddFiles([fullPath]);
+
+        var item = Files.FirstOrDefault(f => string.Equals(f.Path, fullPath, StringComparison.OrdinalIgnoreCase));
+        if (item is not null)
+        {
+            var index = Files.IndexOf(item);
+            if (index > 0) Files.Move(index, 0);
+        }
+
+        PinnedDocumentPath = fullPath;
+    }
 
     public string FileDialogFilter { get; }
 

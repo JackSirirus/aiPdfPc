@@ -22,7 +22,7 @@ public delegate Task ExecuteEditorToolDelegate(
     CancellationToken cancellationToken);
 
 /// <summary>编辑组工具页的公共基类：文件/输出目录选择、页面范围、执行命令与错误展示。</summary>
-public abstract partial class EditorToolViewModel : ObservableObject
+public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDocumentPinnable
 {
     private readonly ExecuteEditorToolDelegate _execute;
 
@@ -49,6 +49,47 @@ public abstract partial class EditorToolViewModel : ObservableObject
     /// <summary>页面范围（1 基，留空为全部；例如 1-3,5。框选会填充框选所在页）。</summary>
     [ObservableProperty]
     private string _pages = "";
+
+    // ---------- 浮菜单「用工具处理」置顶/预填（V2 T2） ----------
+
+    /// <summary>被浮菜单固定的当前文档路径（null = 无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPinnedDocument))]
+    [NotifyPropertyChangedFor(nameof(PinnedDocumentLabel))]
+    private string? _pinnedDocumentPath;
+
+    /// <summary>是否有「当前文档」标记（XAML 徽标显隐）。</summary>
+    public bool HasPinnedDocument => !string.IsNullOrEmpty(PinnedDocumentPath);
+
+    /// <summary>「当前文档：文件名」标记文案。</summary>
+    public string? PinnedDocumentLabel => HasPinnedDocument
+        ? $"当前文档：{System.IO.Path.GetFileName(PinnedDocumentPath!)}"
+        : null;
+
+    /// <summary>是否有页范围字段可预填（基类默认无；rotate 覆写为 true）。</summary>
+    public virtual bool SupportsPageRangePrefill => false;
+
+    /// <summary>预填页范围（基类默认空实现）。</summary>
+    public virtual void PrefillPageRange(int startPage, int endPage)
+    {
+    }
+
+    /// <summary>把当前文档写入 InputFile、标记「当前文档」（浮菜单子菜单入口；编辑组每次处理一份）。</summary>
+    public void PinCurrentDocument(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        string fullPath;
+        try { fullPath = System.IO.Path.GetFullPath(path); }
+        catch (Exception error) when (error is ArgumentException or NotSupportedException) { return; }
+
+        InputFile = fullPath;
+        if (string.IsNullOrWhiteSpace(OutputDir))
+        {
+            OutputDir = System.IO.Path.GetDirectoryName(fullPath) ?? "";
+        }
+
+        PinnedDocumentPath = fullPath;
+    }
 
     /// <summary>执行前的参数预检错误；引擎错误经状态栏展示，不在这里重复。</summary>
     [ObservableProperty]
@@ -248,6 +289,13 @@ public sealed partial class RotateViewModel : EditorToolViewModel
         ["pages"] = Pages,
         ["angle"] = Angle,
     };
+
+    /// <summary>浮菜单「旋转」有页范围字段（Pages），可预填当前页（H-6）。</summary>
+    public override bool SupportsPageRangePrefill => true;
+
+    /// <summary>预填页面范围为「startPage-endPage」（1 基）。</summary>
+    public override void PrefillPageRange(int startPage, int endPage)
+        => Pages = $"{startPage}-{endPage}";
 }
 
 /// <summary>添加页码：格式 / 起始编号 / 位置 / 字号照 catalog。</summary>
