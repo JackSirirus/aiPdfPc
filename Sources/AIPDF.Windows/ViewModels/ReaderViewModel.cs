@@ -234,6 +234,13 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private PdfiumTextService? _textService;
     private PdfiumTextService.TextDocument? _textDoc;
     private string? _documentPath;
+
+    /// <summary>
+    /// 本次会话驻留的解密密码（T9）：仅内存，用于惰性文本层句柄重开（选区/搜索）。
+    /// 只在打开成功后写入；绝不落盘 / 写日志 / 进异常消息（PRD 4.3.3）。
+    /// 渲染/保存的逐请求密码由宿主的 <c>SessionCredentialStore</c> 提供。
+    /// </summary>
+    private string? _documentPassword;
     private readonly Dictionary<int, bool> _textLayerCache = new();
 
     private string? _docId;
@@ -356,12 +363,21 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     // ------------------------------------------------------------------ 文档加载
 
     /// <summary>
+    /// 最近一次 <see cref="LoadDocument"/> 是否因「需要密码」失败（PDFium <c>FPDF_ERR_PASSWORD</c>）。
+    /// 宿主据此进入【ST-04】模态密码框（错误行内红字、不清空、不限次数）；非密码类失败（格式/损坏）保持
+    /// false，仍走既有错误条。
+    /// </summary>
+    public bool LoadRequiresPassword { get; private set; }
+
+    /// <summary>
     /// 打开文档并构建虚拟化布局（页尺寸一次取自 T1 缓存）。失败写入 ErrorMessage（ST-06，模态对话框由宿主 T5 负责）。
+    /// 密码只在打开成功时驻留本 VM 内存（T9），供惰性文本层重开；不落盘、不写日志。
     /// </summary>
     public void LoadDocument(string path, string? password = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ErrorMessage = null;
+        LoadRequiresPassword = false;
 
         try
         {
@@ -369,6 +385,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             if (svc is null) svc = CreateService();
             _service = svc;
             var docId = svc.OpenDocument(path, password);
+            _documentPassword = password; // 打开成功才驻留；失败密码不保留
 
             // 重复加载：释放上一份文档（T1 句柄去重同路径，不同路径才真正关闭）
             if (_docId is not null && _docId != docId)
@@ -427,6 +444,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             PageCount = 0;
             _pageRotations = [];
             Pages.Clear();
+            _documentPassword = null;
+            LoadRequiresPassword = ex.ErrorCode == PdfiumRenderService.PdfiumErrorPassword;
             ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
         }
     }
@@ -445,6 +464,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (_documentPath is null || _service is null || _docId is null) return;
 
+        // T9：就地保存后重载用驻留密码重开句柄；显式传入优先（保存链路带回），否则用本 VM 驻留值。
+        var effectivePassword = password ?? _documentPassword;
         var path = _documentPath;
         var savedScroll = _scrollTop;
         var savedPage = CurrentPageNumber;
@@ -469,7 +490,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         try
         {
             _service.CloseDocument(_docId);
-            _docId = _service.OpenDocument(path, password);
+            _docId = _service.OpenDocument(path, effectivePassword);
+            _documentPassword = effectivePassword;
             _documentPath = _docId;
 
             var count = _service.GetPageCount(_docId);
@@ -1019,7 +1041,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             svc = new PdfiumTextService();
             _textService = svc;
         }
-        _textDoc = svc.OpenDocument(_documentPath);
+        // T9：加密文档的文本层句柄重开需同一驻留密码（每个文档句柄独立，渲染/文本各持一份）。
+        _textDoc = svc.OpenDocument(_documentPath, _documentPassword);
         return _textDoc;
     }
 
@@ -1046,6 +1069,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         _textService = null;
         _textLayerCache.Clear();
         _documentPath = null;
+        _documentPassword = null; // T9：随文档关闭清除驻留密码（进程退出即整体清除）
 
         if (_ownsService)
         {

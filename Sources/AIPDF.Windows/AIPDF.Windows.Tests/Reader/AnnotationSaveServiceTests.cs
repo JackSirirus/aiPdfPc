@@ -196,6 +196,23 @@ public sealed class AnnotationSaveServiceTests : IDisposable
         Assert.True(outcome.Succeeded);
     }
 
+    // ---------------------------------------------------------------- T9 密码传递
+
+    [Fact]
+    public async Task Save_ForwardsSourcePasswordToEngine()
+    {
+        var engine = new FakeEngine();
+        var source = MakeSource(Highlight("r1"));
+        source.Password = "session-pw"; // T9 驻留密码（会话内存）；保存时逐请求传给引擎
+        using var service = new AnnotationSaveService(engine, Options(reload: _ => { }));
+        service.RegisterDocument(source);
+
+        var outcome = await service.FlushAsync(_temp);
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal("session-pw", engine.LastPassword);
+    }
+
     // ---------------------------------------------------------------- 防抖
 
     [Fact]
@@ -275,6 +292,8 @@ public sealed class AnnotationSaveServiceTests : IDisposable
 
         public int LastActionCount { get; private set; }
 
+        public string? LastPassword { get; private set; }
+
         public Func<string, IReadOnlyList<IReadOnlyDictionary<string, object?>>, string?, CancellationToken,
             Task<AnnotationSaveEngineResult>> Result { get; set; } =
             (_, _, _, _) => Task.FromResult(
@@ -288,6 +307,7 @@ public sealed class AnnotationSaveServiceTests : IDisposable
         {
             CallCount++;
             LastActionCount = actions.Count;
+            LastPassword = password;
             return await Result(path, actions, password, cancellationToken);
         }
     }

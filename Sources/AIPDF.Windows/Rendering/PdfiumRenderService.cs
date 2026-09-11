@@ -111,6 +111,12 @@ public sealed class PdfiumRenderService : IDisposable
     /// <summary>WPF/SlimDX 纹理单边上限；超过则 clamp 并记录（R9）。</summary>
     public const int MaxTextureEdge = 4096;
 
+    /// <summary>
+    /// PDFium <c>FPDF_ERR_PASSWORD</c>（fpdfview.h 宏值 4）：文档需要密码、或提供的密码不正确。
+    /// T9 据此判定【ST-04】加密文档密码解锁入口；其他错误码（格式/文件/安全）不走密码流程。
+    /// </summary>
+    public const ulong PdfiumErrorPassword = 4;
+
     private readonly object _stateLock = new();
     private readonly Dictionary<string, DocumentEntry> _documents = new(StringComparer.OrdinalIgnoreCase);
     private readonly long _byteBudget;

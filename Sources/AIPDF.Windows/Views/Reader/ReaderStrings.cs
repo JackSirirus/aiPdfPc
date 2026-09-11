@@ -22,6 +22,13 @@ public static class ReaderStrings
     public const string LoadErrorPrefix = "无法打开文档：";
     public const string RenderErrorPrefix = "页面渲染失败：";
 
+    // ---- T9 加密文档密码解锁（【ST-04】）：错误行内红字、不清空输入、不限次数 ----
+    public const string PasswordDialogTitle = "输入密码";
+    public const string PasswordDialogHint = "此 PDF 已加密，请输入打开密码。";
+    public const string PasswordDialogEmptyError = "请输入密码";
+    public const string PasswordDialogWrongError = "密码错误，请重试";
+    public const string PasswordDialogUnlock = "解锁";
+
     // ---- T2 选中浮菜单 / 悬停操作 / 笔记 ----
     public const string MenuCopy = "复制";
     public const string MenuHighlight = "高亮";

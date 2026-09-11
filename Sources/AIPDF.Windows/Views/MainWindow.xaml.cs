@@ -427,6 +427,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// 打开文档标签并承载真实阅读视图（连续滚动/缩放/跳页，FR-01/05/06）；同路径已存在则激活现有标签【D14】。
     /// ReaderViewModel 必须在本方法（UI 线程）构造——其构造捕获 SynchronizationContext 用于渲染结果回传。
     /// LoadDocument 同步且失败不抛：错误经 ErrorMessage/HasError 由 ReaderView 错误条呈现，故不做 try/catch 兜底。
+    /// T9：加密文档走【ST-04】模态密码框；解锁成功驻留密码（进程内存），取消/Esc 不产生标签。
     /// </summary>
     private void OpenDocumentTab(string path)
     {
@@ -446,7 +447,17 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
 
         var vm = new ReaderViewModel();
-        vm.LoadDocument(fullPath);
+
+        // T9：优先用会话驻留密码免密打开（同路径解锁过一次即命中）。
+        vm.LoadDocument(fullPath, _credentials.Get(fullPath));
+
+        // T9【ST-04】加密文档：模态密码框；错误行内红字、不清空、不限次数；取消/Esc 不产生标签。
+        if (!vm.HasDocument && vm.LoadRequiresPassword && !PromptForPassword(fullPath, vm))
+        {
+            vm.Dispose(); // 取消：释放部分创建的渲染服务，不产生残留标签
+            return;
+        }
+
         var view = new ReaderView(vm);
 
         // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
@@ -458,8 +469,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         AttachSearchDocument(fullPath); // 先挂接搜索（面板在标签激活时绑定该 docId）
 
-        // T4：登记批注保存来源（防抖/快速通道）并采集冲突基线
-        EnsureAnnotationSaveService().RegisterDocument(new ReaderAnnotationSaveSource(vm, fullPath, null));
+        // T4：登记批注保存来源（防抖/快速通道）并采集冲突基线。
+        // T9：携带会话驻留密码 → 加密文档的 save_annotations 逐请求带 options.password，
+        //     保存成功后的 close-first 重载亦用同一密码重开句柄。
+        EnsureAnnotationSaveService().RegisterDocument(
+            new ReaderAnnotationSaveSource(vm, fullPath, _credentials.Get(fullPath)));
         CaptureConflictBaseline(fullPath);
 
         var tab = TabHost.OpenDocument(fullPath, () => view);
@@ -469,6 +483,34 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         {
             main.StatusText = $"已打开 {tab.Title}";
         }
+    }
+
+    /// <summary>
+    /// T9【ST-04】：弹出模态密码框反复尝试解锁同一 <paramref name="vm"/>（不清空、不限次数）。
+    /// 每次尝试把输入密码交给 <see cref="ReaderViewModel.LoadDocument"/>；成功即驻留进
+    /// <see cref="SessionCredentialStore"/> 并返回 true。<b>取消 / Esc 返回 false</b>（宿主不产生标签）。
+    /// 密码仅存在于对话框回调闭包与凭据存储内存中，不落盘、不写日志、不进异常消息。
+    /// </summary>
+    private bool PromptForPassword(string fullPath, ReaderViewModel vm)
+    {
+        var dialog = new PasswordPromptDialog(Path.GetFileName(fullPath), password =>
+        {
+            vm.LoadDocument(fullPath, password);
+            if (!vm.HasDocument)
+            {
+                return false; // 密码错误（或该文档仍无法打开）：对话框保持打开重试
+            }
+
+            _credentials.Store(fullPath, password); // 解锁成功：进程内存驻留，后续免密
+            return true;
+        });
+
+        if (IsLoaded)
+        {
+            dialog.Owner = this; // 启动恢复期窗口尚未 Loaded 时不设 Owner，避免 InvalidOperationException
+        }
+
+        return dialog.ShowDialog() == true;
     }
 
     // ---- 阅读视图接线（T3 ReaderViewModel ↔ 标签/面板联动） ----
@@ -739,13 +781,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         try
         {
-            var doc = _searchTextService.OpenDocument(fullPath);
+            // T9：加密文档用会话驻留密码重开文本层句柄，解锁一次后搜索免密。
+            var doc = _searchTextService.OpenDocument(fullPath, _credentials.Get(fullPath));
             _searchDocs[fullPath] = doc;
             _searchIndexService.Attach(fullPath, doc);
         }
         catch (Exception ex)
         {
-            // 损坏/加密文件：阅读仍继续，搜索不可用（面板探测/搜索会给出提示）
+            // 损坏/未解锁文件：阅读仍继续，搜索不可用（面板探测/搜索会给出提示）
             Trace.WriteLine($"[MainWindow] 搜索索引挂接失败: {fullPath} ({ex.Message})");
             if (DataContext is ViewModels.MainViewModel main)
             {
@@ -931,6 +974,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>最近文件存储（保存成功 / 关闭标签时同步卡片体积/进度/缩放镜像）。</summary>
     private readonly RecentFilesStore _recentFiles = new();
 
+    /// <summary>
+    /// T9 会话密码驻留（PRD 4.4.3）：内存路径→密码，解锁一次标签内免密，进程退出清除。
+    /// 绝不落盘 / 写日志 / 进异常消息；渲染 / 文本 / 保存 / 就地重载均经此取密码。
+    /// </summary>
+    private readonly SessionCredentialStore _credentials = new();
+
     // ---- T6 会话恢复（session.json：tabs / window / leftPanel） ----
 
     /// <summary>会话存储（%APPDATA%\AIPDF\session.json；与 reading-state 独立存储互不影响）。</summary>
@@ -984,7 +1033,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         string docId;
         try
         {
-            docId = _panelRenderer.OpenDocument(path);
+            // T9：加密文档用会话驻留密码打开缩略图/大纲渲染句柄，解锁一次后面板免密。
+            docId = _panelRenderer.OpenDocument(path, _credentials.Get(path));
         }
         catch (Exception ex)
         {
@@ -1335,6 +1385,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
 
         SaveSession();
+
+        // T9（PRD 4.4.3）：进程退出即清除驻留密码；会话/状态文件从不含密码，此处只清内存。
+        _credentials.ClearAll();
     }
 
     // ------------------------------------------------------------ T6 会话恢复（启动恢复 / 退出保存）
