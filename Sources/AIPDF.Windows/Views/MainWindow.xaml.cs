@@ -514,6 +514,38 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     }
 
     /// <summary>
+    /// FR-32：接受启动参数 / 单实例转发传入的文档路径，每个文件开一个标签（同路径去重【D14】）。
+    /// 在 UI 线程调用（非 UI 线程自动 marshal）；单个文件打开失败只记录诊断，不阻断其余文件。
+    /// </summary>
+    public void OpenExternalDocuments(IEnumerable<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        if (!Dispatcher.CheckAccess())
+        {
+            var copy = paths.ToList();
+            Dispatcher.BeginInvoke(new Action(() => OpenExternalDocuments(copy)));
+            return;
+        }
+
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                OpenDocumentTab(path);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[MainWindow] 打开外部文档失败: {path} ({ex.Message})");
+            }
+        }
+    }
+
+    /// <summary>
     /// T9【ST-04】：弹出模态密码框反复尝试解锁同一 <paramref name="vm"/>（不清空、不限次数）。
     /// 每次尝试把输入密码交给 <see cref="ReaderViewModel.LoadDocument"/>；成功即驻留进
     /// <see cref="SessionCredentialStore"/> 并返回 true。<b>取消 / Esc 返回 false</b>（宿主不产生标签）。

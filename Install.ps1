@@ -10,8 +10,13 @@
 #                                                                        指定安装目录（供测试沙箱）
 #   powershell -ExecutionPolicy Bypass -File Install.ps1 -Uninstall [-InstallDir D:\dir]
 #                                                                        卸载（删除安装目录与快捷方式）
+#   powershell -ExecutionPolicy Bypass -File Install.ps1 -NoAssociation   不登记 .pdf 打开方式
+#   powershell -ExecutionPolicy Bypass -File Install.ps1 -AssociationProgId X -RegistryRoot R
+#                                                                        关联落点覆盖（测试用临时 ProgId/隔离根）
 # 说明：仅安装到当前用户目录，不写 HKLM，不需要管理员；不下载 Python/LibreOffice，
-#       只检查并给出指引。本文件包含中文，PowerShell 5.1 要求 UTF-8 带 BOM 编码保存。
+#       只检查并给出指引。文件关联仅写 HKCU\Software\Classes：登记 ProgId 的
+#       shell\open\command 与 .pdf 的「打开方式」候选，不写 UserChoice、不覆盖用户默认程序。
+#       本文件包含中文，PowerShell 5.1 要求 UTF-8 带 BOM 编码保存。
 # 模式：来源含 engine\python\python.exe 时判定为自包含安装包（Python 与 .NET
 #       Desktop Runtime 随包内置），跳过两项系统前置检查；否则保持框架依赖模式，
 #       强制检查系统 Python 3.12+ 与 .NET 8 Desktop Runtime。
@@ -21,7 +26,12 @@ param(
     [string]$ShortcutDir = "",
     [switch]$Check,
     [switch]$Uninstall,
-    [switch]$NoShortcut
+    [switch]$NoShortcut,
+    # 文件关联（FR-31，仅 HKCU\Software\Classes，免管理员）。
+    # 默认 ProgId = AIPDF.Pdf；测试传入临时 ProgId（AIPDF.assoc.test.<guid>）并测后清理。
+    [string]$AssociationProgId = "AIPDF.Pdf",
+    [string]$RegistryRoot = "HKCU:\Software\Classes",
+    [switch]$NoAssociation
 )
 
 $ErrorActionPreference = "Stop"
@@ -179,6 +189,47 @@ function New-StartShortcut([string]$LinkPath, [string]$TargetPath) {
 }
 
 # ---------------------------------------------------------------------------
+# 文件关联（FR-31 / PRD 4.7.2）：仅写 HKCU\Software\Classes，免管理员。
+#   ProgId\<default>              = 友好名
+#   ProgId\shell\open\command     = "<安装目录>\app\AIPDF.Windows.exe" "%1"
+#   .pdf\OpenWithProgids\<ProgId> = 非破坏式候选（绝不写 .pdf 默认值 / UserChoice）
+# 不强制覆盖用户既有默认程序（UserChoice）；安装完仅提示可在系统设置中更改。
+# ---------------------------------------------------------------------------
+
+function Get-AssociationCommand([string]$ExePath) {
+    # 与单实例转发/命令行解析一致的命令串；"%1" 保留引号以兼容含空格路径。
+    return '"' + $ExePath + '" "%1"'
+}
+
+function Register-PdfAssociation([string]$ProgId, [string]$Root, [string]$ExePath) {
+    $progKey = Join-Path $Root $ProgId
+    New-Item -Path $progKey -Force | Out-Null
+    Set-Item -Path $progKey -Value "AIPDF PDF 文档"
+
+    $cmdKey = Join-Path $progKey "shell\open\command"
+    New-Item -Path $cmdKey -Force | Out-Null
+    Set-Item -Path $cmdKey -Value (Get-AssociationCommand $ExePath)
+
+    # 非破坏式登记：只加入 .pdf 的「打开方式」候选，不写 .pdf 默认值、不碰 UserChoice。
+    $openWithKey = Join-Path $Root ".pdf\OpenWithProgids"
+    New-Item -Path $openWithKey -Force | Out-Null
+    New-ItemProperty -Path $openWithKey -Name $ProgId -Value ([byte[]]@()) -PropertyType Binary -Force | Out-Null
+}
+
+function Unregister-PdfAssociation([string]$ProgId, [string]$Root) {
+    # 先移除「打开方式」候选（避免残留；不删 .pdf 键本身，可能含其他程序登记）。
+    $openWithKey = Join-Path $Root ".pdf\OpenWithProgids"
+    if (Test-Path -LiteralPath $openWithKey) {
+        Remove-ItemProperty -Path $openWithKey -Name $ProgId -ErrorAction SilentlyContinue
+    }
+    # 再删 ProgId 树（shell\open\command、友好名等一并清除）。
+    $progKey = Join-Path $Root $ProgId
+    if (Test-Path -LiteralPath $progKey) {
+        Remove-Item -Path $progKey -Recurse -Force
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 
@@ -221,6 +272,12 @@ if ($Uninstall) {
             Remove-Item -LiteralPath $linkPath -Force
             $removed += "快捷方式 $linkPath"
         }
+    }
+    if (-not $NoAssociation) {
+        $assocKey = Join-Path $RegistryRoot $AssociationProgId
+        $hadAssociation = Test-Path -LiteralPath $assocKey
+        Unregister-PdfAssociation $AssociationProgId $RegistryRoot
+        if ($hadAssociation) { $removed += "文件关联 $AssociationProgId" }
     }
     if ($removed.Count -gt 0) {
         Write-Host ("已删除：`n  " + ($removed -join "`n  "))
@@ -318,6 +375,7 @@ $stagingRoot = Join-Path $ParentDir (".aipdf-install-" + [System.Guid]::NewGuid(
 $stagedApp = Join-Path $stagingRoot "AIPDF"
 $backupPath = $null
 $swapped = $false
+$associationRegistered = $false
 
 try {
     New-Item -ItemType Directory -Path $ParentDir -Force | Out-Null
@@ -380,6 +438,15 @@ try {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
 
+    if (-not $NoAssociation) {
+        Write-Step "登记 .pdf 打开方式（$AssociationProgId，仅 HKCU）"
+        $associationExe = Join-Path $Target "app\AIPDF.Windows.exe"
+        Register-PdfAssociation $AssociationProgId $RegistryRoot $associationExe
+        $associationRegistered = $true
+        Write-Host "已登记：$RegistryRoot\$AssociationProgId\shell\open\command → $associationExe"
+        Write-Host "提示：仅加入「打开方式」候选，不覆盖默认程序；如需设为默认，可在系统设置中更改默认程序。" -ForegroundColor Yellow
+    }
+
     Write-Host ""
     Write-Host ("安装完成：{0}" -f $Target) -ForegroundColor Green
     if ($Mode -eq "self-contained") {
@@ -407,6 +474,10 @@ catch {
     }
     catch {
         $rollbackNote = $_.Exception.Message
+    }
+    if ($associationRegistered) {
+        # 安装失败回滚：同时清除本次写入的关联，避免注册表残留
+        try { Unregister-PdfAssociation $AssociationProgId $RegistryRoot } catch { }
     }
     [Console]::Error.WriteLine("安装未完成：$installError")
     [Console]::Error.WriteLine("已回滚到安装前状态；已有输出文档不会被修改。")

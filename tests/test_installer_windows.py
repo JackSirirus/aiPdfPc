@@ -129,14 +129,23 @@ class InstallerWindowsTests(unittest.TestCase):
         shutil.copyfile(INSTALL_PS1, src / "Install.ps1")
         return src
 
-    def install(self, source=None, target=None, extra=(), env=None):
+    def install(self, source=None, target=None, extra=(), env=None, association=None):
+        # 默认 -NoAssociation：常规安装语义用例绝不触碰真实注册表；
+        # 关联用例显式传 association=<临时 ProgId> 才登记（AC-31.1 修正）。
         script = (source or self.source) / "Install.ps1"
         args = ["-InstallDir", str(target or self.target), "-ShortcutDir", str(self.shortcuts)]
+        args += self._association_args(association)
         return run_installer(script, [*args, *extra], env=env)
 
-    def uninstall(self, target, extra=()):
+    def uninstall(self, target, extra=(), association=None):
         args = ["-Uninstall", "-InstallDir", str(target), "-ShortcutDir", str(self.shortcuts)]
+        args += self._association_args(association)
         return run_installer(self.source / "Install.ps1", [*args, *extra])
+
+    @staticmethod
+    def _association_args(association):
+        # association=None → 关闭关联写入；否则指定 ProgId（测试一律传临时 ProgId）。
+        return ["-NoAssociation"] if association is None else ["-AssociationProgId", association]
 
     # ------------------------------------------------------------------
     # 断言辅助
@@ -474,6 +483,114 @@ class InstallerWindowsTests(unittest.TestCase):
                     os.rmdir(self.target)  # 只移除 junction 重解析点，不动指向内容
                 except OSError:
                     pass
+
+    # ------------------------------------------------------------------
+    # ⑬ 文件关联注册/卸载（FR-31 / AC-31.1 修正）
+    # 临时 ProgId 写入 HKCU\Software\Classes，断言 shell\open\command 命令串，
+    # 并验证 -Uninstall 清理无残留；全程不写 .pdf 默认值、不碰 UserChoice。
+    # 无论断言是否失败都 addCleanup 清理，绝不污染真实用户关联。
+    # ------------------------------------------------------------------
+    def test_13_association_register_and_cleanup(self):
+        import uuid
+
+        progid = "AIPDF.assoc.test." + uuid.uuid4().hex[:12]
+        self.addCleanup(self._cleanup_association, progid)
+        before_pdf_default = self._read_reg_default_or_none(r"Software\Classes\.pdf")
+
+        rc, out, err = self.install(association=progid)
+        self.assertEqual(rc, 0, f"安装失败：{err}")
+        self.assertIn(".pdf 打开方式", out)
+
+        # AC-31.1：命令串指向安装目录内启动器，且以 "%1" 占位文件参数。
+        command = self._read_reg_default(rf"Software\Classes\{progid}\shell\open\command")
+        expected_exe = str(self.target / "app" / "AIPDF.Windows.exe")
+        self.assertEqual(command, f'"{expected_exe}" "%1"')
+
+        # 非破坏式登记：仅加入 .pdf 的「打开方式」候选，不改写 .pdf 默认值。
+        # OpenWithProgids 的值是空 REG_BINARY，winreg 读回 None，故断言存在性而非字节。
+        self.assertTrue(self._openwith_value_exists(progid), "未登记 .pdf 打开方式候选")
+        self.assertEqual(
+            self._read_reg_default_or_none(r"Software\Classes\.pdf"),
+            before_pdf_default,
+            "安装不得改写 .pdf 默认值（不覆盖用户默认程序）",
+        )
+
+        # -Uninstall 清理：ProgId 树与打开方式候选均无残留。
+        rc, out, err = self.uninstall(self.target, association=progid)
+        self.assertEqual(rc, 0, f"卸载失败：{err}")
+        self.assertFalse(self._reg_key_exists(rf"Software\Classes\{progid}"), "卸载后 ProgId 残留")
+        self.assertFalse(self._openwith_value_exists(progid), "卸载后 OpenWithProgids 残留")
+
+    # ------------------------------------------------------------------
+    # 注册表断言辅助（winreg 直连 HKCU；仅用于临时 ProgId）
+    # ------------------------------------------------------------------
+    def _read_reg_default(self, subkey):
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+            return winreg.QueryValueEx(key, None)[0]
+
+    def _read_reg_default_or_none(self, subkey):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+                return winreg.QueryValueEx(key, None)[0]
+        except FileNotFoundError:
+            return None
+
+    def _read_reg_value(self, subkey, name):
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
+            return winreg.QueryValueEx(key, name)[0]
+
+    def _reg_key_exists(self, subkey):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey):
+                return True
+        except FileNotFoundError:
+            return False
+
+    def _openwith_value_exists(self, progid):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Classes\.pdf\OpenWithProgids") as key:
+                winreg.QueryValueEx(key, progid)
+                return True
+        except (FileNotFoundError, OSError):
+            return False
+
+    def _cleanup_association(self, progid):
+        """测试后清理临时 ProgId 与打开方式候选（幂等，供 addCleanup 兜底）。"""
+        import winreg
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Classes\.pdf\OpenWithProgids",
+                0,
+                winreg.KEY_SET_VALUE,
+            ) as key:
+                winreg.DeleteValue(key, progid)
+        except (FileNotFoundError, OSError):
+            pass
+        self._delete_reg_tree(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{progid}")
+
+    @staticmethod
+    def _delete_reg_tree(root, subkey):
+        import winreg
+        try:
+            with winreg.OpenKey(root, subkey, 0, winreg.KEY_ALL_ACCESS) as key:
+                while True:
+                    try:
+                        child = winreg.EnumKey(key, 0)
+                    except OSError:
+                        break
+                    InstallerWindowsTests._delete_reg_tree(root, subkey + "\\" + child)
+        except (FileNotFoundError, OSError):
+            return
+        try:
+            winreg.DeleteKey(root, subkey)
+        except OSError:
+            pass
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows installer (Install.ps1) only")
