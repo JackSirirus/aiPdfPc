@@ -79,6 +79,18 @@ public interface IToolDocumentReceiver
 }
 
 /// <summary>
+/// V2 T10 FR-21：不经 T7 队列直接调引擎的工具页（编辑组）的「启动前门禁」接收口。
+/// 宿主在页面承载时挂接；执行入口在真正调引擎前调用门禁，返回 false 则阻止本次执行
+/// （用于「工具执行前强制 flush 未保存批注，失败且用户取消时阻止启动」）。
+/// 队列型工具页由 <c>ToolTaskQueue.BeforeStart</c> 统一覆盖，不实现本接口。
+/// </summary>
+public interface IToolStartGated
+{
+    /// <summary>工具执行前门禁；返回 false 表示阻止启动。null 表示无门禁（直接执行）。</summary>
+    Func<CancellationToken, Task<bool>>? StartGate { get; set; }
+}
+
+/// <summary>
 /// V2 阅读器浮菜单「用工具处理 ▾」的统一入口：把当前文档置顶并标记「当前文档」，
 /// 并在工具确有页范围字段时预填「当前页-当前页」（H-6）。
 /// <para>

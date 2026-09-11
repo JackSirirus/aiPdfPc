@@ -305,6 +305,66 @@ class EngineTests(unittest.TestCase):
         unlocked=self.run_tool("unlock",{"password":"contract-pw"},protected["outputs"])
         with self.pdf(unlocked) as d:self.assertFalse(d.needs_pass)
 
+    # --- V2 T10 FR-23：编辑类工具注释保留（Q2 修订：compress/crop/rotate 保留，redact 删除全部） ---
+
+    def _annotated_retention_pdf(self,name="annot-retention.pdf"):
+        """合成含 2 Highlight + 1 FreeText 的 PDF；另含 1 个 Widget 表单字段与 TOC（供 redact M-12 断言）。
+
+        FreeText 放置在页面下部（y≈700），裁剪到 600pt 高后不再可见，用于验证 crop 不物理删除区域外注释（Q8）。
+        """
+        path=self.root/name
+        doc=fitz.open(self.source)  # 3 页，含 SECRET-123 文本（redact 命中）
+        widget=fitz.Widget()
+        widget.field_name="aipdf_retention_field"
+        widget.field_type=fitz.PDF_WIDGET_TYPE_TEXT
+        widget.rect=fitz.Rect(50,700,250,730)
+        widget.field_value="Ada Lovelace"
+        doc[0].add_widget(widget)
+        doc.set_toc([[1,"Chapter 1",1],[1,"Chapter 2",2]])
+        engine.add_highlight_annot(doc[0],rect=fitz.Rect(50,80,300,110))
+        engine.add_highlight_annot(doc[1],rect=fitz.Rect(50,80,300,110))
+        engine.add_freetext_annot(doc[2],rect=fitz.Rect(50,700,300,740),text="保留注释")
+        engine.save_pdf(doc,path)
+        doc.close()
+        return path
+
+    @staticmethod
+    def _annot_types(path):
+        with fitz.open(str(path)) as doc:
+            return [a.type[1] for page in doc for a in (page.annots() or [])]
+
+    def test_edit_tools_retain_annotations(self):
+        source=self._annotated_retention_pdf()
+        original=self._annot_types(source)
+        self.assertEqual(sorted(original),["FreeText","Highlight","Highlight"])
+        for operation,options in [("compress",{"quality":"balanced"}),
+                                  ("crop",{"x":"25","y":"30","width":"400","height":"600"}),
+                                  ("rotate",{"angle":"90","pages":"1"})]:
+            result=self.run_tool(operation,options,files=[source])
+            types=self._annot_types(result["outputs"][0])
+            self.assertEqual(len(types),3,f"{operation} 改变注释数量：{types}")
+            self.assertEqual(types.count("Highlight"),2,f"{operation} 改变 Highlight 数量")
+            self.assertEqual(types.count("FreeText"),1,f"{operation} 改变 FreeText 数量")
+
+    def test_crop_keeps_out_of_box_annotations(self):
+        source=self._annotated_retention_pdf()
+        # FreeText 位于 y≈700，裁剪到 600pt 高后不再可见，但必须仍在文件中（Q8 不物理删除）
+        result=self.run_tool("crop",{"x":"25","y":"30","width":"400","height":"600"},files=[source])
+        types=self._annot_types(result["outputs"][0])
+        self.assertIn("FreeText",types)
+        self.assertEqual(len(types),3)
+
+    def test_redact_removes_annotations_widgets_and_toc(self):
+        source=self._annotated_retention_pdf()
+        with fitz.open(str(source)) as doc:
+            self.assertEqual(len(doc.get_toc()),2)
+            self.assertTrue([w for p in doc for w in (p.widgets() or [])])
+        result=self.run_tool("redact",{"text":"SECRET-123"},files=[source])
+        with fitz.open(str(result["outputs"][0])) as doc:
+            self.assertEqual([a for p in doc for a in (p.annots() or [])],[])   # 注释归零（Q2）
+            self.assertEqual([w for p in doc for w in (p.widgets() or [])],[])  # Widget 清除（M-12）
+            self.assertEqual(doc.get_toc(),[])                                   # TOC 清空（M-12）
+
     def test_corrupt_input_does_not_harm_original(self):
         broken=self.root/"broken-annot.pdf";broken.write_bytes(b"%PDF-1.7\nnot really a pdf")
         before=hashlib.sha256(broken.read_bytes()).hexdigest()

@@ -22,7 +22,7 @@ public delegate Task ExecuteEditorToolDelegate(
     CancellationToken cancellationToken);
 
 /// <summary>编辑组工具页的公共基类：文件/输出目录选择、页面范围、执行命令与错误展示。</summary>
-public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDocumentPinnable
+public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDocumentPinnable, IToolStartGated
 {
     private readonly ExecuteEditorToolDelegate _execute;
 
@@ -34,6 +34,12 @@ public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDo
         _execute = execute;
         ExecuteCommand = new AsyncRelayCommand(ExecuteRunAsync, () => CanExecuteRun);
     }
+
+    /// <summary>
+    /// V2 T10 FR-21：启动前门禁（宿主在承载页面时挂接）。编辑组不经 T7 队列，故门禁挂在执行入口。
+    /// 返回 false（如未保存批注 flush 失败且用户取消）则阻止本次执行。
+    /// </summary>
+    public Func<CancellationToken, Task<bool>>? StartGate { get; set; }
 
     /// <summary>目录中的工具条目（名称、副标题、说明与参数默认值来源）。</summary>
     public Tool Tool { get; }
@@ -155,6 +161,13 @@ public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDo
         if (Validate() is { } error)
         {
             ErrorText = error;
+            return;
+        }
+
+        // V2 T10 FR-21：先经启动门禁（强制 flush 未保存批注）；失败且用户取消则不启动引擎。
+        if (StartGate is { } gate && !await gate(CancellationToken.None))
+        {
+            ErrorText = "批注保存失败，工具未启动。";
             return;
         }
 

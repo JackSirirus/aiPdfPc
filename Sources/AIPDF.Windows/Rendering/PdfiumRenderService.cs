@@ -359,6 +359,57 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
+    /// <summary>FPDF_ANNOT_WIDGET：交互表单字段（不计入「批注」，FR-22 警告只针对批注）。</summary>
+    private const int AnnotSubtypeWidget = 20;
+
+    /// <summary>
+    /// 文档内已内嵌注释总数（含 Highlight / FreeText 等，不含 Widget 表单字段）。
+    /// 用于 V2 T10 FR-22：redact 警告判定「文档存在批注（无论是否已保存）」（AC-22.1/22.2）。
+    /// 仅经 <see cref="TryOpenDocumentScope"/> 计入在途，不修改文档，不触发保存。
+    /// 未打开返回 0。所有 FPDF_* 调用持 <see cref="PdfiumLock.Global"/>（R12）。
+    /// </summary>
+    public int CountAnnotations(string docId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(docId);
+        var scope = TryOpenDocumentScope(docId);
+        if (scope is null) return 0;
+
+        try
+        {
+            var total = 0;
+            lock (PdfiumLock.Global)
+            {
+                var pageCount = fpdfview.FPDF_GetPageCount(scope.Handle);
+                for (var i = 0; i < pageCount; i++)
+                {
+                    var page = fpdfview.FPDF_LoadPage(scope.Handle, i);
+                    if (page is null || page.__Instance == IntPtr.Zero) continue;
+                    try
+                    {
+                        var count = fpdf_annot.FPDFPageGetAnnotCount(page);
+                        for (var j = 0; j < count; j++)
+                        {
+                            var annot = fpdf_annot.FPDFPageGetAnnot(page, j);
+                            if (annot is null || annot.__Instance == IntPtr.Zero) continue;
+                            if (fpdf_annot.FPDFAnnotGetSubtype(annot) == AnnotSubtypeWidget) continue;
+                            total++;
+                        }
+                    }
+                    finally
+                    {
+                        fpdfview.FPDF_ClosePage(page);
+                    }
+                }
+            }
+
+            return total;
+        }
+        finally
+        {
+            scope.Dispose();
+        }
+    }
+
     /// <summary>LRU 可观测统计。</summary>
     public LruStats GetLruStats(string docId)
     {

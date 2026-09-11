@@ -159,6 +159,18 @@ public sealed class PdfiumAnnotRenderTests
         Assert.Equal(1, svc.GetLruStats(doc).Misses);
     }
 
+    [Fact]
+    public void CountAnnotations_CountsNonWidgetAnnotations_ExcludesWidgets()
+    {
+        T1AnnotCorpus.Ensure();
+        using var svc = new PdfiumRenderService();
+        // 各语料恰含 1 条非 Widget 注释
+        Assert.Equal(1, svc.CountAnnotations(svc.OpenDocument(T1AnnotCorpus.PrintTrue)));
+        Assert.Equal(1, svc.CountAnnotations(svc.OpenDocument(T1AnnotCorpus.FreeText)));
+        // mixed100 仅含 1 个 AcroForm Widget、无批注 → FR-22 警告不得被表单字段误触发
+        Assert.Equal(0, svc.CountAnnotations(svc.OpenDocument(Corpus.Mixed100)));
+    }
+
     // ---------------------------------------------------------------- 像素工具
 
     private static (byte[] Pixels, int Width) Bgra(BitmapSource bitmap)

@@ -211,6 +211,13 @@ public sealed class ToolTaskQueue : ObservableObject
     /// <summary>执行中任务被取消（排队项取消不触发）；宿主据此弹 Toast「任务已取消」。</summary>
     public event EventHandler<ToolTaskItem>? RunningTaskCancelled;
 
+    /// <summary>
+    /// V2 T10 FR-21：任务工作委托执行前的宿主门禁。返回 false 则不执行工作委托并把任务标记为失败
+    /// （宿主负责先弹出「批注保存失败，请重试」+ 强制继续/取消）。门禁本身不入队、不新增队列项；
+    /// 仅队列型工具页经此覆盖，编辑组（不经队列）由 <c>IToolStartGated.StartGate</c> 覆盖。
+    /// </summary>
+    public Func<ToolTaskItem, CancellationToken, Task<bool>>? BeforeStart { get; set; }
+
     /// <summary>仅创建任务项，不入队（测试与需要先绑定再入队的场景）。</summary>
     public ToolTaskItem Create(string name, Func<CancellationToken, Task> work, object? dedupKey = null)
         => new(name, work, dedupKey);
@@ -348,6 +355,14 @@ public sealed class ToolTaskQueue : ObservableObject
     {
         try
         {
+            // V2 T10 FR-21：启动前门禁（强制 flush 未保存批注）。拦截时不执行工作委托。
+            if (BeforeStart is { } gate && !await gate(item, item.Token))
+            {
+                item.Error = "批注保存失败，工具未启动。";
+                item.State = ToolTaskState.Failed;
+                return;
+            }
+
             await item.Work(item.Token);
             // 工作委托可能吞掉 OperationCanceledException（既有 VM 行为）；以令牌为准判定取消。
             item.State = item.Token.IsCancellationRequested

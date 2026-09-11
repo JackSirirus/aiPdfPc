@@ -146,4 +146,39 @@ public sealed class ToolTaskQueueTests
         var stray = queue.Create("x", _ => Task.CompletedTask);
         Assert.False(queue.Cancel(stray)); // 未入队：不命中
     }
+
+    // ---------------------------------------------------------------- V2 T10 FR-21 启动前门禁
+
+    [Fact]
+    public async Task BeforeStart_ReturnsFalse_SkipsWork_MarksFailed()
+    {
+        var queue = new ToolTaskQueue { BeforeStart = (_, _) => Task.FromResult(false) };
+        var ran = false;
+
+        var a = queue.Submit("压缩", _ => { ran = true; return Task.CompletedTask; });
+        await a.Completion.Task;
+
+        Assert.False(ran); // 门禁拦截：工作委托不执行
+        Assert.Equal(ToolTaskState.Failed, a.State);
+        Assert.Contains("批注保存失败", a.Error);
+        Assert.False(queue.HasRunning);
+    }
+
+    [Fact]
+    public async Task BeforeStart_ReturnsTrue_RunsWorkOnce()
+    {
+        var gateCalls = 0;
+        var queue = new ToolTaskQueue
+        {
+            BeforeStart = (_, _) => { gateCalls++; return Task.FromResult(true); },
+        };
+        var ran = false;
+
+        var a = queue.Submit("压缩", _ => { ran = true; return Task.CompletedTask; });
+        await a.Completion.Task;
+
+        Assert.True(ran);
+        Assert.Equal(1, gateCalls);
+        Assert.Equal(ToolTaskState.Completed, a.State);
+    }
 }

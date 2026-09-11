@@ -892,6 +892,13 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// V2 T10 FR-22：文档内已内嵌注释总数（已保存批注，不含 Widget 表单字段）。
+    /// 与叠加层未保存记录数相加即「文档存在批注（含未保存）」的判定来源；未打开返回 0。
+    /// </summary>
+    public int CountFileAnnotations()
+        => _service is not null && _docId is not null ? _service.CountAnnotations(_docId) : 0;
+
+    /// <summary>
     /// 静默移除指定 Id 的批注记录（T4 保存成功后清理已内嵌记录，不再触发 AnnotationsChanged——
     /// 否则会错误地重启防抖并重复提交）。不存在的 Id 忽略。
     /// </summary>

@@ -99,6 +99,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             _hookedQueueVm = viewModel;
             viewModel.Queue.RunningTaskCancelled += OnQueueRunningTaskCancelled;
 
+            // V2 T10 FR-21：队列型工具（优化/格式转换/页面整理/安全/工作流程）启动前强制 flush
+            // 未保存批注；flush 失败阻止启动并给出「强制继续（批注可能丢失）/取消」选择。
+            viewModel.Queue.BeforeStart = (_, token) => FlushAnnotationsBeforeToolAsync(token);
+
             if (viewModel.SelectedTool is not null)
             {
                 ShowToolPage(viewModel.SelectedTool, viewModel.Bridge);
@@ -175,6 +179,16 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return; // 取消选择不打断当前标签
         }
 
+        // V2 T10：工具标签激活会改变 ActiveDocumentPath，先在打开前捕获当前文档（交接 + redact 判定共用）。
+        var activeDocument = ActiveDocumentPath();
+
+        // FR-22（Q2 裁决：redact 删除全部批注）：文档存在批注（含未保存）时先弹模态警告，取消则不进入参数面板。
+        if (string.Equals(tool.Id, "redact", StringComparison.Ordinal)
+            && !ConfirmRedactAnnotationDeletion(activeDocument))
+        {
+            return;
+        }
+
         if (ToolChannels.RoutesToRightDrawer(tool))
         {
             ShowRightDrawer(tool, bridge);
@@ -182,7 +196,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
 
         var tab = TabHost.EnsureToolTab(tool, () => ToolPageRegistry.TryCreate(tool, bridge));
-        ApplyDocumentContext(tab.Content); // 临时标签：打开时若有激活文档则交接其路径
+        ApplyDocumentContext(tab.Content, activeDocument); // 临时标签：打开时交接当前文档（含被激活前的文档）
     }
 
     // ---- T7 右抽屉（单文件工具内联宿主，决策 7） ----
@@ -226,14 +240,28 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <see cref="IToolDocumentReceiver"/> 时，把当前文档路径交给它（复用工具页既有 AddFiles 语义）。
     /// 无激活文档、或该工具页视图模型未实现接收口时不动作。
     /// </summary>
-    private void ApplyDocumentContext(object? hosted)
+    private void ApplyDocumentContext(object? hosted) => ApplyDocumentContext(hosted, ActiveDocumentPath());
+
+    /// <summary>
+    /// 文档上下文交接：宿主页面（<see cref="FrameworkElement"/>）的视图模型实现
+    /// <see cref="IToolDocumentReceiver"/> 时，把当前文档路径交给它（复用工具页既有 AddFiles 语义）；
+    /// 同时给不经 T7 队列的执行入口（<see cref="IToolStartGated"/>，编辑组）挂接 FR-21 启动前 flush 门禁。
+    /// 无激活文档、或该工具页视图模型未实现对应接收口时不动作。
+    /// </summary>
+    private void ApplyDocumentContext(object? hosted, string? documentPath)
     {
-        if (hosted is not FrameworkElement element || element.DataContext is not IToolDocumentReceiver receiver)
+        if (hosted is not FrameworkElement element || element.DataContext is null)
         {
             return;
         }
 
-        if (ActiveDocumentPath() is { } path)
+        // V2 T10 FR-21：编辑组工具直接调引擎（不入队），启动门禁在此挂接。
+        if (element.DataContext is IToolStartGated gated)
+        {
+            gated.StartGate = FlushAnnotationsBeforeToolAsync;
+        }
+
+        if (element.DataContext is IToolDocumentReceiver receiver && documentPath is { } path)
         {
             receiver.AddFiles([path]);
         }
@@ -642,6 +670,118 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     {
         if (ActiveDocumentPath() is not { } path) return;
         await EnsureAnnotationSaveService().FlushAsync(path);
+    }
+
+    // ------------------------------------------------------------ T10 FR-21/22 批注 × 工具协作
+
+    /// <summary>
+    /// FR-21：工具执行前强制 flush 当前所有未保存批注（跳过防抖，每篇最多 30s）。成功才放行；
+    /// 失败弹「批注保存失败，请重试」并给出「强制继续（批注可能丢失）/取消」（AC-21.1/21.2）。
+    /// flush 走 <see cref="AnnotationSaveService"/> 快速通道，不进 T7 队列（Must-NOT）。
+    /// 队列型工具经 <c>ToolTaskQueue.BeforeStart</c> 调用；编辑组经 <see cref="IToolStartGated"/> 调用。
+    /// </summary>
+    private async Task<bool> FlushAnnotationsBeforeToolAsync(CancellationToken cancellationToken)
+    {
+        var service = EnsureAnnotationSaveService();
+        var pending = _readerTabs.Values
+            .Where(reader => service.HasPending(reader.DocId))
+            .Select(reader => reader.DocId)
+            .ToList();
+        if (pending.Count == 0)
+        {
+            return true; // 无未保存批注：直接启动工具
+        }
+
+        foreach (var path in pending)
+        {
+            AnnotationSaveOutcome outcome;
+            try
+            {
+                outcome = await service.FlushAsync(path, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+
+            if (ToolStartFlushLogic.Decide(true, outcome.Succeeded, forceContinue: false)
+                == ToolStartGateDecision.Start)
+            {
+                continue; // flush 成功（已取消防抖计时）→ 放行
+            }
+
+            var error = string.IsNullOrWhiteSpace(outcome.Error) ? "请稍后重试。" : outcome.Error!;
+            var forceContinue = ConfirmationDialog.Show(
+                this,
+                "批注保存失败",
+                "批注保存失败，请重试。",
+                $"{Path.GetFileName(path)}：{error}\n强制继续后，工具执行期间批注可能丢失。",
+                "强制继续（批注可能丢失）",
+                "取消");
+
+            if (ToolStartFlushLogic.Decide(true, flushSucceeded: false, forceContinue)
+                == ToolStartGateDecision.Blocked)
+            {
+                if (DataContext is ViewModels.MainViewModel main)
+                {
+                    main.StatusText = "批注保存失败，工具未启动。";
+                }
+
+                return false; // 用户取消：阻止启动
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// FR-22（Q2 裁决：redact 删除全部批注）：文档存在批注（含未保存）时弹模态警告；
+    /// 返回 false 表示用户取消（不进入参数面板）。无批注不弹（AC-22.1/22.2）。
+    /// </summary>
+    private bool ConfirmRedactAnnotationDeletion(string? documentPath)
+    {
+        if (documentPath is null)
+        {
+            return true; // 无目标文档：无批注可警告
+        }
+
+        var (fileCount, unsavedCount) = RedactAnnotationCounts(documentPath);
+        if (!RedactWarningLogic.ShouldWarn(fileCount, unsavedCount))
+        {
+            return true; // AC-22.2：无批注直接进参数面板
+        }
+
+        return ConfirmationDialog.Show(
+            this,
+            "永久遮盖提示",
+            "永久遮盖将删除文档中的全部批注，此操作不可撤销。",
+            "若目标 PDF 含交互表单或目录，还会一并删除全部表单字段（Widget）并清空目录/TOC。",
+            "继续 redact",
+            "取消");
+    }
+
+    /// <summary>已保存（PDF 内嵌，不含 Widget）+ 未保存（叠加层）批注计数；查询失败按 0 计（不阻断工具）。</summary>
+    private (int FileCount, int UnsavedCount) RedactAnnotationCounts(string documentPath)
+    {
+        var reader = _readerTabs.Values.FirstOrDefault(
+            r => string.Equals(r.DocId, documentPath, StringComparison.OrdinalIgnoreCase));
+        if (reader is null)
+        {
+            return (0, 0);
+        }
+
+        var unsaved = reader.ViewModel.GetAllRecords().Count;
+        var file = 0;
+        try
+        {
+            file = reader.ViewModel.CountFileAnnotations();
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 统计内嵌批注失败: {documentPath} ({ex.Message})");
+        }
+
+        return (file, unsaved);
     }
 
     /// <summary>标签关闭后的清理：反订阅并释放阅读实例、解除搜索索引、注销保存会话、清理面板/书签句柄。</summary>
