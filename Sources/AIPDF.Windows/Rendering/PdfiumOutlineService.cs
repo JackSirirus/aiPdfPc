@@ -50,12 +50,15 @@ public static class PdfiumOutlineService
         ArgumentNullException.ThrowIfNull(renderer);
         ArgumentException.ThrowIfNullOrWhiteSpace(docId);
 
-        var handle = renderer.TryGetDocumentHandle(docId);
-        if (handle is null || handle.__Instance == IntPtr.Zero)
+        // BLK-3：以 RAII 作用域借出持久句柄并计入在途；Close-first 重载会等待本作用域
+        // 释放后再关闭句柄，避免解析中途句柄被释放（use-after-free）。
+        using var scope = renderer.TryOpenDocumentScope(docId);
+        if (scope is null || scope.Handle is null || scope.Handle.__Instance == IntPtr.Zero)
         {
             return null;
         }
 
+        var handle = scope.Handle;
         var budget = MaxItems;
         var nodes = new List<Node>();
 

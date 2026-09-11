@@ -4,6 +4,11 @@
 //
 // 纪律【R12】：PDFium 非线程安全（fpdfview.h: "None of the PDFium APIs are thread-safe"）。
 // 任何 FPDF_* 调用必须持有 PdfiumLock.Global。T2 文本层服务复用同一把锁。
+//
+// V2 T4 增补（BLK-2/BLK-3）：句柄代际戳 + 在途原生调用计数 + Close-first 重载 drain。
+//   - 就地保存后必须 close→open 换新句柄与空 LRU，否则同路径去重返回旧（无内嵌注释）句柄；
+//   - 关闭旧句柄前必须等待该文档在途原生调用归零（RenderPageCore / 大纲作用域），
+//     否则 FPDF_LoadPage/FPDF_RenderPageBitmap 读取已释放句柄 → use-after-free（进程级不可捕获）。
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Media;
@@ -48,6 +53,21 @@ public sealed class PdfiumOpenException : Exception
 
 /// <summary>页尺寸（PDF 点，1pt = 1/72 inch）。</summary>
 public readonly record struct PageSize(double Width, double Height);
+
+/// <summary>
+/// 文档正在 Close-first 重载（BLK-3）：句柄即将关闭，新的渲染/解析请求被拒绝。
+/// 调用方应丢弃该结果（宿主重载后会重新发起渲染）；不是用户可见错误。
+/// </summary>
+public sealed class DocumentReloadingException : InvalidOperationException
+{
+    public DocumentReloadingException(string path)
+        : base($"文档正在重载，请求已作废: {path}")
+    {
+        Path = path;
+    }
+
+    public string Path { get; }
+}
 
 /// <summary>
 /// FPDF_RenderPageBitmap 的旧式整数旗标（fpdfview.h 宏，PDFiumCore 以 int 暴露，未提供枚举）。
@@ -96,12 +116,21 @@ public sealed class PdfiumRenderService : IDisposable
     private readonly long _byteBudget;
     private readonly int _maxTextureEdge;
 
+    /// <summary>文档打开代际戳计数器（每次 OpenDocument 成功分配，Close-first 重载后必变）。</summary>
+    private long _generationCounter;
+
     // LRU 可观测计数（Interlocked，无锁更新）
     private long _hits;
     private long _misses;
     private long _evictions;
 
     private bool _disposed;
+
+    /// <summary>
+    /// 测试钩子：RenderPageCore 登记在途计数后、进入原生渲染前调用（用于验证 Close-first 重载
+    /// 会等待在途归零；生产恒为 null）。
+    /// </summary>
+    internal static Action? RenderCoreStartedForTest;
 
     public PdfiumRenderService(long byteBudget = DefaultByteBudget, int maxTextureEdge = MaxTextureEdge)
     {
@@ -116,7 +145,7 @@ public sealed class PdfiumRenderService : IDisposable
 
     // ------------------------------------------------------------------ 文档生命周期
 
-    private sealed class DocumentEntry : IDisposable
+    internal sealed class DocumentEntry : IDisposable
     {
         public required string Path;
         public FpdfDocumentT Handle = null!;
@@ -130,10 +159,27 @@ public sealed class PdfiumRenderService : IDisposable
         public long CachedBytes;
         public bool Disposed;
 
+        // ---- BLK-3：句柄生命周期与在途原生调用的排空 ----
+        // Gate 保护 InFlight/Closing；原生调用开始前在 Gate 内计数，结束后递减并唤醒等待者。
+        // Dispose 置 Closing 后阻塞等待 InFlight 归零，再在 PdfiumLock.Global 内关闭句柄。
+        // InFlight 计数期间不持有 Gate，故与原生全局锁无嵌套，无死锁。
+        public readonly object Gate = new();
+        public int InFlight;
+        public bool Closing;
+
+        /// <summary>本次打开的代际戳（Close-first 重载后必变，供测试/诊断断言句柄已换代）。</summary>
+        public long Generation;
+
         public void Dispose()
         {
             if (Disposed) return;
-            Disposed = true;
+            lock (Gate)
+            {
+                Disposed = true;
+                Closing = true;
+                while (InFlight > 0) Monitor.Wait(Gate);
+            }
+
             if (Handle is not null)
             {
                 lock (PdfiumLock.Global) fpdfview.FPDF_CloseDocument(Handle);
@@ -142,6 +188,7 @@ public sealed class PdfiumRenderService : IDisposable
             if (Pin.IsAllocated) Pin.Free();
             Cache.Clear();
             Lru.Clear();
+            CachedBytes = 0;
         }
     }
 
@@ -231,6 +278,7 @@ public sealed class PdfiumRenderService : IDisposable
             PageCount = pageCount,
             PageSizes = sizes,
             PageRotations = rotations,
+            Generation = Interlocked.Increment(ref _generationCounter),
         };
 
         lock (_stateLock)
@@ -246,7 +294,10 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
-    /// <summary>关闭文档并释放句柄与缓存。未打开的路径静默返回。</summary>
+    /// <summary>
+    /// 关闭文档并释放句柄与缓存。未打开的路径静默返回。
+    /// 【BLK-3】阻塞等待该文档在途原生调用归零后再释放句柄；调用方应在 UI 线程或后台均可。
+    /// </summary>
     public void CloseDocument(string docId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(docId);
@@ -268,6 +319,8 @@ public sealed class PdfiumRenderService : IDisposable
     /// <summary>
     /// 内部访问器：取得持久文档句柄（T4 大纲解析等衍生服务复用同一持久句柄，不重复打开文件）。
     /// 调用方所有 FPDF_* 调用必须自持 <see cref="PdfiumLock.Global"/>（句柄生命周期由本服务管理）。
+    /// 【注意】此访问器不登记在途计数；需要防 Close-first 重载竞态的调用方改用
+    /// <see cref="TryOpenDocumentScope"/>（返回 RAII 作用域）。
     /// </summary>
     internal FpdfDocumentT? TryGetDocumentHandle(string docId)
     {
@@ -313,6 +366,43 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
+    /// <summary>
+    /// 当前句柄代际戳（每次 OpenDocument 成功 +1）。Close-first 重载后该值必变，
+    /// 供测试断言「句柄已换代、未复用旧句柄」（BLK-2/M-2）。未打开返回 -1。
+    /// </summary>
+    public long GetDocumentGeneration(string docId)
+    {
+        lock (_stateLock)
+            return _documents.TryGetValue(docId, out var e) ? e.Generation : -1;
+    }
+
+    /// <summary>
+    /// 清空某文档的位图 LRU（M-2）。就地保存后须换代缓存，否则命中旧（无内嵌注释）位图，
+    /// 表现为「叠加层清了但注释不出现」。Close-first 重载走 Close+Open，缓存自然清空；
+    /// 本方法供不换句柄的显式失效路径与测试断言使用。
+    /// </summary>
+    public void ClearDocumentCache(string docId)
+    {
+        lock (_stateLock)
+        {
+            if (!_documents.TryGetValue(docId, out var e)) return;
+            e.Cache.Clear();
+            e.Lru.Clear();
+            e.CachedBytes = 0;
+        }
+    }
+
+    /// <summary>该文档在途原生调用计数（BLK-3 drain 可观测）。未打开返回 0。</summary>
+    public int GetInFlightCount(string docId)
+    {
+        DocumentEntry? entry;
+        lock (_stateLock)
+        {
+            if (!_documents.TryGetValue(docId, out entry)) return 0;
+        }
+        lock (entry.Gate) return entry.InFlight;
+    }
+
     // ------------------------------------------------------------------ 渲染
 
     /// <summary>
@@ -354,47 +444,122 @@ public sealed class PdfiumRenderService : IDisposable
 
     private BitmapSource RenderPageCore(DocumentEntry entry, int pageIndex, double dpi, int zoomPct, int renderFlags)
     {
-        var key = (pageIndex, (int)Math.Round(dpi), zoomPct);
-        var cacheable = renderFlags == ScreenRenderFlags;
-
-        // 缓存查询（状态锁，非 PDFium 锁）
-        if (cacheable)
+        // BLK-3：进入时登记在途计数；Close-first 重载等待归零后才关闭旧句柄。
+        EnterEntry(entry);
+        try
         {
-            lock (_stateLock)
-            {
-                if (entry.Cache.TryGetValue(key, out var cached))
-                {
-                    Interlocked.Increment(ref _hits);
-                    TouchLru(entry, key);
-                    return cached;
-                }
-                Interlocked.Increment(ref _misses);
-            }
-        }
+            RenderCoreStartedForTest?.Invoke();
+            var key = (pageIndex, (int)Math.Round(dpi), zoomPct);
+            var cacheable = renderFlags == ScreenRenderFlags;
 
-        var bitmap = RenderBitmap(entry, pageIndex, dpi, zoomPct, renderFlags, out var clamped);
-
-        if (cacheable)
-        {
-            var bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
-            lock (_stateLock)
+            // 缓存查询（状态锁，非 PDFium 锁）
+            if (cacheable)
             {
-                if (entry.Cache.TryAdd(key, bitmap))
+                lock (_stateLock)
                 {
-                    entry.CachedBytes += bytes;
-                    entry.Lru.AddLast(key);
-                    EvictOverBudget(entry);
+                    if (entry.Cache.TryGetValue(key, out var cached))
+                    {
+                        Interlocked.Increment(ref _hits);
+                        TouchLru(entry, key);
+                        return cached;
+                    }
+                    Interlocked.Increment(ref _misses);
                 }
             }
 
-            if (clamped)
+            var bitmap = RenderBitmap(entry, pageIndex, dpi, zoomPct, renderFlags, out var clamped);
+
+            if (cacheable)
             {
-                // 限幅事件可观测（测试断言用）
-                lock (_stateLock) _clampedCount++;
+                var bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
+                lock (_stateLock)
+                {
+                    if (entry.Cache.TryAdd(key, bitmap))
+                    {
+                        entry.CachedBytes += bytes;
+                        entry.Lru.AddLast(key);
+                        EvictOverBudget(entry);
+                    }
+                }
+
+                if (clamped)
+                {
+                    // 限幅事件可观测（测试断言用）
+                    lock (_stateLock) _clampedCount++;
+                }
             }
+
+            return bitmap;
+        }
+        finally
+        {
+            ExitEntry(entry);
+        }
+    }
+
+    /// <summary>登记一次在途原生调用；关闭中的文档拒绝新请求（DocumentReloadingException）。</summary>
+    private static void EnterEntry(DocumentEntry entry)
+    {
+        lock (entry.Gate)
+        {
+            if (entry.Closing || entry.Disposed)
+                throw new DocumentReloadingException(entry.Path);
+            entry.InFlight++;
+        }
+    }
+
+    /// <summary>结束一次在途原生调用；归零时唤醒 CloseDocument 的等待者。</summary>
+    private static void ExitEntry(DocumentEntry entry)
+    {
+        lock (entry.Gate)
+        {
+            entry.InFlight--;
+            if (entry.InFlight == 0) Monitor.PulseAll(entry.Gate);
+        }
+    }
+
+    /// <summary>
+    /// 借出持久句柄的 RAII 作用域（衍生只读服务如大纲解析用）：作用域存活期计入在途，
+    /// Close-first 重载会等待作用域释放后再关闭句柄（BLK-3，防 use-after-free）。
+    /// 调用方须 Dispose。
+    /// </summary>
+    internal DocumentScope? TryOpenDocumentScope(string docId)
+    {
+        DocumentEntry? entry;
+        lock (_stateLock)
+        {
+            if (!_documents.TryGetValue(docId, out entry)) return null;
         }
 
-        return bitmap;
+        lock (entry.Gate)
+        {
+            if (entry.Closing || entry.Disposed) return null;
+            entry.InFlight++;
+        }
+        return new DocumentScope(this, entry, entry.Handle);
+    }
+
+    /// <summary>句柄借用作用域（内部计数；见 <see cref="TryOpenDocumentScope"/>）。</summary>
+    internal sealed class DocumentScope : IDisposable
+    {
+        private readonly DocumentEntry _entry;
+        private bool _disposed;
+
+        internal DocumentScope(PdfiumRenderService owner, DocumentEntry entry, FpdfDocumentT handle)
+        {
+            _entry = entry;
+            Handle = handle;
+        }
+
+        /// <summary>借出的持久文档句柄（仅在作用域存活期有效）。</summary>
+        public FpdfDocumentT Handle { get; }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ExitEntry(_entry);
+        }
     }
 
     /// <summary>

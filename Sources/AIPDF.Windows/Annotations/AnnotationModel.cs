@@ -101,6 +101,19 @@ public sealed record AnnotationRecord
     /// <summary>返回状态迁移后的副本（T4 保存链路用；只读记录不可变）。</summary>
     public AnnotationRecord WithState(AnnotationState state) => this with { State = state };
 
+    /// <summary>
+    /// 内容等价（T4 H-4 粒度判定）：比较 Id/页/矩形/类型/颜色/文本，**忽略 State/CreatedAt**。
+    /// 用于「保存期间该记录是否被修改」——State 会被保存链路置为 Saving/Failed，不能参与判定。
+    /// </summary>
+    public bool ContentEquals(AnnotationRecord? other)
+        => other is not null
+           && Id == other.Id
+           && PageIndex == other.PageIndex
+           && Rect == other.Rect
+           && Kind == other.Kind
+           && string.Equals(Color, other.Color, StringComparison.Ordinal)
+           && string.Equals(Note, other.Note, StringComparison.Ordinal);
+
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };
 

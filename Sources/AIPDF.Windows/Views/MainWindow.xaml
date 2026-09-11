@@ -669,11 +669,32 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0"
-                               Text="{Binding StatusText}"
-                               FontSize="11"
-                               Foreground="{StaticResource Brush.TextSecondary}"
-                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <TextBlock Text="{Binding StatusText}"
+                                   FontSize="11"
+                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   VerticalAlignment="Center" />
+                        <!-- T4 savepill（FR-19 四态）：仅文档标签激活时可见；失败态可点击重试 -->
+                        <Button x:Name="SavePill"
+                                Margin="12,0,0,0"
+                                Padding="8,1"
+                                FontSize="11"
+                                VerticalAlignment="Center"
+                                Command="{Binding RetryCommand}"
+                                ToolTip="{Binding ErrorDetail}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsVisible}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <TextBlock Text="{Binding Text}" />
+                        </Button>
+                    </StackPanel>
                     <TextBlock Grid.Column="1"
                                Text="AIPDF for Windows · v0.1.0"
                                FontSize="11"

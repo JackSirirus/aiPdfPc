@@ -280,7 +280,19 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// </summary>
     public event EventHandler? AnnotationsChanged;
 
+    /// <summary>
+    /// 携带变化类别与记录快照的批注事件（T4 保存链路消费）：
+    /// Removed 携带移除前的记录，供保存会话决定是否需要引擎 delete（T4 H-4）。
+    /// </summary>
+    public event EventHandler<AnnotationChangedEventArgs>? AnnotationChanged;
+
     private void RaiseAnnotationsChanged() => AnnotationsChanged?.Invoke(this, EventArgs.Empty);
+
+    private void RaiseAnnotationChanged(AnnotationChangeKind kind, AnnotationRecord record)
+    {
+        RaiseAnnotationsChanged();
+        AnnotationChanged?.Invoke(this, new AnnotationChangedEventArgs(kind, record));
+    }
 
     // ------------------------------------------------------------------ 绑定状态
 
@@ -420,6 +432,99 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     private static PdfiumRenderService CreateService() => new();
+
+    /// <summary>
+    /// Close-first 重载（T4 唯一真相源，BLK-2/BLK-3）：就地保存后旧句柄对应的渲染位图不再包含
+    /// 新写入的内嵌注释，必须关闭旧句柄并重开同路径（换新代际 + 空 LRU），否则
+    /// <see cref="PdfiumRenderService.OpenDocument"/> 按路径去重返回旧句柄 → 叠加层清了但注释不出现。
+    ///
+    /// 视口保留（AC-20.2）：重载前后保留滚动偏移与缩放，仅清页位图引用与页级叠加投影；
+    /// 未保存批注记录保留并按坐标重投影。CloseDocument 内部阻塞等待在途原生调用归零（drain）。
+    /// </summary>
+    public void ReloadDocument(string? password = null)
+    {
+        if (_documentPath is null || _service is null || _docId is null) return;
+
+        var path = _documentPath;
+        var savedScroll = _scrollTop;
+        var savedPage = CurrentPageNumber;
+        var savedZoom = ZoomPercent;
+
+        // 1) 作废页位图与叠加投影（记录保留，重载后重投影）
+        foreach (var page in Pages)
+        {
+            page.Bitmap = null;
+            page.RenderedKey = null;
+            page.PendingKey = null;
+            page.IsRendering = false;
+            page.ReleaseAnnotationOverlays();
+        }
+        _inFlight.Clear();
+
+        // 2) 独立文本层句柄先关（惰性重开用新文件内容）
+        CloseTextDocument();
+        _textLayerCache.Clear();
+
+        // 3) close-first：CloseDocument 排空在途后关旧句柄，再开新句柄（新代际/空 LRU）
+        try
+        {
+            _service.CloseDocument(_docId);
+            _docId = _service.OpenDocument(path, password);
+            _documentPath = _docId;
+
+            var count = _service.GetPageCount(_docId);
+            var sizes = new List<PageSize>(Math.Max(0, count));
+            var rotations = new int[Math.Max(0, count)];
+            for (var i = 0; i < count; i++)
+            {
+                sizes.Add(_service.GetPageSize(_docId, i) ?? new PageSize(595, 842));
+                rotations[i] = _service.GetPageRotation(_docId, i);
+            }
+
+            _pageSizes = sizes;
+            _pageRotations = rotations;
+
+            // 页数不变（就地保存不改变页数）：保留页 VM 与批注记录，仅重建布局
+            if (count != Pages.Count)
+            {
+                var existingRecords = Pages
+                    .SelectMany(p => p.AnnotationRecords)
+                    .Where(r => r.PageIndex < count)
+                    .GroupBy(r => r.PageIndex)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+                Pages.Clear();
+                for (var i = 0; i < count; i++)
+                {
+                    var item = new ReaderPageItemViewModel(i, sizes[i].Width, sizes[i].Height);
+                    if (existingRecords.TryGetValue(i, out var records)) item.SetAnnotationRecords(records);
+                    Pages.Add(item);
+                }
+            }
+
+            PageCount = count;
+            HasDocument = count > 0;
+            _hasLayout = count > 0;
+
+            // 4) 重建布局（含未保存批注按坐标重投影），恢复缩放与视口
+            RebuildLayout(savedZoom);
+            if (!_hasLayout) return;
+
+            if (CurrentPageNumber != savedPage && savedPage > 0 && savedPage <= PageCount)
+            {
+                CurrentPageNumber = savedPage;
+            }
+
+            UpdateViewportCore(savedScroll);
+            ScrollRequested?.Invoke(this, new ReaderScrollRequestEventArgs(savedScroll));
+        }
+        catch (PdfiumOpenException ex)
+        {
+            _hasLayout = false;
+            HasDocument = false;
+            PageCount = 0;
+            ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
+        }
+    }
 
     // ------------------------------------------------------------------ 视口驱动（视图 ScrollChanged / 缩放锚定调用）
 
@@ -721,7 +826,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         ArgumentNullException.ThrowIfNull(record);
         if (!CanAnnotate(record.PageIndex)) return null;
         if (!Pages[record.PageIndex].AddAnnotationRecord(record)) return null;
-        RaiseAnnotationsChanged();
+        RaiseAnnotationChanged(AnnotationChangeKind.Added, record);
         return record;
     }
 
@@ -729,8 +834,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     public bool RemoveAnnotation(int pageIndex, string annotationId)
     {
         if (pageIndex < 0 || pageIndex >= Pages.Count) return false;
-        if (!Pages[pageIndex].RemoveAnnotationRecord(annotationId)) return false;
-        RaiseAnnotationsChanged();
+        var removed = Pages[pageIndex].AnnotationRecords.FirstOrDefault(a => a.Id == annotationId);
+        if (removed is null || !Pages[pageIndex].RemoveAnnotationRecord(annotationId)) return false;
+        RaiseAnnotationChanged(AnnotationChangeKind.Removed, removed);
         return true;
     }
 
@@ -740,7 +846,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         ArgumentNullException.ThrowIfNull(record);
         if (record.PageIndex < 0 || record.PageIndex >= Pages.Count) return false;
         if (!Pages[record.PageIndex].UpdateAnnotationRecord(record)) return false;
-        RaiseAnnotationsChanged();
+        RaiseAnnotationChanged(AnnotationChangeKind.Updated, record);
         return true;
     }
 
@@ -751,6 +857,36 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>本页批注记录快照（T3/T4 保存链路消费）。</summary>
     public IReadOnlyList<AnnotationRecord> GetAnnotations(int pageIndex)
         => pageIndex >= 0 && pageIndex < Pages.Count ? Pages[pageIndex].AnnotationRecords : [];
+
+    /// <summary>全部页的批注记录快照（T4 保存批次构建消费）。</summary>
+    public IReadOnlyList<AnnotationRecord> GetAllRecords()
+    {
+        var list = new List<AnnotationRecord>();
+        foreach (var page in Pages)
+        {
+            if (page.AnnotationRecords.Count > 0) list.AddRange(page.AnnotationRecords);
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// 静默移除指定 Id 的批注记录（T4 保存成功后清理已内嵌记录，不再触发 AnnotationsChanged——
+    /// 否则会错误地重启防抖并重复提交）。不存在的 Id 忽略。
+    /// </summary>
+    internal void RemoveAnnotationsById(IEnumerable<string> annotationIds)
+    {
+        var set = annotationIds as ISet<string> ?? annotationIds.ToHashSet(StringComparer.Ordinal);
+        if (set.Count == 0) return;
+        foreach (var page in Pages)
+        {
+            if (page.AnnotationRecords.Count == 0) continue;
+            var ids = page.AnnotationRecords.Where(r => set.Contains(r.Id)).Select(r => r.Id).ToList();
+            foreach (var id in ids) page.RemoveAnnotationRecord(id);
+        }
+    }
+
+    /// <summary>当前文档路径（规范化全路径；未加载为 null）。T4 保存会话消费。</summary>
+    public string? DocumentPath => _documentPath;
 
     /// <summary>规范化负宽高矩形（拖拽方向任意），与 PdfCoordinateMapper.Normalize 同口径。</summary>
     private static PdfRect Normalize(PdfRect rect)

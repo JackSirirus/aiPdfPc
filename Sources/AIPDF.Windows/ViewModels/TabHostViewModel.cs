@@ -135,9 +135,35 @@ public partial class TabHostViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 关闭前异步拦截（V2 钩子，落实 :139）：返回 false 则取消本次关闭。
+    /// 宿主在此强制 flush 未保存批注（跳过防抖）；flush 失败返回 false 阻止关闭并提示【ST-22】。
+    /// </summary>
+    public Func<DocumentTabViewModel, Task<bool>>? BeforeCloseAsync { get; set; }
+
+    /// <summary>
     /// 关闭标签并选择邻位标签（优先右侧，末位则左邻）。
-    /// V2 挂点：关闭前若有未保存批注，先强制保存（PRD 3.5.2），失败则阻止关闭【ST-22】——
-    /// V1 无批注，直接关闭。
+    /// V2：先经 <see cref="BeforeCloseAsync"/> 异步门禁（未保存批注强制保存），通过后再移除。
+    /// </summary>
+    /// <returns>标签存在且被移除时 true；被门禁拦截或标签不存在时 false。</returns>
+    public async Task<bool> CloseTabAsync(DocumentTabViewModel? tab)
+    {
+        if (tab is null || !Tabs.Contains(tab))
+        {
+            return false;
+        }
+
+        if (BeforeCloseAsync is not null && !await BeforeCloseAsync(tab).ConfigureAwait(true))
+        {
+            return false;
+        }
+
+        return CloseTab(tab);
+    }
+
+    /// <summary>
+    /// 关闭标签并选择邻位标签（优先右侧，末位则左邻）。
+    /// V2 挂点已落实为 <see cref="CloseTabAsync"/> + <see cref="BeforeCloseAsync"/>；
+    /// 本同步方法供已确认可关闭的路径与既有测试直接调用。
     /// </summary>
     /// <returns>标签存在且被移除时 true。</returns>
     public bool CloseTab(DocumentTabViewModel? tab)

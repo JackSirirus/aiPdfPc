@@ -7,8 +7,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using AIPDF.Windows.Annotations;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Search;
+using AIPDF.Windows.Services;
 using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
@@ -50,6 +52,13 @@ public partial class MainWindow : Window
         TabStrip.DataContext = TabHost;
         TabHostControl.DataContext = TabHost;
         TabHost.PropertyChanged += OnTabHostPropertyChanged;
+
+        // T4：关闭标签前强制 flush 未保存批注（失败阻止关闭，ST-22）
+        TabHost.BeforeCloseAsync = BeforeCloseTabAsync;
+
+        // T4：状态栏 savepill（四态；失败可点击重试）
+        SavePill.DataContext = _savePill;
+        _savePill.RetryRequested += async (_, _) => await RetryActiveDocumentSaveAsync();
 
         DataContextChanged += (_, _) => HookViewModel();
         HookViewModel();
@@ -294,6 +303,8 @@ public partial class MainWindow : Window
             main.SelectedTool = active.Tool; // 详情占位信息与激活标签保持一致
         }
 
+        // T4：savepill 随激活文档标签刷新（文档 → 显示该文档状态；工具/零标签 → 隐藏）
+        UpdateSavePillForActiveTab();
     }
 
     // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
@@ -381,6 +392,10 @@ public partial class MainWindow : Window
 
         AttachSearchDocument(fullPath); // 先挂接搜索（面板在标签激活时绑定该 docId）
 
+        // T4：登记批注保存来源（防抖/快速通道）并采集冲突基线
+        EnsureAnnotationSaveService().RegisterDocument(new ReaderAnnotationSaveSource(vm, fullPath, null));
+        CaptureConflictBaseline(fullPath);
+
         var tab = TabHost.OpenDocument(fullPath, () => view);
         RegisterReaderTab(tab, vm, fullPath);
 
@@ -392,14 +407,16 @@ public partial class MainWindow : Window
 
     // ---- 阅读视图接线（T3 ReaderViewModel ↔ 标签/面板联动） ----
 
-    /// <summary>文档标签的阅读实例登记：TabId → VM + 规范化文档标识 + 页码订阅句柄（供关闭时反订阅与释放）。</summary>
+    /// <summary>文档标签的阅读实例登记：TabId → VM + 规范化文档标识 + 事件句柄（供关闭时反订阅与释放）。</summary>
     private sealed class ReaderTabState
     {
-        public ReaderTabState(ReaderViewModel viewModel, string docId, PropertyChangedEventHandler handler)
+        public ReaderTabState(ReaderViewModel viewModel, string docId, PropertyChangedEventHandler handler,
+            EventHandler<AnnotationChangedEventArgs> annotationHandler)
         {
             ViewModel = viewModel;
             DocId = docId;
             Handler = handler;
+            AnnotationHandler = annotationHandler;
         }
 
         public ReaderViewModel ViewModel { get; }
@@ -407,17 +424,35 @@ public partial class MainWindow : Window
         public string DocId { get; }
 
         public PropertyChangedEventHandler Handler { get; }
+
+        public EventHandler<AnnotationChangedEventArgs> AnnotationHandler { get; }
     }
 
     /// <summary>已打开文档标签的阅读实例（键 = DocumentTabViewModel.TabId）。</summary>
     private readonly Dictionary<string, ReaderTabState> _readerTabs = new(StringComparer.Ordinal);
 
-    /// <summary>登记新建文档标签的阅读实例并订阅其页码变化。</summary>
+    /// <summary>登记新建文档标签的阅读实例并订阅其页码/批注变化。</summary>
     private void RegisterReaderTab(DocumentTabViewModel tab, ReaderViewModel vm, string docId)
     {
         PropertyChangedEventHandler handler = (_, e) => OnReaderPageChanged(vm, docId, e);
+        EventHandler<AnnotationChangedEventArgs> annotationHandler = (_, e) => OnReaderAnnotationChanged(docId, e);
         vm.PropertyChanged += handler;
-        _readerTabs[tab.TabId] = new ReaderTabState(vm, docId, handler);
+        vm.AnnotationChanged += annotationHandler;
+        _readerTabs[tab.TabId] = new ReaderTabState(vm, docId, handler, annotationHandler);
+    }
+
+    /// <summary>批注新增/修改/删除 → 保存服务：重置 2s 防抖（删除另记录引擎 delete）。</summary>
+    private void OnReaderAnnotationChanged(string docId, AnnotationChangedEventArgs e)
+    {
+        var service = EnsureAnnotationSaveService();
+        if (e.Kind == AnnotationChangeKind.Removed)
+        {
+            service.NotifyAnnotationRemoved(docId, e.Record);
+        }
+        else
+        {
+            service.NotifyAnnotationsChanged(docId);
+        }
     }
 
     /// <summary>
@@ -451,33 +486,94 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnCloseTabClick(object sender, RoutedEventArgs e)
+    private async void OnCloseTabClick(object sender, RoutedEventArgs e)
     {
-        // V2 挂点：关闭前若有未保存批注，先强制保存（PRD 3.5.2），失败阻止关闭并提示【ST-22】。
-        // V1 无批注：直接关闭。
-        if ((sender as FrameworkElement)?.DataContext is DocumentTabViewModel tab)
+        // T4：关闭前若有未保存批注，TabHost.CloseTabAsync 经 BeforeCloseAsync 强制保存（跳过防抖）；
+        // 失败阻止关闭并提示【ST-22】。成功后才执行本窗口的句柄/面板/搜索清理。
+        if ((sender as FrameworkElement)?.DataContext is DocumentTabViewModel tab
+            && await TabHost.CloseTabAsync(tab))
         {
-            CloseTab(tab);
+            OnTabClosed(tab);
         }
     }
 
-    private void OnCloseActiveTabExecuted(object sender, ExecutedRoutedEventArgs e)
-        => CloseTab(TabHost.SelectedTab);
-
-    /// <summary>关闭标签：文档标签关闭后反订阅并释放其阅读实例（关闭 PDFium 持久句柄，避免泄漏）。</summary>
-    private void CloseTab(DocumentTabViewModel? tab)
+    private async void OnCloseActiveTabExecuted(object sender, ExecutedRoutedEventArgs e)
     {
-        if (tab is null || !TabHost.CloseTab(tab))
+        var tab = TabHost.SelectedTab;
+        if (tab is not null && await TabHost.CloseTabAsync(tab))
         {
-            return;
+            OnTabClosed(tab);
         }
+    }
 
+    /// <summary>TabHost.CloseTabAsync 的门禁：未保存批注强制 flush，失败返回 false 拦截关闭（AC-14.3/AC-8.2）。</summary>
+    private async Task<bool> BeforeCloseTabAsync(DocumentTabViewModel tab)
+    {
+        if (tab.Kind != TabKind.Document || tab.FilePath is not { } path) return true;
+
+        var service = EnsureAnnotationSaveService();
+        var hasUnsaved = service.HasPending(path);
+        if (!hasUnsaved) return true;
+
+        var outcome = await service.FlushAsync(path);
+        if (CloseFlushDecisionLogic.Decide(true, outcome.Succeeded) == CloseFlushDecision.Blocked)
+        {
+            MessageBox.Show(
+                this,
+                $"批注保存失败，标签未关闭。\n{(string.IsNullOrEmpty(outcome.Error) ? "请稍后重试。" : outcome.Error)}",
+                "保存失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>savepill 失败态点击：对当前文档强制 flush 重试。</summary>
+    private async Task RetryActiveDocumentSaveAsync()
+    {
+        if (ActiveDocumentPath() is not { } path) return;
+        await EnsureAnnotationSaveService().FlushAsync(path);
+    }
+
+    /// <summary>标签关闭后的清理：反订阅并释放阅读实例、解除搜索索引、注销保存会话、清理面板/书签句柄。</summary>
+    private void OnTabClosed(DocumentTabViewModel tab)
+    {
         if (_readerTabs.Remove(tab.TabId, out var reader))
         {
             reader.ViewModel.PropertyChanged -= reader.Handler;
+            reader.ViewModel.AnnotationChanged -= reader.AnnotationHandler;
             reader.ViewModel.Dispose();
             DetachSearchDocument(reader.DocId); // T8：解除索引 + 释放文本层句柄
+
+            // T4：注销保存会话 + 清理面板/书签/句柄（MainWindow.xaml.cs:676 挂点）
+            _annotationSaves?.UnregisterDocument(reader.DocId);
+            _lastKnownPage.Remove(reader.DocId);
+            _conflictBaselines.Remove(reader.DocId);
+            ClosePanelRendererFor(reader.DocId);
+            _bookmarks.RemoveDocument(reader.DocId);
+            UpdateSavePillForActiveTab();
         }
+    }
+
+    /// <summary>关闭左栏面板渲染句柄（缩略图/大纲独立实例 + 去重字段；文档关闭/重载共用的清理）。</summary>
+    private void ClosePanelRendererFor(string docId)
+    {
+        if (!string.Equals(_attachedDocId, docId, StringComparison.OrdinalIgnoreCase)) return;
+        try
+        {
+            _panelRenderer?.CloseDocument(_attachedDocId!);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 关闭面板渲染句柄失败: {docId} ({ex.Message})");
+        }
+
+        _attachedDocId = null;
+        _thumbPanel = null;
+        _outlinePanel = null;
+        _bookmarkPanel = null;
+        if (ReaderPanelHost is not null) ReaderPanelHost.Content = null;
     }
 
     private void OnFullTextSearchClick(object sender, RoutedEventArgs e)
@@ -739,6 +835,24 @@ public partial class MainWindow : Window
     private SearchPanel? _searchPanel;
     private SearchPanelViewModel? _searchPanelVm;
 
+    // ---- T4 批注保存链路（防抖 / 快速通道 / savepill / 唯一真相源 + 视口保留 + 键迁移） ----
+
+    /// <summary>批注保存服务（懒建；随窗口存活，不入全局工具队列）。</summary>
+    private AnnotationSaveService? _annotationSaves;
+
+    /// <summary>状态栏 savepill 状态（四态 + 重试）。</summary>
+    private readonly SavePillViewModel _savePill = new();
+
+    /// <summary>阅读状态键迁移（T5 ReadingStateStore 未落地前的契约占位：记录调用、不落盘）。</summary>
+    private readonly NullReadingStateMigrator _readingStateMigrator = new();
+
+    /// <summary>本地内存冲突基线（T4 保存成功后刷新；T11 在此之上做保存前 size/mtime 对比）。</summary>
+    private readonly Dictionary<string, (long Size, DateTimeOffset Modified)> _conflictBaselines =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>最近文件存储（保存成功后同步卡片体积/进度/缩放）。</summary>
+    private RecentFilesStore? _recentFiles;
+
     /// <summary>
     /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
     /// V2 挂点：标签关闭时应 renderer.CloseDocument + 书签清理，V1 会话内保留。
@@ -866,5 +980,157 @@ public partial class MainWindow : Window
             e.Handled = true;
             host.ScrollToHorizontalOffset(host.HorizontalOffset - e.Delta / 3.0);
         }
+    }
+
+    // ------------------------------------------------------------ T4 批注保存链路接线
+
+    /// <summary>懒建批注保存服务（EngineBridge 快速通道；不入全局工具队列）。</summary>
+    private AnnotationSaveService EnsureAnnotationSaveService()
+    {
+        if (_annotationSaves is not null) return _annotationSaves;
+
+        var bridge = (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge();
+        _annotationSaves = new AnnotationSaveService(
+            new EngineAnnotationSaveEngine(bridge),
+            new AnnotationSaveOptions
+            {
+                ReloadAsync = ReloadDocumentHandlesAsync,
+                Migrator = _readingStateMigrator,
+                RefreshConflictBaseline = RefreshConflictBaseline,
+                SyncRecentCard = SyncRecentCard,
+            });
+        _annotationSaves.StateChanged += OnAnnotationSaveStateChanged;
+        return _annotationSaves;
+    }
+
+    /// <summary>savepill 状态更新（服务可能从后台线程抛事件，marshal 回 UI 线程）。</summary>
+    private void OnAnnotationSaveStateChanged(object? sender, AnnotationSaveStateChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var active = ActiveDocumentPath();
+            if (active is null || !string.Equals(active, e.Path, StringComparison.OrdinalIgnoreCase))
+            {
+                _savePill.DocumentPath = active;
+                _savePill.State = SavePillState.Saved;
+                _savePill.ShouldSuggestSaveAs = false;
+                return;
+            }
+
+            _savePill.DocumentPath = active;
+            _savePill.Apply(e.State, e.ShouldSuggestSaveAs, e.Error);
+            if (e.State == SavePillState.Failed && e.ShouldSuggestSaveAs
+                && DataContext is ViewModels.MainViewModel main)
+            {
+                main.StatusText = "批注多次保存失败，建议使用「另存为」保存到新位置。";
+            }
+        }));
+    }
+
+    /// <summary>标签切换/打开/关闭时刷新 savepill 显示文档与状态。</summary>
+    private void UpdateSavePillForActiveTab()
+    {
+        var active = ActiveDocumentPath();
+        _savePill.DocumentPath = active;
+        if (active is null)
+        {
+            _savePill.State = SavePillState.Saved;
+            _savePill.ShouldSuggestSaveAs = false;
+            return;
+        }
+
+        _savePill.Apply(EnsureAnnotationSaveService().GetState(active), false, null);
+    }
+
+    /// <summary>打开文档时采集冲突基线（T11 保存前对比的基准）。</summary>
+    private void CaptureConflictBaseline(string path)
+    {
+        var stamp = ReadingStateKey.TryCapture(path);
+        if (stamp is not { } value) return;
+        _conflictBaselines[path] = (value.Size, new DateTimeOffset(value.ModifiedTicks, TimeSpan.Zero));
+    }
+
+    /// <summary>保存成功后刷新冲突基线为保存后的 size/mtime（BLK-1，避免下次保存误报外部修改）。</summary>
+    private void RefreshConflictBaseline(string path, long size, DateTimeOffset modified)
+        => _conflictBaselines[path] = (size, modified);
+
+    /// <summary>保存成功后同步最近卡片进度元信息（BLK-1(c)）。</summary>
+    private void SyncRecentCard(string path, long bytes, int lastPage, double lastZoom)
+    {
+        try
+        {
+            _recentFiles ??= new RecentFilesStore();
+            var document = _recentFiles.Load();
+            var entry = document.Items.FirstOrDefault(
+                i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) return;
+
+            entry.Bytes = bytes;
+            if (lastPage > 0) entry.LastPage = lastPage;
+            if (lastZoom > 0) entry.LastZoom = lastZoom;
+            _recentFiles.Save(document);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 同步最近卡片失败: {path} ({ex.Message})");
+        }
+    }
+
+    // ------------------------------------------------------------ 保存成功后 close-first 重载
+
+    /// <summary>
+    /// close-first 重载入口（保存成功回调）。marshal 回 UI 线程执行，覆盖全部句柄域。
+    /// </summary>
+    private Task ReloadDocumentHandlesAsync(string path, string? password, CancellationToken cancellationToken)
+    {
+        var fullPath = Path.GetFullPath(path);
+        return Dispatcher.InvokeAsync(
+            () => ReloadDocumentHandles(fullPath, password),
+            DispatcherPriority.Normal,
+            cancellationToken).Task;
+    }
+
+    /// <summary>
+    /// 覆盖全部句柄域的 close-first 重载（M-3）：
+    ///  ① 每个标签的 ReaderViewModel 自建 PdfiumRenderService（close→open，保留视口，清 LRU）；
+    ///  ② MainWindow._panelRenderer（缩略图/大纲独立实例 + _attachedDocId 去重）→ 关旧句柄重建面板；
+    ///  ③ 搜索文本服务 PdfiumTextService + _searchDocs → Detach 释放旧句柄、重新 Attach；
+    ///  ④ SearchIndexService + 搜索面板 VM（随 ③ 重建）。
+    /// </summary>
+    private void ReloadDocumentHandles(string fullPath, string? password)
+    {
+        // ① 阅读视图渲染句柄（ReaderViewModel.ReloadDocument 内部 close-first + drain + 视口保留）
+        foreach (var reader in _readerTabs.Values)
+        {
+            if (string.Equals(reader.DocId, fullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                reader.ViewModel.ReloadDocument(password);
+            }
+        }
+
+        // ③④ 搜索文本句柄 + 索引 + 面板 VM（Detach → 重开文本句柄 → 重新 Attach）
+        DetachSearchDocument(fullPath);
+        AttachSearchDocument(fullPath);
+        ResetSearchPanelViewModel();
+
+        // ② 左栏面板渲染句柄（独立实例；关闭旧句柄后 AttachPanelsToDocument 重开并重建面板）
+        if (string.Equals(_attachedDocId, fullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            ClosePanelRendererFor(fullPath);
+            AttachPanelsToDocument(fullPath);
+        }
+
+        UpdateSavePillForActiveTab();
+    }
+
+    /// <summary>丢弃搜索面板 VM（其索引状态属于旧句柄；重建后重新探测文本层）。</summary>
+    private void ResetSearchPanelViewModel()
+    {
+        if (_searchPanelVm is null) return;
+        _searchPanelVm.HitActivated -= OnSearchHitActivated;
+        _searchPanelVm.OcrRequested -= OnSearchOcrRequested;
+        _searchPanelVm.CloseRequested -= OnSearchCloseRequested;
+        _searchPanelVm.Dispose();
+        _searchPanelVm = null;
     }
 }

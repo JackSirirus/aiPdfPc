@@ -90,6 +90,21 @@ public partial class BookmarkPanelViewModel : ObservableObject
     /// <summary>收起面板/关闭文档时保持会话书签（不清理）；关闭文档后的清理挂点见 V2 注释。</summary>
     public void DetachDocument() => CurrentDocId = null;
 
+    /// <summary>
+    /// 文档关闭：移除该文档的会话书签（T4 清理挂点，MainWindow.xaml.cs:676）。
+    /// 持久化（保存后再清理）由 T8 在调用本方法前完成。
+    /// </summary>
+    public void RemoveDocument(string docId)
+    {
+        if (string.IsNullOrWhiteSpace(docId)) return;
+        _store.Remove(docId);
+        if (string.Equals(CurrentDocId, docId, StringComparison.OrdinalIgnoreCase))
+        {
+            CurrentDocId = null;
+            ReplaceItems([]);
+        }
+    }
+
     /// <summary>收藏当前页（宿主推送的 CurrentPageIndex）。重复页幂等不重复加行。</summary>
     [RelayCommand]
     private void AddCurrentPage()

@@ -22,6 +22,20 @@ public sealed class RecentFileEntry
 
     /// <summary>最近一次打开时间（本地时间，ISO 8601 往返格式序列化）。</summary>
     public DateTime LastOpenedAt { get; set; }
+
+    // ---- V2 进度元信息（T4 保存成功后同步；T5 起始页卡片消费） ----
+
+    /// <summary>文档页数（未知为 0）。</summary>
+    public int PageCount { get; set; }
+
+    /// <summary>文件字节数（未知为 0；就地保存成功后由 T4 同步为新 size）。</summary>
+    public long Bytes { get; set; }
+
+    /// <summary>上次阅读页（1 基；0 = 未知）。就地保存成功后由 T4 同步。</summary>
+    public int LastPage { get; set; }
+
+    /// <summary>上次缩放百分比（0 = 未知）。就地保存成功后由 T4 同步。</summary>
+    public double LastZoom { get; set; }
 }
 
 /// <summary>recent-files.json 文档根。schema 版本沿袭 WorkflowPresetStore 模式（当前 1）。</summary>
