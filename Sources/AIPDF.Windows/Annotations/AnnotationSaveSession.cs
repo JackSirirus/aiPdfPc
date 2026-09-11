@@ -320,4 +320,17 @@ public sealed class AnnotationSaveSession
             if (_state != SavePillState.ReadOnly) _state = SavePillState.Failed;
         }
     }
+
+    /// <summary>
+    /// 冲突对话框「取消」（T11 FR-18）：不写盘，批注叠加层/挂起全部保留，状态 Failed（savepill 可点击重试）。
+    /// 取消是用户选择而非失败，故不计入连续失败，避免误触发「建议另存为」。
+    /// </summary>
+    public void ApplyConflictCancelled()
+    {
+        lock (_gate)
+        {
+            _hasPending = true;
+            if (_state != SavePillState.ReadOnly) _state = SavePillState.Failed;
+        }
+    }
 }

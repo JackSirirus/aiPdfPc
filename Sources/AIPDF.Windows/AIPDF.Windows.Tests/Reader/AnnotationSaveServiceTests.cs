@@ -79,14 +79,18 @@ public sealed class AnnotationSaveServiceTests : IDisposable
 
         var before = ReadingStateKey.TryCapture(_temp)!.Value;
 
-        // 模拟就地保存改变 size/mtime
-        File.WriteAllText(_temp, "BBBBBBBB");
-        File.SetLastWriteTimeUtc(_temp, DateTime.UtcNow.AddSeconds(5));
-        var after = ReadingStateKey.TryCapture(_temp)!.Value;
-        Assert.NotEqual(before.Key, after.Key);
+        // 模拟引擎就地保存：真正改变 size/mtime 发生在引擎调用内（T11 冲突检测要求提交前基线一致）。
+        engine.Result = (_, _, _, _) =>
+        {
+            File.WriteAllText(_temp, "BBBBBBBB");
+            File.SetLastWriteTimeUtc(_temp, DateTime.UtcNow.AddSeconds(5));
+            return Task.FromResult(new AnnotationSaveEngineResult(true, null, null, new Dictionary<string, string>()));
+        };
 
         var outcome = await service.FlushAsync(_temp);
 
+        var after = ReadingStateKey.TryCapture(_temp)!.Value;
+        Assert.NotEqual(before.Key, after.Key);
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, engine.CallCount);
         Assert.NotNull(migrator.LastMigration);

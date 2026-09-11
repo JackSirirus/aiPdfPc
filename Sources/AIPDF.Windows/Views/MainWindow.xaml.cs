@@ -1324,6 +1324,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
                 Migrator = _readingStates,
                 RefreshConflictBaseline = RefreshConflictBaseline,
                 SyncRecentCard = SyncRecentCard,
+                Prompt = new WpfAnnotationSavePrompt(this),
+                OnSavedAs = OnDocumentSavedAs,
             });
         _annotationSaves.StateChanged += OnAnnotationSaveStateChanged;
         return _annotationSaves;
@@ -1379,6 +1381,42 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>保存成功后刷新冲突基线为保存后的 size/mtime（BLK-1，避免下次保存误报外部修改）。</summary>
     private void RefreshConflictBaseline(string path, long size, DateTimeOffset modified)
         => _conflictBaselines[path] = (size, modified);
+
+    /// <summary>
+    /// T11 另存为成功：把文档标签/宿主状态切到新路径（原文件不变）。
+    /// 服务已把其会话基线重绑到新路径；此处关旧标签再按新路径重开——渲染/搜索/面板/书签
+    /// 经既有 <see cref="OnTabClosed"/> + <see cref="OpenDocumentTab"/> 流程统一切换。
+    /// 用 <see cref="Dispatcher.BeginInvoke(Action)"/> 延迟到会话门禁释放之后，避免死锁/重入。
+    /// </summary>
+    private void OnDocumentSavedAs(string oldPath, string newPath)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            try
+            {
+                _conflictBaselines.Remove(oldPath);
+                CaptureConflictBaseline(newPath);
+
+                var tab = TabHost.Tabs.FirstOrDefault(t => t.Kind == TabKind.Document
+                    && string.Equals(t.FilePath, oldPath, StringComparison.OrdinalIgnoreCase));
+                if (tab is not null && TabHost.CloseTab(tab)) // 批注已保存成功：同步关闭无需再次 flush
+                {
+                    OnTabClosed(tab);
+                }
+
+                OpenDocumentTab(newPath);
+
+                if (DataContext is ViewModels.MainViewModel main)
+                {
+                    main.StatusText = $"已另存为 {Path.GetFileName(newPath)}";
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[MainWindow] 另存为后切换文档失败: {oldPath} → {newPath} ({ex.Message})");
+            }
+        }));
+    }
 
     /// <summary>保存成功后同步最近卡片进度元信息（BLK-1(c)）。</summary>
     private void SyncRecentCard(string path, long bytes, int lastPage, double lastZoom)

@@ -134,6 +134,15 @@ public sealed class AnnotationSaveOptions
     /// <summary>同步最近卡片（path, bytes, lastPage(1 基), lastZoom%）到新值。</summary>
     public Action<string, long, int, double>? SyncRecentCard { get; init; }
 
+    /// <summary>
+    /// T11 外部修改冲突 / 目标占用的宿主交互（模态对话框）。
+    /// 未接线时冲突一律保守取消（<see cref="ConflictChoice.Cancel"/>）——绝不静默覆盖外部修改。
+    /// </summary>
+    public IAnnotationSavePrompt? Prompt { get; init; }
+
+    /// <summary>T11 另存为成功后通知宿主把文档标签/状态切到新路径（oldPath, newPath）。</summary>
+    public Action<string, string>? OnSavedAs { get; init; }
+
     /// <summary>只读判定覆盖（默认查文件属性）。</summary>
     public Func<string, bool>? IsReadOnly { get; init; }
 }
@@ -307,6 +316,14 @@ public sealed class AnnotationSaveService : IDisposable
         finally
         {
             session.Gate.Release();
+
+            // T11：另存为成功后基线/状态已切到新路径；宿主重定向在门禁外执行，
+            // 避免宿主在同一次提交内回调 UnregisterDocument 造成会话门禁重入。
+            if (session.PendingSaveAs is { } savedAs)
+            {
+                session.PendingSaveAs = null;
+                TryInvoke(() => _options.OnSavedAs?.Invoke(savedAs.OldPath, savedAs.NewPath), "另存为路径切换");
+            }
         }
     }
 
@@ -335,44 +352,98 @@ public sealed class AnnotationSaveService : IDisposable
         session.Session.MarkSubmitting();
         RaiseStateChanged(session.Path, SavePillState.Saving, null);
 
+        var originalPath = session.Path;
         var actions = BuildEngineActions(batch);
-        AnnotationSaveEngineResult result;
-        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+
+        // T11 FR-18：防抖后、发送引擎前比对打开/上次保存时记录的 size/mtime 基线。
+        // 检测完全在应用侧（不耗引擎资源）；V2 仅 size/mtime，无 SHA-256（Q4）。
+        var targetPath = session.Path;
+        var conflict = DetectExternalModification(session);
+        if (conflict is not null)
         {
-            cts.CancelAfter(_options.Timeout);
-            try
+            var resolution = await ResolveExternalModificationAsync(conflict, cancellationToken).ConfigureAwait(false);
+            if (resolution.Choice == ConflictChoice.Cancel)
             {
-                result = await _engine
-                    .SaveAnnotationsAsync(session.Path, actions, session.Source.Password, cts.Token)
-                    .ConfigureAwait(false);
+                return CancelConflictedSave(session);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+
+            if (resolution.Choice == ConflictChoice.SaveAs)
             {
-                result = AnnotationSaveEngineResult.Timeout(); // 30s 到期，引擎进程树已由桥终止
+                if (string.IsNullOrWhiteSpace(resolution.SaveAsPath)
+                    || IsSameFile(resolution.SaveAsPath, session.Path))
+                {
+                    return CancelConflictedSave(session); // 未选路径/路径未变：保守取消，绝不静默覆盖
+                }
+
+                targetPath = Path.GetFullPath(resolution.SaveAsPath);
             }
-            catch (OperationCanceledException)
+            // Overwrite：targetPath 保持 session.Path，继续原子就地写入（接受覆盖外部修改）。
+        }
+
+        AnnotationSaveEngineResult result;
+        string? savedAsPath = null;
+
+        if (!IsSameFile(targetPath, session.Path))
+        {
+            // 另存为：先把磁盘上的原文件复制到新路径（原文件全程不变），再对新副本原子写入批注。
+            if (!TryPrepareSaveAsCopy(session, targetPath, out var copyError))
             {
-                // 外部取消（关闭窗口等）：不改变会话状态，交由调用方处理
-                RaiseStateChanged(session.Path, session.Session.State, null);
-                throw;
+                return FailSubmit(session, batch, copyError);
             }
-            catch (Exception error)
+
+            result = await InvokeEngineAsync(targetPath, actions, session.Source.Password, cancellationToken)
+                .ConfigureAwait(false);
+            if (result.Ok) savedAsPath = targetPath;
+        }
+        else
+        {
+            result = await InvokeEngineAsync(session.Path, actions, session.Source.Password, cancellationToken)
+                .ConfigureAwait(false);
+
+            // T3 原子替换被占用（errorCode=target_in_use）：复用冲突对话框的「另存为」回退。
+            if (!result.Ok && string.Equals(result.ErrorCode, "target_in_use", StringComparison.Ordinal))
             {
-                result = AnnotationSaveEngineResult.TransportFailure(error.Message);
+                var chosen = await RequestSaveAsPathAsync(session.Path, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(chosen) && !IsSameFile(chosen, session.Path))
+                {
+                    targetPath = Path.GetFullPath(chosen);
+                    if (!TryPrepareSaveAsCopy(session, targetPath, out var copyError))
+                    {
+                        return FailSubmit(session, batch, copyError);
+                    }
+
+                    result = await InvokeEngineAsync(targetPath, actions, session.Source.Password, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (result.Ok) savedAsPath = targetPath;
+                }
             }
         }
 
         if (!result.Ok)
         {
-            session.Session.ApplyFailure();
-            session.Source.ApplySaveFailure(batch.SubmittedRecords);
-            RaiseStateChanged(session.Path, SavePillState.Failed, result.Error);
-            return AnnotationSaveOutcome.Empty with { RequiresFollowUp = true, Succeeded = false, Error = result.Error };
+            return FailSubmit(session, batch, result.Error);
         }
 
         // 成功：对飞行后的最新记录快照应用 H-4 粒度清理
         var outcome = session.Session.ApplySuccess(batch, session.Source.GetDirtyRecords());
         session.Source.ApplySaveSuccess(outcome.ClearedIds, outcome.RetainedRecords);
+
+        if (savedAsPath is { } newPath)
+        {
+            // 另存为：把会话基线/键切到新路径；宿主经 PendingSaveAs 重定向文档标签。
+            await OnSaveAsSuccessAsync(session, newPath, cancellationToken).ConfigureAwait(false);
+            if (outcome.RequiresFollowUp)
+            {
+                ScheduleDebounce(session); // 飞行期间仍有改动：下一轮直接写新路径
+            }
+            else
+            {
+                session.PendingSaveAs = (originalPath, newPath);
+            }
+
+            RaiseStateChanged(session.Path, session.Session.State, null);
+            return outcome;
+        }
 
         await OnSaveSuccessAsync(session, cancellationToken).ConfigureAwait(false);
 
@@ -380,6 +451,173 @@ public sealed class AnnotationSaveService : IDisposable
         RaiseStateChanged(session.Path, session.Session.State, null);
         return outcome;
     }
+
+    /// <summary>冲突对话框「取消」：不发送引擎，批注叠加层保留、可重试（AC-18.2）。</summary>
+    private AnnotationSaveOutcome CancelConflictedSave(DocSession session)
+    {
+        session.Session.ApplyConflictCancelled();
+        RaiseStateChanged(session.Path, SavePillState.Failed, ConflictCancelledMessage);
+        return AnnotationSaveOutcome.Empty with
+        {
+            RequiresFollowUp = true,
+            Succeeded = false,
+            Error = ConflictCancelledMessage,
+        };
+    }
+
+    /// <summary>保存失败：状态 Failed、记录保留（既有语义）。</summary>
+    private AnnotationSaveOutcome FailSubmit(DocSession session, AnnotationSaveBatch batch, string? error)
+    {
+        session.Session.ApplyFailure();
+        session.Source!.ApplySaveFailure(batch.SubmittedRecords);
+        RaiseStateChanged(session.Path, SavePillState.Failed, error);
+        return AnnotationSaveOutcome.Empty with { RequiresFollowUp = true, Succeeded = false, Error = error };
+    }
+
+    /// <summary>带 30s 超时与桥异常归一化的引擎调用（就地保存与另存为路径共用）。</summary>
+    private async Task<AnnotationSaveEngineResult> InvokeEngineAsync(
+        string path,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> actions,
+        string? password,
+        CancellationToken cancellationToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(_options.Timeout);
+        try
+        {
+            return await _engine.SaveAnnotationsAsync(path, actions, password, cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return AnnotationSaveEngineResult.Timeout(); // 30s 到期，引擎进程树已由桥终止
+        }
+        catch (OperationCanceledException)
+        {
+            // 外部取消（关闭窗口等）：不改变会话状态（提交中），交由调用方处理
+            RaiseStateChanged(path, SavePillState.Saving, null);
+            throw;
+        }
+        catch (Exception error)
+        {
+            return AnnotationSaveEngineResult.TransportFailure(error.Message);
+        }
+    }
+
+    /// <summary>T11：读取基线并与当前 size/mtime 对比；一致或不可读返回 null。</summary>
+    private static AnnotationConflict? DetectExternalModification(DocSession session)
+    {
+        if (session.Baseline is not { } baseline) return null;
+        var current = FileStateCapture(session.Path);
+        if (current is not { } now) return null; // 文件暂不可读：交由引擎报错，不误判为冲突
+
+        var kind = AnnotationConflictDetector.Compare(baseline, now);
+        if (kind == ExternalModificationKind.None) return null;
+
+        return new AnnotationConflict(
+            session.Path,
+            baseline.Size,
+            new DateTimeOffset(baseline.ModifiedTicks, TimeSpan.Zero),
+            now.Size,
+            new DateTimeOffset(now.ModifiedTicks, TimeSpan.Zero),
+            kind);
+    }
+
+    /// <summary>取宿主冲突解决选择；未接线时保守取消（绝不静默覆盖外部修改）。</summary>
+    private async Task<ConflictResolution> ResolveExternalModificationAsync(
+        AnnotationConflict conflict, CancellationToken cancellationToken)
+    {
+        if (_options.Prompt is null) return ConflictResolution.Cancel;
+        return await _options.Prompt
+            .ResolveExternalModificationAsync(conflict, cancellationToken)
+            .ConfigureAwait(false) ?? ConflictResolution.Cancel;
+    }
+
+    /// <summary>请求另存为目标路径；未接线或用户取消返回 null。</summary>
+    private async Task<string?> RequestSaveAsPathAsync(string sourcePath, CancellationToken cancellationToken)
+    {
+        if (_options.Prompt is null) return null;
+        return await _options.Prompt
+            .RequestSaveAsPathAsync(sourcePath, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>另存为前把当前磁盘原文件复制到新路径（不修改原文件）。</summary>
+    private static bool TryPrepareSaveAsCopy(DocSession session, string targetPath, out string? error)
+    {
+        error = null;
+        try
+        {
+            var directory = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            File.Copy(session.Path, targetPath, overwrite: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            error = $"另存为失败：{ex.Message}";
+            return false;
+        }
+    }
+
+    private static bool IsSameFile(string left, string right)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 另存为成功的状态迁移（T11 AC-18.2）：新路径 stamp 作为基线、键迁移（书签/页码随迁）、
+    /// 刷新宿主基线并同步最近卡片，最后把会话从旧路径重绑到新路径——后续保存直接写新文件。
+    /// </summary>
+    private async Task OnSaveAsSuccessAsync(DocSession session, string newPath, CancellationToken cancellationToken)
+    {
+        var oldPath = session.Path;
+        var oldKey = session.BaselineKey;
+        var stamp = FileStateCapture(newPath);
+        if (stamp is { } value)
+        {
+            session.Baseline = value;
+            session.BaselineKey = value.Key;
+            var mtime = new DateTimeOffset(value.ModifiedTicks, TimeSpan.Zero);
+
+            TryInvoke(() => _options.RefreshConflictBaseline?.Invoke(newPath, value.Size, mtime), "刷新冲突基线（另存为）");
+
+            var page = session.Source?.CurrentPageNumber ?? 0;
+            var zoom = session.Source?.CurrentZoomPercent ?? 0;
+            TryInvoke(() => _options.SyncRecentCard?.Invoke(newPath, value.Size, page, zoom), "同步最近卡片（另存为）");
+
+            if (_options.Migrator is not null && oldKey is not null && oldKey != value.Key)
+            {
+                try
+                {
+                    await _options.Migrator.MigrateAsync(oldKey, value.Key).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    Trace.WriteLine($"[AnnotationSaveService] 另存为后阅读状态键迁移失败: {newPath} ({error.Message})");
+                }
+            }
+        }
+
+        lock (_lock)
+        {
+            if (_sessions.TryGetValue(oldPath, out var existing) && ReferenceEquals(existing, session))
+            {
+                _sessions.Remove(oldPath);
+            }
+
+            session.Path = Path.GetFullPath(newPath);
+            _sessions[session.Path] = session;
+        }
+    }
+
+    private const string ConflictCancelledMessage = "文件已被外部程序修改，本次保存已取消；批注仍保留在叠加层，可稍后重试。";
 
     /// <summary>
     /// 保存成功后的原子状态迁移（BLK-1）：计算新键 → 迁移阅读状态 → 刷新冲突基线 → 同步最近卡片
@@ -634,7 +872,7 @@ public sealed class AnnotationSaveService : IDisposable
             Session = session;
         }
 
-        public string Path { get; }
+        public string Path { get; set; }
         public AnnotationSaveSession Session { get; }
         public SemaphoreSlim Gate { get; } = new(1, 1);
         public object DebounceLock { get; } = new();
@@ -645,6 +883,9 @@ public sealed class AnnotationSaveService : IDisposable
         public IAnnotationSaveSource? Source;
         public FileStateStamp? Baseline;
         public string? BaselineKey;
+
+        /// <summary>T11 另存为成功后待通知宿主的路径切换（在会话门禁外触发）。</summary>
+        public (string OldPath, string NewPath)? PendingSaveAs;
 
         public void Dispose()
         {
