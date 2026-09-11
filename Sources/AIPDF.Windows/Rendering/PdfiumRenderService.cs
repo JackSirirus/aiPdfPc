@@ -49,6 +49,22 @@ public sealed class PdfiumOpenException : Exception
 /// <summary>页尺寸（PDF 点，1pt = 1/72 inch）。</summary>
 public readonly record struct PageSize(double Width, double Height);
 
+/// <summary>
+/// FPDF_RenderPageBitmap 的旧式整数旗标（fpdfview.h 宏，PDFiumCore 以 int 暴露，未提供枚举）。
+/// 仅列出本项目使用的两位；值取自 PDFium 公共头文件，勿凭记忆改写。
+/// </summary>
+public static class PdfiumRenderFlags
+{
+    /// <summary>FPDF_ANNOT = 0x0001：绘制页面注释（内嵌高亮/FreeText 等）。</summary>
+    public const int Annot = 0x0001;
+
+    /// <summary>FPDF_PRINTING = 0x0800：按打印语义绘制（Print 位为假的注释不上屏）。</summary>
+    public const int Printing = 0x0800;
+
+    /// <summary>空白基线（当前 V1 行为：不绘制任何注释）。仅测试对照用。</summary>
+    public const int None = 0;
+}
+
 /// <summary>LRU 可观测计数（B9 预留）。</summary>
 public sealed record LruStats(long Hits, long Misses, long Evictions, int EntryCount, long EstimatedBytes);
 
@@ -60,6 +76,17 @@ public sealed class PdfiumRenderService : IDisposable
 {
     /// <summary>默认位图字节预算：256MB（BGRA 估算）。</summary>
     public const long DefaultByteBudget = 256L * 1024 * 1024;
+
+    /// <summary>
+    /// 屏幕渲染旗标。BLK-5 决策：<c>FPDF_PRINTING</c> 是打印语义——Print 位为假的注释在打印模式下
+    /// 不上屏，用于屏幕会让用户在打开文档时看不到此类内嵌注释（视觉回归）。故屏上仅 <c>FPDF_ANNOT</c>；
+    /// <c>FPDF_PRINTING</c> 预留打印路径（<see cref="PrintRenderFlags"/>）。验证证据见
+    /// .omo/evidence/v2-task1-printflag.txt（Print=false 高亮在 ANNOT 下可见、在 ANNOT|PRINTING 下不可见）。
+    /// </summary>
+    public const int ScreenRenderFlags = PdfiumRenderFlags.Annot;
+
+    /// <summary>打印渲染旗标：PRD 4.1.3 的 <c>FPDF_ANNOT | FPDF_PRINTING</c>（打印语义，含 Print 位过滤）。</summary>
+    public const int PrintRenderFlags = PdfiumRenderFlags.Annot | PdfiumRenderFlags.Printing;
 
     /// <summary>WPF/SlimDX 纹理单边上限；超过则 clamp 并记录（R9）。</summary>
     public const int MaxTextureEdge = 4096;
@@ -97,6 +124,7 @@ public sealed class PdfiumRenderService : IDisposable
         public byte[] Bytes = null!;
         public int PageCount;
         public PageSize[] PageSizes = null!;    // 打开时一次解析
+        public int[] PageRotations = null!;     // /Rotate 度数（0/90/180/270），打开时一次解析（M-11 判定用）
         public readonly Dictionary<(int Page, int Dpi, int ZoomPct), BitmapSource> Cache = new();
         public LinkedList<(int Page, int Dpi, int ZoomPct)> Lru = new();
         public long CachedBytes;
@@ -162,13 +190,15 @@ public sealed class PdfiumRenderService : IDisposable
             throw new PdfiumOpenException(fullPath, err);
         }
 
-        // 打开时一次性解析全部页尺寸（后续零解析）
+        // 打开时一次性解析全部页尺寸与旋转（后续零解析）
         int pageCount;
         PageSize[] sizes;
+        int[] rotations;
         lock (PdfiumLock.Global)
         {
             pageCount = fpdfview.FPDF_GetPageCount(handle);
             sizes = new PageSize[pageCount];
+            rotations = new int[pageCount];
             for (var i = 0; i < pageCount; i++)
             {
                 var page = fpdfview.FPDF_LoadPage(handle, i);
@@ -181,6 +211,9 @@ public sealed class PdfiumRenderService : IDisposable
                 try
                 {
                     sizes[i] = new PageSize(fpdfview.FPDF_GetPageWidthF(page), fpdfview.FPDF_GetPageHeightF(page));
+                    // FPDFPage_GetRotation 返回 0..3（顺时针 0/90/180/270），-1 = 错误
+                    var rot = fpdf_edit.FPDFPageGetRotation(page);
+                    rotations[i] = rot is >= 0 and <= 3 ? rot * 90 : 0;
                 }
                 finally
                 {
@@ -197,6 +230,7 @@ public sealed class PdfiumRenderService : IDisposable
             Bytes = bytes,
             PageCount = pageCount,
             PageSizes = sizes,
+            PageRotations = rotations,
         };
 
         lock (_stateLock)
@@ -252,6 +286,20 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
+    /// <summary>
+    /// 页旋转度数（0/90/180/270）。未打开/越界返回 0。
+    /// 【M-11 决策】非 0 即旋转页：V2 禁止在其上选区/批注（PdfCoordinateMapper 无 derotation，见 ReaderViewModel）。
+    /// </summary>
+    public int GetPageRotation(string docId, int pageIndex)
+    {
+        lock (_stateLock)
+        {
+            if (!_documents.TryGetValue(docId, out var e)) return 0;
+            if (pageIndex < 0 || pageIndex >= e.PageCount) return 0;
+            return e.PageRotations[pageIndex];
+        }
+    }
+
     /// <summary>LRU 可观测统计。</summary>
     public LruStats GetLruStats(string docId)
     {
@@ -275,6 +323,13 @@ public sealed class PdfiumRenderService : IDisposable
     /// <param name="dpi">渲染 DPI（如 96/150）。</param>
     /// <param name="zoomPct">缩放百分比（100 = 原大），与 dpi 相乘决定像素尺寸。</param>
     public Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi = 96, int zoomPct = 100)
+        => RenderPageAsync(docId, pageIndex, dpi, zoomPct, ScreenRenderFlags);
+
+    /// <summary>
+    /// 内部渲染入口：显式旗标（测试对照与未来打印路径）。仅 <see cref="ScreenRenderFlags"/> 走 LRU 缓存，
+    /// 其余旗标不缓存（避免打印语义/基线对照结果污染屏幕位图缓存）。
+    /// </summary>
+    internal Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi, int zoomPct, int renderFlags)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(docId);
         DocumentEntry entry = GetEntryOrThrow(docId);
@@ -283,7 +338,7 @@ public sealed class PdfiumRenderService : IDisposable
         if (dpi <= 0) throw new ArgumentOutOfRangeException(nameof(dpi));
         if (zoomPct <= 0) throw new ArgumentOutOfRangeException(nameof(zoomPct));
 
-        return Task.Run(() => RenderPageCore(entry, pageIndex, dpi, zoomPct));
+        return Task.Run(() => RenderPageCore(entry, pageIndex, dpi, zoomPct, renderFlags));
     }
 
     private DocumentEntry GetEntryOrThrow(string docId)
@@ -297,22 +352,57 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
-    private BitmapSource RenderPageCore(DocumentEntry entry, int pageIndex, double dpi, int zoomPct)
+    private BitmapSource RenderPageCore(DocumentEntry entry, int pageIndex, double dpi, int zoomPct, int renderFlags)
     {
         var key = (pageIndex, (int)Math.Round(dpi), zoomPct);
+        var cacheable = renderFlags == ScreenRenderFlags;
 
         // 缓存查询（状态锁，非 PDFium 锁）
-        lock (_stateLock)
+        if (cacheable)
         {
-            if (entry.Cache.TryGetValue(key, out var cached))
+            lock (_stateLock)
             {
-                Interlocked.Increment(ref _hits);
-                TouchLru(entry, key);
-                return cached;
+                if (entry.Cache.TryGetValue(key, out var cached))
+                {
+                    Interlocked.Increment(ref _hits);
+                    TouchLru(entry, key);
+                    return cached;
+                }
+                Interlocked.Increment(ref _misses);
             }
-            Interlocked.Increment(ref _misses);
         }
 
+        var bitmap = RenderBitmap(entry, pageIndex, dpi, zoomPct, renderFlags, out var clamped);
+
+        if (cacheable)
+        {
+            var bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
+            lock (_stateLock)
+            {
+                if (entry.Cache.TryAdd(key, bitmap))
+                {
+                    entry.CachedBytes += bytes;
+                    entry.Lru.AddLast(key);
+                    EvictOverBudget(entry);
+                }
+            }
+
+            if (clamped)
+            {
+                // 限幅事件可观测（测试断言用）
+                lock (_stateLock) _clampedCount++;
+            }
+        }
+
+        return bitmap;
+    }
+
+    /// <summary>
+    /// 实际 PDFium 渲染：全局锁内写预固定缓冲，锁外构造冻结位图。
+    /// 【R12】所有 FPDF_* 调用（含 <c>FPDF_RenderPageBitmap</c> 的旗标路径）都在 <see cref="PdfiumLock.Global"/> 内。
+    /// </summary>
+    private BitmapSource RenderBitmap(DocumentEntry entry, int pageIndex, double dpi, int zoomPct, int renderFlags, out bool clamped)
+    {
         // 目标像素尺寸：宽×高×4 字节（BGRA），按实际 dpi×zoom 计
         var size = entry.PageSizes[pageIndex];
         var scale = dpi * zoomPct / 100.0 / 72.0;
@@ -322,7 +412,7 @@ public sealed class PdfiumRenderService : IDisposable
         if (pxH <= 0) pxH = 1;
 
         // 超纹理限幅【R9】：clamp 到上限并记录（V1 取限幅，不分块）
-        var clamped = false;
+        clamped = false;
         if (pxW > _maxTextureEdge || pxH > _maxTextureEdge)
         {
             var ratio = Math.Min((double)_maxTextureEdge / pxW, (double)_maxTextureEdge / pxH);
@@ -353,7 +443,7 @@ public sealed class PdfiumRenderService : IDisposable
                     {
                         // 白底填充（BGRA: B=255,G=255,R=255,A=255 → 0xFFFFFFFF）
                         fpdfview.FPDFBitmapFillRect(bmp, 0, 0, pxW, pxH, 0xFFFFFFFFUL);
-                        fpdfview.FPDF_RenderPageBitmap(bmp, page, 0, 0, pxW, pxH, 0, 0);
+                        fpdfview.FPDF_RenderPageBitmap(bmp, page, 0, 0, pxW, pxH, 0, renderFlags);
                     }
                     finally
                     {
@@ -375,24 +465,6 @@ public sealed class PdfiumRenderService : IDisposable
         var bitmap = BitmapSource.Create(pxW, pxH, dpi * zoomPct / 100.0, dpi * zoomPct / 100.0,
             PixelFormats.Bgra32, null, buffer, stride);
         bitmap.Freeze();
-
-        var bytes = (long)pxW * pxH * 4;
-        lock (_stateLock)
-        {
-            if (entry.Cache.TryAdd(key, bitmap))
-            {
-                entry.CachedBytes += bytes;
-                entry.Lru.AddLast(key);
-                EvictOverBudget(entry);
-            }
-        }
-
-        if (clamped)
-        {
-            // 限幅事件可观测（测试断言用）
-            lock (_stateLock) _clampedCount++;
-        }
-
         return bitmap;
     }
 

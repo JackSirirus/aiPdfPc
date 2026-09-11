@@ -17,6 +17,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using AIPDF.Windows.Annotations;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Views.Reader;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -116,6 +117,73 @@ public partial class ReaderPageItemViewModel : ObservableObject
     /// <summary>当前位图对应的渲染规格。</summary>
     internal (int Dpi, int ZoomPct)? RenderedKey { get; set; }
 
+    // ------------------------------------------------------------------ 批注（V2 T1）
+
+    /// <summary>
+    /// 页内批注叠加条目（DIP，相对页左上角）。独立于搜索高亮 <see cref="Highlights"/>：
+    /// ReaderView 用独立的 IsHitTestVisible=False 层承载，不改动 <c>SetSearchHighlight</c> 语义。
+    /// </summary>
+    public ObservableCollection<AnnotationOverlay> Annotations { get; } = [];
+
+    /// <summary>批注真源记录（PDF 点，左上原点）。叠加层为其 DIP 投影；滚出视口只释放投影不丢记录。</summary>
+    private readonly List<AnnotationRecord> _annotationRecords = [];
+
+    /// <summary>本页是否存在批注记录（缩放重算触发条件）。</summary>
+    internal bool HasAnnotationRecords => _annotationRecords.Count > 0;
+
+    /// <summary>本页批注记录只读视图。</summary>
+    internal IReadOnlyList<AnnotationRecord> AnnotationRecords => _annotationRecords;
+
+    /// <summary>整体替换本页批注记录并重建投影（T3/T4 写回后刷新用）。</summary>
+    internal void SetAnnotationRecords(IReadOnlyList<AnnotationRecord> records)
+    {
+        _annotationRecords.Clear();
+        if (records is not null) _annotationRecords.AddRange(records);
+        RebuildAnnotations();
+    }
+
+    /// <summary>追加一条批注记录并重建投影。返回 false 表示同一 Id 已存在（幂等）。</summary>
+    internal bool AddAnnotationRecord(AnnotationRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (_annotationRecords.Any(a => a.Id == record.Id)) return false;
+        _annotationRecords.Add(record);
+        RebuildAnnotations();
+        return true;
+    }
+
+    /// <summary>按 Id 移除批注记录并重建投影。</summary>
+    internal bool RemoveAnnotationRecord(string annotationId)
+    {
+        var removed = _annotationRecords.RemoveAll(a => a.Id == annotationId);
+        if (removed > 0) RebuildAnnotations();
+        return removed > 0;
+    }
+
+    /// <summary>按当前 <see cref="DisplayWidth"/> 重算全部批注叠加（缩放变更/记录变化）。</summary>
+    internal void RebuildAnnotations()
+    {
+        Annotations.Clear();
+        if (_annotationRecords.Count == 0 || WidthPt <= 0) return;
+        foreach (var record in _annotationRecords)
+        {
+            Annotations.Add(AnnotationOverlay.FromRecord(record, WidthPt, DisplayWidth));
+        }
+    }
+
+    /// <summary>只释放 DIP 投影（PageReleased 钩子【缺口②】）；批注记录保留，滚回视口时经
+    /// <see cref="EnsureAnnotationsProjected"/> 重建，保证虚拟化不丢批注。</summary>
+    internal void ReleaseAnnotationOverlays()
+    {
+        if (Annotations.Count > 0) Annotations.Clear();
+    }
+
+    /// <summary>页重新进入视口时按需重建投影（释放后滚回/宿主重挂）。</summary>
+    internal void EnsureAnnotationsProjected()
+    {
+        if (HasAnnotationRecords && Annotations.Count == 0) RebuildAnnotations();
+    }
+
     partial void OnBitmapChanged(BitmapSource? value) => OnPropertyChanged(nameof(IsRendered));
 }
 
@@ -136,6 +204,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
     private string? _docId;
     private List<PageSize> _pageSizes = [];
+    private int[] _pageRotations = [];
     private double[] _offsets = [];
     private double[] _heights = [];
     private double _scrollTop;
@@ -253,15 +322,19 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
             var count = svc.GetPageCount(docId);
             var sizes = new List<PageSize>(Math.Max(0, count));
+            var rotations = new int[Math.Max(0, count)];
             for (var i = 0; i < count; i++)
             {
                 // T1 打开时已解析全部页尺寸，这里零解析成本
                 sizes.Add(svc.GetPageSize(docId, i) ?? new PageSize(595, 842));
+                // /Rotate 度数（M-11 禁选判定；打开时一次解析）
+                rotations[i] = svc.GetPageRotation(docId, i);
             }
 
             _docId = docId;
             _service = svc;
             _pageSizes = sizes;
+            _pageRotations = rotations;
             _inFlight.Clear();
             _scrollTop = 0;
 
@@ -287,6 +360,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             _hasLayout = false;
             HasDocument = false;
             PageCount = 0;
+            _pageRotations = [];
             Pages.Clear();
             ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
         }
@@ -340,6 +414,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             PageReleased?.Invoke(this, (page.Index, bytes));
         }
 
+        // 页级批注叠加层随页释放（记录保留，滚回视口重建），与搜索高亮层互不影响。
+        page.ReleaseAnnotationOverlays();
+
         if (page.PendingKey is not null)
         {
             // 清除在途标记：结果到达时因规格不匹配被丢弃（缺口①适配）
@@ -357,6 +434,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
         var key = CurrentRenderKey();
         if (page.RenderedKey == key || page.PendingKey == key) return;
+
+        // 页重新进入渲染窗口：若批注投影曾随释放清空，按当前显示尺寸重建（虚拟化不丢批注）
+        page.EnsureAnnotationsProjected();
 
         page.PendingKey = key;
         page.IsRendering = true;
@@ -437,8 +517,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         {
             Pages[i].DisplayWidth = _pageSizes[i].Width * scale;
             Pages[i].DisplayHeight = _pageSizes[i].Height * scale;
-            // 缩放变更：搜索高亮按新显示尺寸重算（源矩形为 pt，不随缩放变化）
+            // 缩放变更：搜索高亮与批注叠加层按新显示尺寸重算（源矩形为 pt，不随缩放变化）
             if (Pages[i].HasSearchRects) Pages[i].RebuildHighlights();
+            if (Pages[i].HasAnnotationRecords) Pages[i].RebuildAnnotations();
         }
     }
 
@@ -559,6 +640,51 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         }
         _searchHighlightPage = -1;
     }
+
+    // ------------------------------------------------------------------ 批注（V2 T1：模型 + 叠加层；创建入口由 T2 浮菜单交付）
+
+    /// <summary>
+    /// 本页是否允许批注（M-11 决策）：页有效且非 /Rotate 旋转页。
+    /// PdfCoordinateMapper 无 derotation 变换，旋转页的选区/高亮矩形会与 PDFium 未旋转页面空间
+    /// （PdfiumTextService.GetTextRects）错位；补 derotation 需 X/Y 交换并与 engine derotation_matrix
+    /// 对齐，超出 T1 范围。V2 明确【禁止旋转页批注】（T2 据此禁选），derotation 落点留待后续版本。
+    /// 证据：.omo/evidence/v2-task1-annotrender.txt。
+    /// </summary>
+    public bool CanAnnotate(int pageIndex)
+        => HasDocument && pageIndex >= 0 && pageIndex < Pages.Count
+           && pageIndex < _pageRotations.Length && _pageRotations[pageIndex] % 360 == 0;
+
+    /// <summary>新增高亮批注（T2 浮菜单「高亮」消费）。旋转页/越界返回 null（不创建）。</summary>
+    public AnnotationRecord? AddHighlight(int pageIndex, PdfRect rect, string? color = null)
+        => AddAnnotation(AnnotationRecord.CreateHighlight(pageIndex, Normalize(rect), color));
+
+    /// <summary>新增笔记批注（T2 浮菜单「笔记」消费）。旋转页/越界返回 null（不创建）。</summary>
+    public AnnotationRecord? AddNote(int pageIndex, PdfRect rect, string note, string? color = null)
+        => AddAnnotation(AnnotationRecord.CreateNote(pageIndex, Normalize(rect), note, color));
+
+    /// <summary>新增批注记录（幂等：同 Id 不重复）。越界/旋转页返回 null。</summary>
+    public AnnotationRecord? AddAnnotation(AnnotationRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (!CanAnnotate(record.PageIndex)) return null;
+        return Pages[record.PageIndex].AddAnnotationRecord(record) ? record : null;
+    }
+
+    /// <summary>按 Id 移除批注（T2 悬停删除消费）。返回是否命中。</summary>
+    public bool RemoveAnnotation(int pageIndex, string annotationId)
+    {
+        if (pageIndex < 0 || pageIndex >= Pages.Count) return false;
+        return Pages[pageIndex].RemoveAnnotationRecord(annotationId);
+    }
+
+    /// <summary>本页批注记录快照（T3/T4 保存链路消费）。</summary>
+    public IReadOnlyList<AnnotationRecord> GetAnnotations(int pageIndex)
+        => pageIndex >= 0 && pageIndex < Pages.Count ? Pages[pageIndex].AnnotationRecords : [];
+
+    /// <summary>规范化负宽高矩形（拖拽方向任意），与 PdfCoordinateMapper.Normalize 同口径。</summary>
+    private static PdfRect Normalize(PdfRect rect)
+        => new(Math.Min(rect.Left, rect.Right), Math.Min(rect.Top, rect.Bottom),
+               Math.Max(rect.Left, rect.Right), Math.Max(rect.Top, rect.Bottom));
 
     // ------------------------------------------------------------------ 释放
 

@@ -208,6 +208,58 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- 批注叠加层（V2 T1）：与搜索高亮层完全独立的 IsHitTestVisible=False 层，
+                                     不改变搜索高亮语义；Canvas 绝对定位 DIP 矩形，随缩放由 VM 重算。
+                                     Border 绑定 AnnotationOverlay.Fill/Border（已冻结 Brush）；Note 类型右上角画标记圆点。 -->
+                                <ItemsControl ItemsSource="{Binding Annotations}"
+                                              IsHitTestVisible="False"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Width="{Binding DisplayWidth}"
+                                              Height="{Binding DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Width="{Binding Width}"
+                                                  Height="{Binding Height}"
+                                                  IsHitTestVisible="False">
+                                                <Border Background="{Binding Fill}"
+                                                        BorderBrush="{Binding Border}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="1" />
+                                                <Ellipse Width="10"
+                                                         Height="10"
+                                                         HorizontalAlignment="Right"
+                                                         VerticalAlignment="Top"
+                                                         Margin="0,-5,-5,0"
+                                                         Fill="{StaticResource Brush.Accent}"
+                                                         Stroke="White"
+                                                         StrokeThickness="1">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Kind}" Value="Note">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

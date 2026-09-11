@@ -34,16 +34,22 @@ public static class PageLayoutCalculator
     public const double DpiScale = 96.0 / 72.0;
 
     /// <summary>
-    /// 命中矩形（PDF 点，左上原点）→ 页内显示 DIP：scale = 页显示宽 DIP / 页宽 pt（== zoom × DpiScale）。
-    /// 缩放变更时按新 DisplayWidth 重算（ReaderPageItemViewModel.RebuildHighlights）。
+    /// 页内矩形（PDF 点，左上原点）→ 页内显示 DIP：scale = 页显示宽 DIP / 页宽 pt（== zoom × DpiScale）。
+    /// 搜索高亮与批注叠加层共用此唯一换算（不新增坐标层，PRD 4.2.2）；缩放变更时按新 DisplayWidth 重算。
     /// 输入退化（页宽/显示宽 ≤ 0）返回默认值（零矩形，不绘制）。
     /// </summary>
-    public static SearchHighlight ToSearchHighlightDip(PdfRect rect, double pageWidthPt, double displayWidthDip)
+    public static SearchHighlight ToPageDip(PdfRect rect, double pageWidthPt, double displayWidthDip)
     {
         if (pageWidthPt <= 0 || displayWidthDip <= 0) return default;
         var scale = displayWidthDip / pageWidthPt;
         return new SearchHighlight(rect.Left * scale, rect.Top * scale, rect.Width * scale, rect.Height * scale);
     }
+
+    /// <summary>
+    /// 命中矩形（PDF 点，左上原点）→ 页内显示 DIP。语义别名，委托 <see cref="ToPageDip"/> 保持单一换算。
+    /// </summary>
+    public static SearchHighlight ToSearchHighlightDip(PdfRect rect, double pageWidthPt, double displayWidthDip)
+        => ToPageDip(rect, pageWidthPt, displayWidthDip);
 
     /// <summary>缩放阶梯（%）：FR-06 九档。</summary>
     public static readonly double[] LadderPercent = [25, 33, 50, 67, 100, 150, 200, 300, 400];
