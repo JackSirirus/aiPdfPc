@@ -735,6 +735,18 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             {
                 return false;
             }
+            catch (Exception flushError)
+            {
+                // F3-BLK-1：flush 不得静默 fault——异常逃逸会让工具静默不执行（既无提示也无校验）。
+                // 归一到失败结果，走下方「批注保存失败」弹窗（可重试/强制继续/取消）。
+                Trace.WriteLine($"[MainWindow] 工具执行前批注 flush 异常: {path} ({flushError.Message})");
+                outcome = AnnotationSaveOutcome.Empty with
+                {
+                    RequiresFollowUp = true,
+                    Succeeded = false,
+                    Error = flushError.Message,
+                };
+            }
 
             if (ToolStartFlushLogic.Decide(true, outcome.Succeeded, forceContinue: false)
                 == ToolStartGateDecision.Start)

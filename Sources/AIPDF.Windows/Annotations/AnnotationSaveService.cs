@@ -193,11 +193,19 @@ public sealed class AnnotationSaveService : IDisposable
     private readonly Dictionary<string, DocSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
+    /// <summary>
+    /// 构造时捕获的 UI 同步上下文（F3-BLK-1）：保存结果的“应用阶段”——移除叠加层记录、
+    /// 刷新冲突基线、同步最近卡片、迁移阅读状态键、close-first 重载——必须回到此线程执行，
+    /// 否则后台线程修改 UI 绑定的 <c>ObservableCollection</c> 会抛 CollectionView 线程亲缘异常。
+    /// </summary>
+    private readonly SynchronizationContext? _uiContext;
+
     public AnnotationSaveService(IAnnotationSaveEngine engine, AnnotationSaveOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         _engine = engine;
         _options = options ?? new AnnotationSaveOptions();
+        _uiContext = SynchronizationContext.Current;
     }
 
     /// <summary>引擎请求超时（测试可读）。</summary>
@@ -364,7 +372,7 @@ public sealed class AnnotationSaveService : IDisposable
             var resolution = await ResolveExternalModificationAsync(conflict, cancellationToken).ConfigureAwait(false);
             if (resolution.Choice == ConflictChoice.Cancel)
             {
-                return CancelConflictedSave(session);
+                return await CancelConflictedSaveAsync(session).ConfigureAwait(false);
             }
 
             if (resolution.Choice == ConflictChoice.SaveAs)
@@ -372,7 +380,8 @@ public sealed class AnnotationSaveService : IDisposable
                 if (string.IsNullOrWhiteSpace(resolution.SaveAsPath)
                     || IsSameFile(resolution.SaveAsPath, session.Path))
                 {
-                    return CancelConflictedSave(session); // 未选路径/路径未变：保守取消，绝不静默覆盖
+                    // 未选路径/路径未变：保守取消，绝不静默覆盖
+                    return await CancelConflictedSaveAsync(session).ConfigureAwait(false);
                 }
 
                 targetPath = Path.GetFullPath(resolution.SaveAsPath);
@@ -388,7 +397,7 @@ public sealed class AnnotationSaveService : IDisposable
             // 另存为：先把磁盘上的原文件复制到新路径（原文件全程不变），再对新副本原子写入批注。
             if (!TryPrepareSaveAsCopy(session, targetPath, out var copyError))
             {
-                return FailSubmit(session, batch, copyError);
+                return await FailSubmitAsync(session, batch, copyError).ConfigureAwait(false);
             }
 
             result = await InvokeEngineAsync(targetPath, actions, session.Source.Password, cancellationToken)
@@ -409,7 +418,7 @@ public sealed class AnnotationSaveService : IDisposable
                     targetPath = Path.GetFullPath(chosen);
                     if (!TryPrepareSaveAsCopy(session, targetPath, out var copyError))
                     {
-                        return FailSubmit(session, batch, copyError);
+                        return await FailSubmitAsync(session, batch, copyError).ConfigureAwait(false);
                     }
 
                     result = await InvokeEngineAsync(targetPath, actions, session.Source.Password, cancellationToken)
@@ -421,17 +430,50 @@ public sealed class AnnotationSaveService : IDisposable
 
         if (!result.Ok)
         {
-            return FailSubmit(session, batch, result.Error);
+            return await FailSubmitAsync(session, batch, result.Error).ConfigureAwait(false);
         }
 
-        // 成功：对飞行后的最新记录快照应用 H-4 粒度清理
-        var outcome = session.Session.ApplySuccess(batch, session.Source.GetDirtyRecords());
-        session.Source.ApplySaveSuccess(outcome.ClearedIds, outcome.RetainedRecords);
+        // 成功：对飞行后的最新记录快照应用 H-4 粒度清理。
+        // F3-BLK-1：ApplySuccess 读取的是 UI 绑定记录，ApplySaveSuccess 会移除 UI 绑定叠加层
+        // （ObservableCollection），后续基线刷新/卡片同步/键迁移/close-first 重载同样触碰 UI——
+        // 全部必须回到 UI 线程执行，否则后台线程修改 UI 集合抛 CollectionView 线程亲缘异常，
+        // 导致 pill 永久「保存中」、基线不刷新（下次误报外部修改）、重试路径崩溃、工具 flush 静默失败。
+        AnnotationSaveOutcome outcome = AnnotationSaveOutcome.Empty;
+        try
+        {
+            await RunOnUiThreadAsync(async () =>
+            {
+                outcome = session.Session.ApplySuccess(batch, session.Source!.GetDirtyRecords());
+                session.Source.ApplySaveSuccess(outcome.ClearedIds, outcome.RetainedRecords);
+
+                if (savedAsPath is not null)
+                {
+                    // 另存为：把会话基线/键切到新路径；宿主经 PendingSaveAs 重定向文档标签。
+                    // newPath 见 savedAsPath（已在进入 UI 线程前确定）。
+                    await OnSaveAsSuccessAsync(session, savedAsPath, cancellationToken);
+                }
+                else
+                {
+                    await OnSaveSuccessAsync(session, cancellationToken);
+                }
+
+                // 终态通知（Saved / 仍有后续的 Saving）必须在 UI 线程发出，保证 pill 不再卡「保存中」。
+                RaiseStateChanged(session.Path, session.Session.State, null);
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 外部取消（关闭窗口等）由调用方处理
+        }
+        catch (Exception error)
+        {
+            // 应用结果失败不得静默：记录诊断、转 Failed 终态、保留叠加层可重试（F3-BLK-1 要求）。
+            Trace.WriteLine($"[AnnotationSaveService] 保存成功后的状态应用失败: {session.Path} ({error.Message})");
+            return await FailSubmitAsync(session, batch, error.Message).ConfigureAwait(false);
+        }
 
         if (savedAsPath is { } newPath)
         {
-            // 另存为：把会话基线/键切到新路径；宿主经 PendingSaveAs 重定向文档标签。
-            await OnSaveAsSuccessAsync(session, newPath, cancellationToken).ConfigureAwait(false);
             if (outcome.RequiresFollowUp)
             {
                 ScheduleDebounce(session); // 飞行期间仍有改动：下一轮直接写新路径
@@ -441,22 +483,22 @@ public sealed class AnnotationSaveService : IDisposable
                 session.PendingSaveAs = (originalPath, newPath);
             }
 
-            RaiseStateChanged(session.Path, session.Session.State, null);
             return outcome;
         }
 
-        await OnSaveSuccessAsync(session, cancellationToken).ConfigureAwait(false);
-
         if (outcome.RequiresFollowUp) ScheduleDebounce(session);
-        RaiseStateChanged(session.Path, session.Session.State, null);
         return outcome;
     }
 
-    /// <summary>冲突对话框「取消」：不发送引擎，批注叠加层保留、可重试（AC-18.2）。</summary>
-    private AnnotationSaveOutcome CancelConflictedSave(DocSession session)
+    /// <summary>冲突对话框「取消」：不发送引擎，批注叠加层保留、可重试（AC-18.2）。应用在 UI 线程。</summary>
+    private async Task<AnnotationSaveOutcome> CancelConflictedSaveAsync(DocSession session)
     {
-        session.Session.ApplyConflictCancelled();
-        RaiseStateChanged(session.Path, SavePillState.Failed, ConflictCancelledMessage);
+        await RunOnUiThreadAsync(() =>
+        {
+            session.Session.ApplyConflictCancelled();
+            RaiseStateChanged(session.Path, SavePillState.Failed, ConflictCancelledMessage);
+        }).ConfigureAwait(false);
+
         return AnnotationSaveOutcome.Empty with
         {
             RequiresFollowUp = true,
@@ -465,12 +507,25 @@ public sealed class AnnotationSaveService : IDisposable
         };
     }
 
-    /// <summary>保存失败：状态 Failed、记录保留（既有语义）。</summary>
-    private AnnotationSaveOutcome FailSubmit(DocSession session, AnnotationSaveBatch batch, string? error)
+    /// <summary>保存失败：状态 Failed、记录保留（既有语义）。失败态应用在 UI 线程；异常不静默。</summary>
+    private async Task<AnnotationSaveOutcome> FailSubmitAsync(DocSession session, AnnotationSaveBatch batch, string? error)
     {
         session.Session.ApplyFailure();
-        session.Source!.ApplySaveFailure(batch.SubmittedRecords);
-        RaiseStateChanged(session.Path, SavePillState.Failed, error);
+        try
+        {
+            await RunOnUiThreadAsync(() =>
+            {
+                session.Source!.ApplySaveFailure(batch.SubmittedRecords);
+                RaiseStateChanged(session.Path, SavePillState.Failed, error);
+            }).ConfigureAwait(false);
+        }
+        catch (Exception applyError)
+        {
+            // 兜底：即使失败态回发 UI 也失败，仍要保证终态为 Failed 且通知发出（宿主自行 marshal）。
+            Trace.WriteLine($"[AnnotationSaveService] 失败态应用异常: {session.Path} ({applyError.Message})");
+            RaiseStateChanged(session.Path, SavePillState.Failed, error);
+        }
+
         return AnnotationSaveOutcome.Empty with { RequiresFollowUp = true, Succeeded = false, Error = error };
     }
 
@@ -596,7 +651,8 @@ public sealed class AnnotationSaveService : IDisposable
             {
                 try
                 {
-                    await _options.Migrator.MigrateAsync(oldKey, value.Key).ConfigureAwait(false);
+                    // 本方法在 UI 上下文内被调用；保留上下文以确保会话重绑与后续宿主回调的线程语义。
+                    await _options.Migrator.MigrateAsync(oldKey, value.Key).ConfigureAwait(true);
                 }
                 catch (Exception error)
                 {
@@ -638,7 +694,8 @@ public sealed class AnnotationSaveService : IDisposable
         {
             try
             {
-                await _options.Migrator.MigrateAsync(oldKey, ns.Key).ConfigureAwait(false);
+                // 本方法在 UI 上下文内被调用；保留上下文确保其后 (b)(c) 的 UI 回调仍在 UI 线程。
+                await _options.Migrator.MigrateAsync(oldKey, ns.Key).ConfigureAwait(true);
             }
             catch (Exception error)
             {
@@ -667,7 +724,7 @@ public sealed class AnnotationSaveService : IDisposable
             try
             {
                 await _options.ReloadAsync(session.Path, session.Source?.Password, cancellationToken)
-                    .ConfigureAwait(false);
+                    .ConfigureAwait(true);
             }
             catch (OperationCanceledException)
             {
@@ -716,7 +773,18 @@ public sealed class AnnotationSaveService : IDisposable
 
         try
         {
-            session.LastDebounceTask = FlushAsync(session.Path);
+            var task = FlushAsync(session.Path);
+            session.LastDebounceTask = task;
+
+            // F3-BLK-1：防抖任务不得静默失败。正常路径在 SubmitAsync 内已归一到 Failed 终态，
+            // 此处仅兜底观测意外逃逸的异常（记录诊断，绝不吞掉终端状态）。
+            _ = task.ContinueWith(
+                faulted => Trace.WriteLine(
+                    $"[AnnotationSaveService] 防抖保存任务异常: {session.Path} " +
+                    $"({faulted.Exception?.GetBaseException().Message})"),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
         }
         catch (Exception error)
         {
@@ -849,6 +917,68 @@ public sealed class AnnotationSaveService : IDisposable
             Trace.WriteLine($"[AnnotationSaveService] {what}失败: {error.Message}");
         }
     }
+
+    /// <summary>
+    /// F3-BLK-1：把“保存结果应用”调度回 UI 线程。可在 UI 线程内联执行（避免死锁与无谓调度），
+    /// 无 UI 上下文（无头单测）时同样内联，保证既有单测可运行；否则 POST 到构造时捕获的
+    /// <see cref="_uiContext"/>（WPF 为 DispatcherSynchronizationContext）并等待其完成。
+    /// 无上下文但存在 WPF Application 时回退到其 Dispatcher。
+    /// </summary>
+    private async Task RunOnUiThreadAsync(Func<Task> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var context = _uiContext;
+        if (context is not null && !ReferenceEquals(context, SynchronizationContext.Current))
+        {
+            var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            context.Post(
+                async _ =>
+                {
+                    try
+                    {
+                        await body().ConfigureAwait(true);
+                        completion.TrySetResult(null);
+                    }
+                    catch (Exception error)
+                    {
+                        completion.TrySetException(error);
+                    }
+                },
+                null);
+            await completion.Task.ConfigureAwait(false);
+            return;
+        }
+
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ = dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try
+                {
+                    await body().ConfigureAwait(true);
+                    completion.TrySetResult(null);
+                }
+                catch (Exception error)
+                {
+                    completion.TrySetException(error);
+                }
+            }));
+            await completion.Task.ConfigureAwait(false);
+            return;
+        }
+
+        await body().ConfigureAwait(false);
+    }
+
+    private Task RunOnUiThreadAsync(Action body)
+        => RunOnUiThreadAsync(() =>
+        {
+            body();
+            return Task.CompletedTask;
+        });
 
     public void Dispose()
     {
