@@ -151,7 +151,7 @@ public sealed class ConverterResultItem
 /// 输出目录 → 执行/取消 → 进度与结果。引擎调用直接走注入的 EngineBridge；
 /// 依赖缺失在构造时探测为 DependencyWarning，执行前校验拦截，引擎仍是权威。
 /// </summary>
-public abstract partial class ConverterToolViewModelBase : ObservableObject
+public abstract partial class ConverterToolViewModelBase : ObservableObject, IToolDocumentReceiver
 {
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
 

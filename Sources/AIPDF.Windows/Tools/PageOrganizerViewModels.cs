@@ -37,7 +37,7 @@ public sealed class PageResultItem
 /// 页面整理组工具页视图模型基类：文件输入（拖拽 + 浏览）→ 参数表单 → 输出目录 → 执行/取消 → 进度与结果。
 /// 输出约定：outputDir 只传父目录，引擎在其下新建 AIPDF-日期-编号 任务子目录，绝不覆盖源文件。
 /// </summary>
-public abstract partial class PageOrganizerViewModelBase : ObservableObject
+public abstract partial class PageOrganizerViewModelBase : ObservableObject, IToolDocumentReceiver
 {
     /// <summary>与 backend/engine.py parse_pages 的单项格式一致（数字或 a-b）。</summary>
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);

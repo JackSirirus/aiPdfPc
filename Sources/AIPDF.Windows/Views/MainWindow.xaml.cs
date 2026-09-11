@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using AIPDF.Windows.Rendering;
+using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
 using AIPDF.Windows.Views.Reader.Panels;
@@ -102,9 +103,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 工具选择 → 临时工具标签承载：ToolPageRegistry resolver 流不变，
-    /// 承载方式从 DetailPlaceholder/ContentControl 改挂 TabControl。
-    /// 同一工具重复点击仅激活现有标签，页面实例不重建【D16】。
+    /// 工具选择 → 按 <see cref="ToolChannels"/> 路由：右抽屉（organize / pdfa）内联承载，
+    /// 其余工具沿用 ToolPageRegistry resolver 流，作为临时工具标签承载。
+    /// 同一工具重复点击仅激活现有实例，页面不重建【D16】。
     /// </summary>
     private void ShowToolPage(Models.Tool? tool, Bridge.EngineBridge? bridge)
     {
@@ -113,7 +114,68 @@ public partial class MainWindow : Window
             return; // 取消选择不打断当前标签
         }
 
-        TabHost.EnsureToolTab(tool, () => ToolPageRegistry.TryCreate(tool, bridge));
+        if (ToolChannels.RoutesToRightDrawer(tool))
+        {
+            ShowRightDrawer(tool, bridge);
+            return;
+        }
+
+        var tab = TabHost.EnsureToolTab(tool, () => ToolPageRegistry.TryCreate(tool, bridge));
+        ApplyDocumentContext(tab.Content); // 临时标签：打开时若有激活文档则交接其路径
+    }
+
+    // ---- T7 右抽屉（单文件工具内联宿主，决策 7） ----
+
+    /// <summary>右抽屉页面实例缓存（键 = 工具 id）；关闭只隐藏，重开复用同一实例【D16】，不重建。</summary>
+    private readonly Dictionary<string, FrameworkElement> _rightDrawerPages = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 显示右抽屉：页面实例按工具 id 缓存（不重建），标题取工具名，随后做文档上下文交接并展开抽屉。
+    /// 解析仍走 <see cref="ToolPageRegistry.TryCreate"/>，resolver 模式不变。
+    /// </summary>
+    private void ShowRightDrawer(Models.Tool tool, Bridge.EngineBridge? bridge)
+    {
+        if (!_rightDrawerPages.TryGetValue(tool.Id, out var page))
+        {
+            var created = ToolPageRegistry.TryCreate(tool, bridge);
+            if (created is null)
+            {
+                return; // 未被注册表认领：不应发生（organize / pdfa 均有注册），保持抽屉不动
+            }
+
+            _rightDrawerPages[tool.Id] = created;
+            page = created;
+        }
+
+        RightDrawerTitle.Text = tool.Name;
+        ApplyDocumentContext(page); // 每次打开都交接当前文档（单文件工具以新文件替换旧文件）
+        RightDrawerContent.Content = page;
+        RightDrawer.Visibility = Visibility.Visible;
+    }
+
+    private void OnCloseRightDrawerClick(object sender, RoutedEventArgs e)
+        => RightDrawer.Visibility = Visibility.Collapsed;
+
+    /// <summary>当前激活文档标签的路径；非文档标签（或零标签）返回 null。</summary>
+    private string? ActiveDocumentPath()
+        => TabHost.SelectedTab is { Kind: TabKind.Document, FilePath: { } path } ? path : null;
+
+    /// <summary>
+    /// 文档上下文交接：宿主页面（<see cref="FrameworkElement"/>）的视图模型实现
+    /// <see cref="IToolDocumentReceiver"/> 时，把当前文档路径交给它（复用工具页既有 AddFiles 语义）。
+    /// 无激活文档、或该工具页视图模型未实现接收口时不动作。
+    /// </summary>
+    private void ApplyDocumentContext(object? hosted)
+    {
+        if (hosted is not FrameworkElement element || element.DataContext is not IToolDocumentReceiver receiver)
+        {
+            return;
+        }
+
+        if (ActiveDocumentPath() is { } path)
+        {
+            receiver.AddFiles([path]);
+        }
     }
 
     private void OnTabHostPropertyChanged(object? sender, PropertyChangedEventArgs e)

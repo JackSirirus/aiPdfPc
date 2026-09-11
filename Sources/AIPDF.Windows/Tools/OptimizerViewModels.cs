@@ -41,7 +41,7 @@ public sealed class OptimizerResultItem
 /// 引擎返回新任务目录（AIPDF-日期-编号），源文件保持不变。
 /// 文件条目为本组自包含定义（与 T14 的 PageFileItem/PageResultItem 同构，便于终审合并）。
 /// </summary>
-public abstract partial class OptimizerViewModelBase : ObservableObject
+public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDocumentReceiver
 {
     private readonly EngineBridge? _bridge;
     private CancellationTokenSource? _cancellation;

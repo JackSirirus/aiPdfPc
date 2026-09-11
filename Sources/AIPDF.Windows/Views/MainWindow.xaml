@@ -548,6 +548,59 @@
 
                     <!-- 空态：零标签 → 起始页（T6：打开按钮 / 最近文件 / 常用工具 / 全部工具入口，FR-33/34/35） -->
                     <startPage:StartPageView x:Name="StartPage" Visibility="Collapsed" />
+
+                    <!-- 右抽屉（T7 / 决策 7）：单文件工具（organize / pdfa）内联参数面板宿主。
+                         右对齐覆盖层，宽度 380；关闭只隐藏不销毁（页面实例缓存于代码后置【D16】）。
+                         抽屉内容是现有工具页实例（自设 DataContext，含文件列表 + 参数区 + 运行条），
+                         不另建每工具参数 UI。 -->
+                    <Border x:Name="RightDrawer"
+                            Width="380"
+                            HorizontalAlignment="Right"
+                            Background="{StaticResource Brush.Window}"
+                            BorderBrush="{StaticResource Brush.Border}"
+                            BorderThickness="1,0,0,0"
+                            Visibility="Collapsed">
+                        <Border.Effect>
+                            <DropShadowEffect BlurRadius="18" ShadowDepth="0" Direction="180" Opacity="0.14" Color="#000000" />
+                        </Border.Effect>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <!-- 抽屉头：工具名 + 关闭 ✕ -->
+                            <Border Grid.Row="0"
+                                    Background="{StaticResource Brush.Sidebar}"
+                                    BorderBrush="{StaticResource Brush.Border}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="14,8,8,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="RightDrawerTitle"
+                                               Grid.Column="0"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <Button Grid.Column="1"
+                                            Style="{StaticResource TopBarIconButton}"
+                                            Click="OnCloseRightDrawerClick"
+                                            ToolTip="关闭"
+                                            AutomationProperties.Name="关闭工具抽屉">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="12" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <!-- 工具页内容宿主：代码后置按工具 id 挂现有工具页实例 -->
+                            <ContentControl x:Name="RightDrawerContent" Grid.Row="1" />
+                        </Grid>
+                    </Border>
                 </Grid>
             </Grid>
 
