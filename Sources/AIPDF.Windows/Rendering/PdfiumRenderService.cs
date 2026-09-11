@@ -231,6 +231,16 @@ public sealed class PdfiumRenderService : IDisposable
             return _documents.TryGetValue(docId, out var e) ? e.PageCount : -1;
     }
 
+    /// <summary>
+    /// 内部访问器：取得持久文档句柄（T4 大纲解析等衍生服务复用同一持久句柄，不重复打开文件）。
+    /// 调用方所有 FPDF_* 调用必须自持 <see cref="PdfiumLock.Global"/>（句柄生命周期由本服务管理）。
+    /// </summary>
+    internal FpdfDocumentT? TryGetDocumentHandle(string docId)
+    {
+        lock (_stateLock)
+            return _documents.TryGetValue(docId, out var e) && !e.Disposed ? e.Handle : null;
+    }
+
     /// <summary>页尺寸（点）。未打开/越界返回 null。</summary>
     public PageSize? GetPageSize(string docId, int pageIndex)
     {

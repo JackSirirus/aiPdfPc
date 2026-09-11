@@ -1,0 +1,52 @@
+<UserControl x:Class="AIPDF.Windows.Views.Reader.Panels.ThumbPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels">
+    <!-- 缩略图面板（T4）：虚拟化 ListBox + 渐进渲染；点击跳页（跳页事件 → 宿主 ReaderView 接线挂点） -->
+    <Grid>
+        <ListBox x:Name="ThumbsList"
+                 ItemsSource="{Binding Items}"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 Padding="0,2"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling"
+                 VirtualizingPanel.ScrollUnit="Pixel"
+                 SelectionChanged="OnThumbSelected">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Border Margin="2,4"
+                            CornerRadius="6"
+                            Background="{StaticResource Brush.Window}"
+                            BorderBrush="{StaticResource Brush.Border}"
+                            BorderThickness="1"
+                            ToolTip="点击跳转到该页">
+                        <Grid Width="{x:Static vm:ThumbPanelViewModel.ThumbWidth}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <!-- 位图未就绪时显示占位框（渐进渲染填充） -->
+                            <Border Grid.Row="0"
+                                    Height="{Binding Height}"
+                                    Background="{StaticResource Brush.Sidebar}"
+                                    CornerRadius="4,4,0,0">
+                                <Image Source="{Binding Thumbnail}"
+                                       Stretch="Uniform"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center" />
+                            </Border>
+                            <TextBlock Grid.Row="1"
+                                       Text="{Binding Label}"
+                                       FontSize="10"
+                                       Padding="0,3"
+                                       TextAlignment="Center"
+                                       Foreground="{StaticResource Brush.TextSecondary}" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</UserControl>

@@ -1,0 +1,106 @@
+<UserControl x:Class="AIPDF.Windows.Views.Reader.Panels.OutlinePanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels">
+    <!-- 目录面板（T4）：只读书签树 + 点击跳页；无大纲空态【ST-17】 -->
+    <Grid>
+        <TreeView x:Name="OutlineTree"
+                  ItemsSource="{Binding Items}"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  VirtualizingPanel.IsVirtualizing="True"
+                  VirtualizingPanel.VirtualizationMode="Recycling"
+                  SelectedItemChanged="OnOutlineSelected">
+            <TreeView.ItemTemplate>
+                <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                    <Border ToolTip="点击跳转到该页">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding Title}"
+                                       FontSize="12"
+                                       Padding="0,3"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{StaticResource Brush.TextPrimary}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CanNavigate}" Value="False">
+                                                <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding PageLabel}"
+                                       FontSize="10"
+                                       Margin="8,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{StaticResource Brush.TextTertiary}" />
+                        </Grid>
+                    </Border>
+                </HierarchicalDataTemplate>
+            </TreeView.ItemTemplate>
+        </TreeView>
+
+        <!-- 空态【ST-17】：无大纲 → 引导替代路径 -->
+        <Border Background="{StaticResource Brush.Sidebar}"
+                CornerRadius="8"
+                Padding="16,14"
+                VerticalAlignment="Top"
+                Margin="0,8">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding HasOutline}" Value="False" />
+                                <Condition Binding="{Binding IsLoading}" Value="False" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="Visibility" Value="Visible" />
+                        </MultiDataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="此文档没有目录"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="{StaticResource Brush.TextSecondary}" />
+                <TextBlock Margin="0,4,0,0"
+                           Text="可用缩略图浏览，或为常看页面添加书签。"
+                           FontSize="11"
+                           LineHeight="16"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource Brush.TextTertiary}" />
+            </StackPanel>
+        </Border>
+
+        <!-- 读取失败提示 -->
+        <Border Background="{StaticResource Brush.Sidebar}"
+                CornerRadius="8"
+                Padding="12,8"
+                VerticalAlignment="Top"
+                Margin="0,8">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding HasError}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Text="{Binding ErrorMessage}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource Brush.TextSecondary}" />
+        </Border>
+    </Grid>
+</UserControl>

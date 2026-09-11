@@ -4,7 +4,9 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using AIPDF.Windows.Rendering;
 using AIPDF.Windows.ViewModels;
+using AIPDF.Windows.Views.Reader.Panels;
 
 namespace AIPDF.Windows.Views;
 
@@ -93,7 +95,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// 主区/左栏随标签状态联动（PRD 2.1/2.3/2.4）：
     /// 零标签 → 起始页占位 + 左栏收起；有标签 → 标签内容 + 左栏显示；
-    /// 文档标签激活 → 阅读面板切换器骨架可见；工具标签无页面实例 → 详情占位兜底。
+    /// 文档标签激活 → 阅读面板切换器可见并把文档挂到面板；工具标签无页面实例 → 详情占位兜底。
     /// </summary>
     private void UpdateTabAreaState()
     {
@@ -107,10 +109,16 @@ public partial class MainWindow : Window
         LeftPanelColumn.MinWidth = hasTabs ? 220 : 0;
         LeftPanelColumn.Width = hasTabs ? new GridLength(264) : new GridLength(0);
 
-        // 阅读面板骨架仅对文档标签显示（真实面板 T4 填充，搜索面板 T8）
+        // 阅读面板仅对文档标签显示（搜索面板本体 T8）
         var documentTabActive = active?.Kind == TabKind.Document;
         ReaderPanelSwitcher.Visibility = documentTabActive ? Visibility.Visible : Visibility.Collapsed;
         ReaderPanelHost.Visibility = ReaderPanelSwitcher.Visibility;
+
+        // T4：文档标签激活 → 左栏四面板挂接该文档（同文档幂等，切换工具标签不丢面板状态）
+        if (documentTabActive && active!.FilePath is not null)
+        {
+            AttachPanelsToDocument(active.FilePath);
+        }
 
         // 未被注册表认领的工具：详情占位兜底（保留原工具入口形态）
         var showDetailFallback = active is { Kind: TabKind.Tool, Content: null };
@@ -183,14 +191,119 @@ public partial class MainWindow : Window
         }
     }
 
-    // ---- 左栏阅读面板切换器（骨架；T4 填充真实面板内容） ----
+    // ---- T4 左栏阅读面板（缩略图/目录/书签/搜索槽位） ----
 
+    /// <summary>左栏面板专用渲染服务：与阅读视图（T3/T7）的服务实例相互独立，V1 刻意隔离。</summary>
+    private PdfiumRenderService? _panelRenderer;
+
+    private ThumbPanel? _thumbPanel;
+    private OutlinePanel? _outlinePanel;
+    private BookmarkPanel? _bookmarkPanel;
+
+    /// <summary>会话书签 VM（单实例，按 docId 分存；关闭应用即失效，V2 持久化挂点见 VM 注释）。</summary>
+    private readonly BookmarkPanelViewModel _bookmarks = new();
+
+    /// <summary>当前挂接的文档标识（渲染服务返回的规范化路径）。</summary>
+    private string? _attachedDocId;
+
+    /// <summary>各文档最近已知阅读页（0 基；书签「收藏当前页」的数据源，T7 接 ReaderView 后实时推送）。</summary>
+    private readonly Dictionary<string, int> _lastKnownPage = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>当前显示的面板键（thumbs/outline/bookmarks/search）。</summary>
+    private string _readerPanelKey = "thumbs";
+
+    /// <summary>
+    /// 把文档挂到左栏面板（同 docId 幂等）。文档打不开（损坏/缺文件）时状态栏提示并保持面板空态。
+    /// V2 挂点：标签关闭时应 renderer.CloseDocument + 书签清理，V1 会话内保留。
+    /// </summary>
+    private void AttachPanelsToDocument(string path)
+    {
+        _panelRenderer ??= new PdfiumRenderService();
+
+        string docId;
+        try
+        {
+            docId = _panelRenderer.OpenDocument(path);
+        }
+        catch (Exception ex)
+        {
+            if (DataContext is ViewModels.MainViewModel main)
+            {
+                main.StatusText = $"左栏面板无法解析该文档：{ex.Message}";
+            }
+            return;
+        }
+
+        if (_attachedDocId == docId)
+        {
+            return;
+        }
+
+        _attachedDocId = docId;
+        var pageCount = Math.Max(0, _panelRenderer.GetPageCount(docId));
+
+        _thumbPanel = new ThumbPanel
+        {
+            DataContext = new ThumbPanelViewModel(
+                new PdfiumThumbnailRendererAdapter(_panelRenderer), docId, pageCount),
+        };
+        _outlinePanel = new OutlinePanel
+        {
+            DataContext = new OutlinePanelViewModel(_panelRenderer, docId),
+        };
+        _bookmarkPanel = new BookmarkPanel
+        {
+            DataContext = _bookmarks,
+        };
+        (_thumbPanel.DataContext as ThumbPanelViewModel)!.NavigateRequested += OnPanelNavigateRequested;
+        (_outlinePanel.DataContext as OutlinePanelViewModel)!.NavigateRequested += OnPanelNavigateRequested;
+        _bookmarks.NavigateRequested += OnPanelNavigateRequested;
+
+        _bookmarks.AttachDocument(docId);
+        _bookmarks.SetCurrentPage(_lastKnownPage.GetValueOrDefault(docId, 0));
+
+        ShowReaderPanel(_readerPanelKey); // 若当前正显示某面板，切换到新文档的实例
+    }
+
+    /// <summary>面板跳页事件桩：记录最近阅读页；真实滚动由 T7 的 ReaderView 消费此事件（T3 API 接线挂点）。</summary>
+    private void OnPanelNavigateRequested(object? sender, int pageIndex)
+    {
+        if (_attachedDocId is not null)
+        {
+            _lastKnownPage[_attachedDocId] = pageIndex;
+            _bookmarks.SetCurrentPage(pageIndex);
+        }
+        if (DataContext is ViewModels.MainViewModel main)
+        {
+            main.StatusText = $"跳转到第 {pageIndex + 1} 页（阅读视图滚动接线挂点：T7）。";
+        }
+    }
+
+    /// <summary>面板切换器事件（RadioButton Tag = 面板键）。</summary>
     private void OnReaderPanelChecked(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioButton { Content: string panelName } && ReaderPanelHint is not null)
+        if (sender is RadioButton { Tag: string key })
         {
-            ReaderPanelHint.Text = $"「{panelName}」面板占位（后续版本填充）。";
+            ShowReaderPanel(key);
         }
+    }
+
+    private void ShowReaderPanel(string key)
+    {
+        _readerPanelKey = key;
+        if (ReaderPanelHost is null)
+        {
+            return; // InitializeComponent 期间初始 IsChecked 触发（T5 已知时序）
+        }
+
+        ReaderPanelHost.Content = key switch
+        {
+            "thumbs" => (object?)_thumbPanel,
+            "outline" => (object?)_outlinePanel,
+            "bookmarks" => (object?)_bookmarkPanel,
+            "search" => (object?)new SearchSlotPanel(), // T8 填充真实搜索 UI
+            _ => null,
+        };
     }
 
     /// <summary>ST-19 基础：标签条溢出时鼠标滚轮横向滚动（滚动指示箭头后续补齐）。</summary>
