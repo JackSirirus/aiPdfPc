@@ -217,11 +217,11 @@ public partial class ReaderView : UserControl
             _anchorElement = _activePageElement;
             _anchorPageRectDip = ComputeSelectionDipUnion(_selectionPtRects);
             _menu.Open();
-            SyncPopups();
-            // StaysOpen=False 的弹层需等本次鼠标事件结束后再开，否则被同一次抬起立即关掉
+            // StaysOpen=False 的弹层必须等本次鼠标抬起事件结束后再开，
+            // 否则同一次抬起会被当作「点击外部」立即关掉（WPF 陷阱）。
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
             {
-                if (_menu.Mode == MenuMode.Selection) PositionOpenPopup();
+                if (_menu.Mode == MenuMode.Selection) SyncPopups();
             }));
         }
         else
