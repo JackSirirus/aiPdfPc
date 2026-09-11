@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Windows.Data;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AIPDF.Windows.ViewModels;
@@ -35,16 +36,28 @@ public partial class MainViewModel : ObservableObject
     /// <summary>引擎桥：工具页 VM 与主窗口共用同一执行通道；无桥时工具页执行入口提示引擎未就绪。</summary>
     public EngineBridge? Bridge => _bridge;
 
+    /// <summary>全局串行工具任务队列（V2 T7，FR-40）；状态栏据此展示正在执行/排队位（FR-41）。</summary>
+    public ToolTaskQueue Queue { get; }
+
+    private ToolTaskItem? _activeTask;
+
+    /// <summary>该执行入口是否已有排队或执行中的任务（CanExecute 与文案派生，M-8；排队 ≠ 执行中）。</summary>
+    public bool HasActiveTask => _activeTask is not null;
+
+    /// <summary>该执行入口的任务是否正在排队（尚未开始执行）。</summary>
+    public bool IsQueued => _activeTask?.State == ToolTaskState.Queued;
+
     /// <summary>加载真实工具目录（backend/catalog.json）并接入真实引擎桥。</summary>
     public MainViewModel() : this(ToolCatalog.Load(), new EngineBridge())
     {
     }
 
     /// <summary>测试与预览用：从给定工具集合构建；bridge 为 null 时执行入口只提示引擎未就绪。</summary>
-    public MainViewModel(IEnumerable<Tool> tools, EngineBridge? bridge = null)
+    public MainViewModel(IEnumerable<Tool> tools, EngineBridge? bridge = null, ToolTaskQueue? queue = null)
     {
         ArgumentNullException.ThrowIfNull(tools);
         _bridge = bridge;
+        Queue = queue ?? ToolTaskQueue.Shared;
 
         foreach (var tool in tools)
         {
@@ -70,16 +83,16 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 执行工具的最小骨架：调桥 → 进度 → 完成/失败/取消状态。具体工具页在 Wave 5 填充。
-    /// 引擎错误（Ok=false）按引擎原文展示；取消后状态复位。
+    /// 执行工具：提交全局串行队列（FR-40），排队期间参数仍可编辑；队列轮到时才置 <see cref="IsRunning"/>。
+    /// 引擎错误（Ok=false）按引擎原文展示；取消后状态复位；失败不自动重试。
     /// </summary>
     public async Task ExecuteToolAsync(Tool tool, IReadOnlyList<string> files, string outputDir,
         IReadOnlyDictionary<string, object?>? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(tool);
-        if (IsRunning)
+        if (_activeTask is not null)
         {
-            return; // 防重入：一次只跑一个引擎任务
+            return; // 防重入（含快速双击去重）：该入口已有排队/执行中的任务
         }
 
         if (_bridge is null)
@@ -88,6 +101,18 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        var item = Queue.Submit(tool.Name, token => RunToolAsync(tool, files, outputDir, options, token), this);
+        AttachActiveTask(item);
+        using var registration = cancellationToken.CanBeCanceled
+            ? cancellationToken.Register(() => Queue.Cancel(item))
+            : default;
+        await item.Completion.Task;
+        DetachActiveTask(item);
+    }
+
+    private async Task RunToolAsync(Tool tool, IReadOnlyList<string> files, string outputDir,
+        IReadOnlyDictionary<string, object?>? options, CancellationToken token)
+    {
         IsRunning = true;
         StatusText = $"正在执行 {tool.Name}…";
 
@@ -105,7 +130,7 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        _bridge.Progress += OnProgress;
+        _bridge!.Progress += OnProgress;
         try
         {
             var result = await _bridge.ExecuteAsync(new EngineRequest
@@ -114,7 +139,7 @@ public partial class MainViewModel : ObservableObject
                 Files = [.. files],
                 Options = options is null ? [] : new Dictionary<string, object?>(options),
                 OutputDir = outputDir,
-            }, cancellationToken);
+            }, token);
 
             StatusText = result.Ok
                 ? $"完成 {tool.Name}：{result.Outputs.Count} 个文件 → {result.OutputDir}"
@@ -132,6 +157,30 @@ public partial class MainViewModel : ObservableObject
         {
             _bridge.Progress -= OnProgress;
             IsRunning = false;
+        }
+    }
+
+    private void AttachActiveTask(ToolTaskItem item)
+    {
+        _activeTask = item;
+        item.PropertyChanged += OnActiveTaskPropertyChanged;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    private void DetachActiveTask(ToolTaskItem item)
+    {
+        item.PropertyChanged -= OnActiveTaskPropertyChanged;
+        _activeTask = null;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    private void OnActiveTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolTaskItem.State))
+        {
+            OnPropertyChanged(nameof(IsQueued));
         }
     }
 

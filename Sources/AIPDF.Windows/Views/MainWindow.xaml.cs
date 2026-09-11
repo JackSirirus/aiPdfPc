@@ -68,12 +68,28 @@ public partial class MainWindow : Window
         UpdateTabAreaState();
     }
 
+    /// <summary>已接线队列取消事件的 MainViewModel（DataContext 变更时反订阅，避免重复弹 Toast）。</summary>
+    private MainViewModel? _hookedQueueVm;
+
+    /// <summary>队列取消 Toast 计时器（2s 自动隐藏）。</summary>
+    private DispatcherTimer? _queueToastTimer;
+
     private void HookViewModel()
     {
         if (DataContext is MainViewModel viewModel)
         {
             viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             viewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+            // V2 T7：状态栏队列 UI 之外，订阅「执行中任务被取消」以弹 Toast（排队项取消不触发）。
+            if (_hookedQueueVm is not null)
+            {
+                _hookedQueueVm.Queue.RunningTaskCancelled -= OnQueueRunningTaskCancelled;
+            }
+
+            _hookedQueueVm = viewModel;
+            viewModel.Queue.RunningTaskCancelled += OnQueueRunningTaskCancelled;
+
             if (viewModel.SelectedTool is not null)
             {
                 ShowToolPage(viewModel.SelectedTool, viewModel.Bridge);
@@ -81,6 +97,24 @@ public partial class MainWindow : Window
 
             InitStartPage(viewModel);
         }
+    }
+
+    /// <summary>执行中任务被取消 → 状态栏上方 Toast「任务已取消：X」；2s 后自动隐藏。</summary>
+    private void OnQueueRunningTaskCancelled(object? sender, ToolTaskItem item)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            QueueToastText.Text = $"任务已取消：{item.Name}";
+            QueueToast.Visibility = Visibility.Visible;
+            _queueToastTimer?.Stop();
+            _queueToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            _queueToastTimer.Tick += (_, _) =>
+            {
+                _queueToastTimer?.Stop();
+                QueueToast.Visibility = Visibility.Collapsed;
+            };
+            _queueToastTimer.Start();
+        }));
     }
 
     // ---- T6 起始页（空态主界面，FR-33/34/35） ----

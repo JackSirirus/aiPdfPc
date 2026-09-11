@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 AIPDF contributors
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Services;
 using AIPDF.Windows.ViewModels;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -406,7 +408,7 @@ public partial class WorkflowToolViewModel : ObservableObject
     private readonly EngineBridge? _bridge;
     private readonly WorkflowPresetStore _presets;
     private readonly WorkflowHistory _history;
-    private CancellationTokenSource? _cts;
+    private ToolTaskItem? _activeTask;
 
     public const string OperationId = "workflow";
 
@@ -455,6 +457,15 @@ public partial class WorkflowToolViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isRunning;
+
+    /// <summary>全局串行任务队列（V2 T7）；默认进程内单例，测试可注入隔离实例。</summary>
+    public ToolTaskQueue Queue { get; set; } = ToolTaskQueue.Shared;
+
+    /// <summary>该入口是否已有排队或执行中的任务（CanExecute 派生，M-8）。</summary>
+    public bool HasActiveTask => _activeTask is not null;
+
+    /// <summary>该入口的任务是否正在排队（尚未执行）。</summary>
+    public bool IsQueued => _activeTask?.State == ToolTaskState.Queued;
 
     // ---------- 文件与步骤 ----------
 
@@ -672,13 +683,17 @@ public partial class WorkflowToolViewModel : ObservableObject
         return null;
     }
 
-    public void Cancel() => _cts?.Cancel();
+    /// <summary>取消该入口排队/执行中的任务（执行中由引擎桥 taskkill 子树，半成品保留）。</summary>
+    public void Cancel() => Queue.Cancel(_activeTask);
 
+    /// <summary>
+    /// 执行入口：校验通过后提交全局串行队列（FR-40），排队期间参数仍可编辑；队列轮到时才置 <see cref="IsRunning"/>（M-8）。
+    /// </summary>
     public async Task ExecuteAsync()
     {
-        if (IsRunning)
+        if (_activeTask is not null)
         {
-            return;
+            return; // 防重入：该入口已有排队/执行中的任务
         }
 
         if (_bridge is null)
@@ -693,18 +708,26 @@ public partial class WorkflowToolViewModel : ObservableObject
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _cts = cts;
+        var item = Queue.Create("工作流程", RunAsync, this);
+        AttachActiveTask(item);
+        Queue.Enqueue(item);
+        await item.Completion.Task;
+        DetachActiveTask(item);
+    }
+
+    /// <summary>队列轮到时执行的实体（原 ExecuteAsync 主体）：进度、取消/异常处理与状态复位。</summary>
+    private async Task RunAsync(CancellationToken token)
+    {
         IsRunning = true;
         StatusText = "正在执行 工作流程…";
         var started = DateTime.Now;
 
         void OnProgress(object? sender, EngineProgressEventArgs args) => SetStatus(args.Message);
 
-        _bridge.Progress += OnProgress;
+        _bridge!.Progress += OnProgress;
         try
         {
-            var result = await _bridge.ExecuteAsync(BuildRequest(), cts.Token);
+            var result = await _bridge.ExecuteAsync(BuildRequest(), token);
             if (result.Ok)
             {
                 StatusText = $"完成 工作流程：{result.Outputs.Count} 个文件 → {result.OutputDir}";
@@ -736,7 +759,32 @@ public partial class WorkflowToolViewModel : ObservableObject
         {
             _bridge.Progress -= OnProgress;
             IsRunning = false;
-            _cts = null;
+        }
+    }
+
+    /// <summary>绑定活动任务并订阅其状态变化（IsQueued 派生，M-8）。</summary>
+    private void AttachActiveTask(ToolTaskItem item)
+    {
+        _activeTask = item;
+        item.PropertyChanged += OnActiveTaskPropertyChanged;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    /// <summary>完成/取消后解除活动任务绑定。</summary>
+    private void DetachActiveTask(ToolTaskItem item)
+    {
+        item.PropertyChanged -= OnActiveTaskPropertyChanged;
+        _activeTask = null;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    private void OnActiveTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolTaskItem.State))
+        {
+            OnPropertyChanged(nameof(IsQueued));
         }
     }
 
@@ -763,7 +811,7 @@ public partial class BatchToolViewModel : ObservableObject
 {
     private readonly EngineBridge? _bridge;
     private readonly WorkflowHistory _history;
-    private CancellationTokenSource? _cts;
+    private ToolTaskItem? _activeTask;
 
     public BatchToolViewModel(EngineBridge? bridge, IReadOnlyList<Tool> catalogTools, WorkflowHistory? history = null)
     {
@@ -773,6 +821,15 @@ public partial class BatchToolViewModel : ObservableObject
         Tools = [.. catalogTools.Where(tool => tool.Id != WorkflowToolViewModel.OperationId)];
         SelectedTool = Tools.FirstOrDefault();
     }
+
+    /// <summary>全局串行任务队列（V2 T7）；默认进程内单例，测试可注入隔离实例。</summary>
+    public ToolTaskQueue TaskQueue { get; set; } = ToolTaskQueue.Shared;
+
+    /// <summary>该入口是否已有排队或执行中的任务（CanExecute 派生，M-8）。</summary>
+    public bool HasActiveTask => _activeTask is not null;
+
+    /// <summary>该入口的任务是否正在排队（尚未执行）。</summary>
+    public bool IsQueued => _activeTask?.State == ToolTaskState.Queued;
 
     public IReadOnlyList<Tool> Tools { get; }
 
@@ -811,11 +868,15 @@ public partial class BatchToolViewModel : ObservableObject
         }
     }
 
-    /// <summary>把文件按工具语义分组加入队列（merge 合成一项，其余逐文件一项）。执行中不可改队列。</summary>
+    /// <summary>
+    /// 把文件按工具语义分组加入队列（merge 合成一项，其余逐文件一项）。
+    /// V2 T7：批量是「一批一次执行」语义，执行/排队中不能重建队列——显式提示而非静默丢弃。
+    /// </summary>
     public void AddFiles(IEnumerable<string> paths)
     {
-        if (IsRunning)
+        if (HasActiveTask)
         {
+            StatusText = "批量任务排队/执行中，暂不能修改文件队列；请等待完成或取消后再添加。";
             return;
         }
 
@@ -847,7 +908,8 @@ public partial class BatchToolViewModel : ObservableObject
 
     public void ClearQueue()
     {
-        if (!IsRunning)
+        // 排队/执行中清空会使在途批次与列表不一致：保持禁用（与 AddFiles 同口径）。
+        if (!HasActiveTask)
         {
             Queue.Clear();
             StatusText = "队列已清空。";
@@ -884,17 +946,17 @@ public partial class BatchToolViewModel : ObservableObject
         return null;
     }
 
-    public void Cancel() => _cts?.Cancel();
+    /// <summary>取消该入口排队/执行中的批次任务（执行中由引擎桥 taskkill 子树）。</summary>
+    public void Cancel() => TaskQueue.Cancel(_activeTask);
 
     /// <summary>
-    /// 顺序执行队列：逐项请求引擎；单项失败（Ok=false 或桥异常）记为失败并继续下一项；
-    /// 取消批次 → 当前项停止（Cancelled），剩余待处理项全部标为已取消。全程串行，遵守引擎单进程契约。
+    /// 执行入口：校验通过后提交全局串行队列（FR-40），排队期间参数仍可编辑；队列轮到时才置 <see cref="IsRunning"/>（M-8）。
     /// </summary>
     public async Task RunAsync()
     {
-        if (IsRunning)
+        if (_activeTask is not null)
         {
-            return;
+            return; // 防重入：该入口已有排队/执行中的任务
         }
 
         if (_bridge is null)
@@ -909,8 +971,19 @@ public partial class BatchToolViewModel : ObservableObject
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _cts = cts;
+        var item = TaskQueue.Create($"{SelectedTool!.Name}（批量）", RunBatchAsync, this);
+        AttachActiveTask(item);
+        TaskQueue.Enqueue(item);
+        await item.Completion.Task;
+        DetachActiveTask(item);
+    }
+
+    /// <summary>
+    /// 队列轮到时执行的实体（原 RunAsync 主体）：逐项请求引擎；单项失败（Ok=false 或桥异常）记为失败并继续下一项；
+    /// 取消批次 → 当前项停止（Cancelled），剩余待处理项全部标为已取消。全程串行，遵守引擎单进程契约。
+    /// </summary>
+    private async Task RunBatchAsync(CancellationToken token)
+    {
         IsRunning = true;
         var total = Queue.Count;
         var succeeded = 0;
@@ -918,7 +991,7 @@ public partial class BatchToolViewModel : ObservableObject
 
         void OnProgress(object? sender, EngineProgressEventArgs args) => SetStatus(args.Message);
 
-        _bridge.Progress += OnProgress;
+        _bridge!.Progress += OnProgress;
         try
         {
             for (var i = 0; i < Queue.Count; i++)
@@ -931,7 +1004,7 @@ public partial class BatchToolViewModel : ObservableObject
                 var started = DateTime.Now;
                 try
                 {
-                    var result = await _bridge.ExecuteAsync(BuildRequestFor(item), cts.Token);
+                    var result = await _bridge.ExecuteAsync(BuildRequestFor(item), token);
                     if (result.Ok)
                     {
                         item.State = BatchItemState.Completed;
@@ -990,7 +1063,32 @@ public partial class BatchToolViewModel : ObservableObject
             _bridge.Progress -= OnProgress;
             IsRunning = false;
             ProgressText = "";
-            _cts = null;
+        }
+    }
+
+    /// <summary>绑定活动任务并订阅其状态变化（IsQueued 派生，M-8）。</summary>
+    private void AttachActiveTask(ToolTaskItem item)
+    {
+        _activeTask = item;
+        item.PropertyChanged += OnActiveTaskPropertyChanged;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    /// <summary>完成/取消后解除活动任务绑定。</summary>
+    private void DetachActiveTask(ToolTaskItem item)
+    {
+        item.PropertyChanged -= OnActiveTaskPropertyChanged;
+        _activeTask = null;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+    }
+
+    private void OnActiveTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolTaskItem.State))
+        {
+            OnPropertyChanged(nameof(IsQueued));
         }
     }
 

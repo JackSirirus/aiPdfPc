@@ -2,10 +2,12 @@
 // Copyright (C) 2026 AIPDF contributors
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -30,7 +32,7 @@ public sealed class ToolResultItem
 public abstract partial class ToolViewModelBase : ObservableObject
 {
     private readonly EngineBridge? _bridge;
-    private CancellationTokenSource? _cancellation;
+    private ToolTaskItem? _activeTask;
 
     protected ToolViewModelBase(EngineBridge? bridge, Tool tool)
     {
@@ -38,17 +40,26 @@ public abstract partial class ToolViewModelBase : ObservableObject
         _bridge = bridge;
         Tool = tool;
         Files.CollectionChanged += OnFilesCollectionChanged;
-        ExecuteCommand = new AsyncRelayCommand(ExecuteAsync, () => !IsRunning);
-        CancelCommand = new RelayCommand(() => _cancellation?.Cancel(), () => IsRunning);
-        ClearFilesCommand = new RelayCommand(ClearFiles, () => !IsRunning);
+        ExecuteCommand = new AsyncRelayCommand(ExecuteAsync, () => !HasActiveTask);
+        CancelCommand = new RelayCommand(() => Queue.Cancel(_activeTask), () => HasActiveTask);
+        ClearFilesCommand = new RelayCommand(ClearFiles, () => !HasActiveTask);
         RemoveFileCommand = new RelayCommand<string>(path =>
         {
-            if (path is not null && !IsRunning)
+            if (path is not null && !HasActiveTask)
             {
                 Files.Remove(path);
             }
-        }, _ => !IsRunning);
+        }, _ => !HasActiveTask);
     }
+
+    /// <summary>全局串行任务队列（V2 T7）；默认进程内单例，测试可注入隔离实例。</summary>
+    public ToolTaskQueue Queue { get; set; } = ToolTaskQueue.Shared;
+
+    /// <summary>该入口是否已有排队或执行中的任务（CanExecute 派生，M-8；排队 ≠ 执行中）。</summary>
+    public bool HasActiveTask => _activeTask is not null;
+
+    /// <summary>该入口的任务是否正在排队（尚未开始执行）。</summary>
+    public bool IsQueued => _activeTask?.State == ToolTaskState.Queued;
 
     public Tool Tool { get; }
 
@@ -97,14 +108,13 @@ public abstract partial class ToolViewModelBase : ObservableObject
 
     public virtual void ClearFiles() => Files.Clear();
 
-    /// <summary>拖入 / 粘贴的统一入口：按工具扩展名过滤、去重；首个文件所在目录作为默认输出目录。</summary>
+    /// <summary>
+    /// 拖入 / 粘贴的统一入口：按工具扩展名过滤、去重；首个文件所在目录作为默认输出目录。
+    /// V2 T7：不再因执行/排队而静默丢弃——任务进行中仍可添加文件（下次任务或结果区使用）。
+    /// </summary>
     public virtual void AddDroppedFiles(IEnumerable<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        if (IsRunning)
-        {
-            return;
-        }
 
         var added = false;
         foreach (var path in FilterExisting(paths))
@@ -155,11 +165,15 @@ public abstract partial class ToolViewModelBase : ObservableObject
         => [.. paths.Where(path => File.Exists(path)
             && Tool.Extensions.Contains(System.IO.Path.GetExtension(path).TrimStart('.').Trim(), StringComparer.OrdinalIgnoreCase))];
 
+    /// <summary>
+    /// 执行入口：校验通过后提交全局串行队列（FR-40），排队期间参数仍可编辑；队列轮到时才置 <see cref="IsRunning"/>。
+    /// 快速双击/重复提交由任务键（<c>this</c>）去重；失败不自动重试。
+    /// </summary>
     private async Task ExecuteAsync()
     {
-        if (IsRunning)
+        if (_activeTask is not null)
         {
-            return; // 防重入：一次只跑一个引擎任务
+            return; // 防重入：该入口已有排队/执行中的任务
         }
 
         ErrorText = "";
@@ -176,6 +190,16 @@ public abstract partial class ToolViewModelBase : ObservableObject
             return;
         }
 
+        var item = Queue.Create(Tool.Name, RunAsync, this);
+        AttachActiveTask(item);
+        Queue.Enqueue(item);
+        await item.Completion.Task;
+        DetachActiveTask(item);
+    }
+
+    /// <summary>队列轮到时执行的实体（原 ExecuteAsync 主体）：进度、取消/异常处理与状态复位。</summary>
+    private async Task RunAsync(CancellationToken token)
+    {
         var request = new EngineRequest
         {
             Operation = Tool.Id,
@@ -184,18 +208,16 @@ public abstract partial class ToolViewModelBase : ObservableObject
             OutputDir = OutputDir.Trim(),
         };
 
-        _cancellation?.Dispose();
-        _cancellation = new CancellationTokenSource();
         IsRunning = true;
         ProgressFraction = 0;
         ProgressMessage = "";
         StatusMessage = $"正在执行 {Tool.Name}…";
         Results.Clear();
         LastResult = null;
-        _bridge.Progress += OnBridgeProgress;
+        _bridge!.Progress += OnBridgeProgress;
         try
         {
-            var result = await _bridge.ExecuteAsync(request, _cancellation.Token);
+            var result = await _bridge.ExecuteAsync(request, token);
             LastResult = result;
             if (result.Ok)
             {
@@ -253,11 +275,43 @@ public abstract partial class ToolViewModelBase : ObservableObject
     private void OnFilesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => OnPropertyChanged(nameof(HasFiles));
 
-    partial void OnIsRunningChanged(bool value)
+    partial void OnIsRunningChanged(bool value) => RefreshCommandStates();
+
+    /// <summary>绑定活动任务并订阅其状态变化（IsQueued 派生与命令刷新，M-8）。</summary>
+    private void AttachActiveTask(ToolTaskItem item)
+    {
+        _activeTask = item;
+        item.PropertyChanged += OnActiveTaskPropertyChanged;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+        RefreshCommandStates();
+    }
+
+    /// <summary>完成/取消后解除活动任务绑定。</summary>
+    private void DetachActiveTask(ToolTaskItem item)
+    {
+        item.PropertyChanged -= OnActiveTaskPropertyChanged;
+        _activeTask = null;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+        RefreshCommandStates();
+    }
+
+    private void OnActiveTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolTaskItem.State))
+        {
+            OnPropertyChanged(nameof(IsQueued));
+            RefreshCommandStates();
+        }
+    }
+
+    private void RefreshCommandStates()
     {
         ExecuteCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         ClearFilesCommand.NotifyCanExecuteChanged();
+        RemoveFileCommand.NotifyCanExecuteChanged();
     }
 }
 
@@ -463,14 +517,12 @@ public sealed partial class CompareViewModel : ToolViewModelBase
 
     public void SetSecondFile(string path) => SecondFile = FilterExisting([path]).FirstOrDefault() ?? SecondFile;
 
-    /// <summary>拖入的文件按顺序填充空槽；两槽已满时忽略多余的文件。</summary>
+    /// <summary>
+    /// 拖入的文件按顺序填充空槽；两槽已满时忽略多余的文件。
+    /// V2 T7：不再因执行/排队而静默丢弃——任务进行中仍可补槽（用于下次任务）。
+    /// </summary>
     public override void AddDroppedFiles(IEnumerable<string> paths)
     {
-        if (IsRunning)
-        {
-            return;
-        }
-
         foreach (var path in FilterExisting(paths))
         {
             if (FirstFile.Length == 0)

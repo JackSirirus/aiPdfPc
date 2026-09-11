@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -156,7 +157,7 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
 
     private readonly EngineBridge? _bridge;
-    private CancellationTokenSource? _cancellation;
+    private ToolTaskItem? _activeTask;
 
     protected ConverterToolViewModelBase(EngineBridge? bridge, Tool tool)
     {
@@ -169,6 +170,15 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
         DependencyWarning = CheckDependency();
         Files.CollectionChanged += OnFilesCollectionChanged;
     }
+
+    /// <summary>全局串行任务队列（V2 T7）；默认进程内单例，测试可注入隔离实例。</summary>
+    public ToolTaskQueue Queue { get; set; } = ToolTaskQueue.Shared;
+
+    /// <summary>该入口是否已有排队或执行中的任务（CanExecute 派生，M-8；排队 ≠ 执行中）。</summary>
+    public bool HasActiveTask => _activeTask is not null;
+
+    /// <summary>该入口的任务是否正在排队（尚未开始执行）。</summary>
+    public bool IsQueued => _activeTask?.State == ToolTaskState.Queued;
 
     public Tool Tool { get; }
 
@@ -254,19 +264,22 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
     /// <summary>最近一次引擎结果（测试断言用；页面状态以 Results/StatusMessage 为准）。</summary>
     public EngineResult? LastResult { get; private set; }
 
-    public bool CanExecuteNow => !IsRunning && Validate() is null;
+    public bool CanExecuteNow => !HasActiveTask && Validate() is null;
 
     /// <summary>当前校验消息（页面即时反馈）；null 表示可以执行。</summary>
     public string? ValidationMessage => Validate();
 
     // ---------- 命令 ----------
 
+    /// <summary>
+    /// 执行入口：校验通过后提交全局串行队列（FR-40），排队期间参数仍可编辑；队列轮到时才置 <see cref="IsRunning"/>（M-8）。
+    /// </summary>
     [RelayCommand(CanExecute = nameof(CanExecuteNow))]
     public async Task ExecuteAsync()
     {
-        if (IsRunning)
+        if (_activeTask is not null)
         {
-            return; // 防重入：一次只跑一个引擎任务
+            return; // 防重入：该入口已有排队/执行中的任务
         }
 
         var error = Validate();
@@ -282,6 +295,16 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
             return;
         }
 
+        var item = Queue.Create(Tool.Name, RunAsync, this);
+        AttachActiveTask(item);
+        Queue.Enqueue(item);
+        await item.Completion.Task;
+        DetachActiveTask(item);
+    }
+
+    /// <summary>队列轮到时执行的实体（原 ExecuteAsync 主体）：进度、取消/异常处理与状态复位。</summary>
+    private async Task RunAsync(CancellationToken token)
+    {
         var request = new EngineRequest
         {
             Operation = Tool.Id,
@@ -290,17 +313,15 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
             OutputDir = OutputDir.Trim(),
         };
 
-        _cancellation?.Dispose();
-        _cancellation = new CancellationTokenSource();
         IsRunning = true;
         ProgressFraction = 0;
         ProgressMessage = "";
         StatusMessage = $"正在执行 {Tool.Name}…";
         Results.Clear();
-        _bridge.Progress += OnBridgeProgress;
+        _bridge!.Progress += OnBridgeProgress;
         try
         {
-            var result = await _bridge.ExecuteAsync(request, _cancellation.Token);
+            var result = await _bridge.ExecuteAsync(request, token);
             LastResult = result;
             if (result.Ok)
             {
@@ -333,8 +354,8 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
         }
     }
 
-    [RelayCommand(CanExecute = nameof(IsRunning))]
-    private void Cancel() => _cancellation?.Cancel();
+    [RelayCommand(CanExecute = nameof(HasActiveTask))]
+    private void Cancel() => Queue.Cancel(_activeTask);
 
     [RelayCommand]
     private void BrowseFiles()
@@ -378,7 +399,8 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
     [RelayCommand]
     private void ClearFiles()
     {
-        if (IsRunning)
+        // V2 T7：排队/执行中清空会使在途请求文件集与列表不一致，保持禁用（按钮 CanExecute 同口径）。
+        if (HasActiveTask)
         {
             return;
         }
@@ -390,14 +412,13 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
 
     // ---------- 文件输入 ----------
 
-    /// <summary>拖拽 / 浏览的统一入口。按工具扩展名过滤、去重；单文件工具以新文件替换旧文件。</summary>
+    /// <summary>
+    /// 拖拽 / 浏览的统一入口。按工具扩展名过滤、去重；单文件工具以新文件替换旧文件。
+    /// V2 T7：不再因执行/排队而静默丢弃——任务进行中仍可添加文件（用于下次任务）。
+    /// </summary>
     public void AddFiles(IEnumerable<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
-        if (IsRunning)
-        {
-            return;
-        }
 
         var allowed = Tool.Extensions.Select(e => e.ToLowerInvariant()).ToHashSet();
         foreach (var raw in paths)
@@ -459,7 +480,38 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
         ExecuteCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnIsRunningChanged(bool value)
+    partial void OnIsRunningChanged(bool value) => RefreshCommandStates();
+
+    /// <summary>绑定活动任务并订阅其状态变化（IsQueued 派生与命令刷新，M-8）。</summary>
+    private void AttachActiveTask(ToolTaskItem item)
+    {
+        _activeTask = item;
+        item.PropertyChanged += OnActiveTaskPropertyChanged;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+        RefreshCommandStates();
+    }
+
+    /// <summary>完成/取消后解除活动任务绑定。</summary>
+    private void DetachActiveTask(ToolTaskItem item)
+    {
+        item.PropertyChanged -= OnActiveTaskPropertyChanged;
+        _activeTask = null;
+        OnPropertyChanged(nameof(HasActiveTask));
+        OnPropertyChanged(nameof(IsQueued));
+        RefreshCommandStates();
+    }
+
+    private void OnActiveTaskPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ToolTaskItem.State))
+        {
+            OnPropertyChanged(nameof(IsQueued));
+            RefreshCommandStates();
+        }
+    }
+
+    private void RefreshCommandStates()
     {
         ExecuteCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();

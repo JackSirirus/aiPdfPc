@@ -43,6 +43,9 @@
         <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E4EAFB" />
         <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
 
+        <!-- V2 T7：队列控件可见性（执行中/有排队项时显示） -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
         <Style x:Key="SidebarToolItem" TargetType="ListBoxItem">
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="Margin" Value="2,1" />
@@ -674,6 +677,23 @@
                 </Grid>
             </Grid>
 
+            <!-- V2 T7：执行中任务被取消时的短暂 Toast（排队项取消不触发；由代码后置 2s 自动隐藏） -->
+            <Border x:Name="QueueToast"
+                    Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,20"
+                    Padding="14,7"
+                    CornerRadius="8"
+                    Background="{StaticResource Brush.TextPrimary}"
+                    Visibility="Collapsed"
+                    IsHitTestVisible="False"
+                    Panel.ZIndex="20">
+                <TextBlock x:Name="QueueToastText"
+                           FontSize="12"
+                           Foreground="White" />
+            </Border>
+
             <!-- 底部状态栏 -->
             <Border Grid.Row="2"
                     Background="{StaticResource Brush.Sidebar}"
@@ -710,6 +730,57 @@
                             </Button.Style>
                             <TextBlock Text="{Binding Text}" />
                         </Button>
+
+                        <!-- V2 T7：全局任务队列状态（独立控件，不覆盖 StatusText 消息）；✕ 取消单个排队项（FR-41） -->
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding Queue.HasRunning, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Margin="12,0,0,0"
+                                       Text="{Binding Queue.StatusText}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource Brush.AccentText}"
+                                       VerticalAlignment="Center" />
+                            <ItemsControl Margin="6,0,0,0"
+                                          VerticalAlignment="Center"
+                                          ItemsSource="{Binding Queue.Pending}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="6,0,0,0"
+                                                Padding="6,1"
+                                                CornerRadius="4"
+                                                Background="{StaticResource Brush.AccentSoft}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding PositionText}"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Margin="4,0,0,0"
+                                                           Text="{Binding Name}"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           VerticalAlignment="Center" />
+                                                <Button Margin="4,0,0,0"
+                                                        Padding="2,0"
+                                                        Background="Transparent"
+                                                        BorderThickness="0"
+                                                        Cursor="Hand"
+                                                        ToolTip="取消该排队任务"
+                                                        AutomationProperties.Name="取消排队任务"
+                                                        Command="{Binding DataContext.Queue.CancelTaskCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}">
+                                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="8" />
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
                     </StackPanel>
                     <TextBlock Grid.Column="1"
                                Text="AIPDF for Windows · v0.1.0"
