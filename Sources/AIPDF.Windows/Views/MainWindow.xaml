@@ -22,12 +22,17 @@
         <!-- Ctrl+F 全文搜索入口（FR-09；T8 接管前仅事件桩）+ Ctrl+W 关闭当前标签（FR-08） -->
         <KeyBinding Gesture="Ctrl+F" Command="{x:Static views:MainWindow.FullTextSearchCommand}" />
         <KeyBinding Gesture="Ctrl+W" Command="{x:Static views:MainWindow.CloseActiveTabCommand}" />
+        <!-- V3 T6：Ctrl+P 打印入口（FR-30）；CanExecute 由门禁驱动，加载中/未解锁自动禁用（AC-30.2） -->
+        <KeyBinding Gesture="Ctrl+P" Command="{x:Static views:MainWindow.PrintCommand}" />
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static views:MainWindow.FullTextSearchCommand}"
                         Executed="OnFullTextSearchExecuted" />
         <CommandBinding Command="{x:Static views:MainWindow.CloseActiveTabCommand}"
                         Executed="OnCloseActiveTabExecuted" />
+        <CommandBinding Command="{x:Static views:MainWindow.PrintCommand}"
+                        Executed="OnPrintExecuted"
+                        CanExecute="OnPrintCanExecute" />
     </Window.CommandBindings>
 
     <Window.Resources>
@@ -380,6 +385,16 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;" FontSize="12" VerticalAlignment="Center" />
                                 <TextBlock Text="搜索" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <!-- V3 T6：打印入口（Q3 裁决：Ctrl+P + 顶栏按钮，不新增菜单栏）；命令 CanExecute = 打印门禁 -->
+                        <Button Style="{StaticResource TopBarIconButton}"
+                                Command="{x:Static views:MainWindow.PrintCommand}"
+                                ToolTip="打印当前文档 (Ctrl+P)"
+                                AutomationProperties.Name="打印">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE749;" FontSize="13" VerticalAlignment="Center" />
+                                <TextBlock Text="打印" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
                         <!-- ⚙ 设置入口（V3 T5）：点击弹出下拉菜单「设置 | 关于·许可」（AC-38.1，无「检查更新」） -->
@@ -757,6 +772,28 @@
                             </Button.Style>
                             <TextBlock Text="{Binding Text}" />
                         </Button>
+
+                        <!-- V3 T6：打印进度 + 取消（FR-30 状态转录；进度经 UI 线程回封送，F3-BLK-1） -->
+                        <StackPanel x:Name="PrintProgressPanel"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    Margin="12,0,0,0"
+                                    Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding Text}"
+                                       FontSize="11"
+                                       Foreground="{StaticResource Brush.AccentText}"
+                                       VerticalAlignment="Center" />
+                            <Button Margin="6,0,0,0"
+                                    Padding="8,1"
+                                    FontSize="11"
+                                    VerticalAlignment="Center"
+                                    Click="OnCancelPrintClick"
+                                    Style="{StaticResource SecondaryButton}"
+                                    ToolTip="取消打印准备"
+                                    AutomationProperties.Name="取消打印">
+                                <TextBlock Text="取消" />
+                            </Button>
+                        </StackPanel>
 
                         <!-- V2 T7：全局任务队列状态（独立控件，不覆盖 StatusText 消息）；✕ 取消单个排队项（FR-41） -->
                         <StackPanel Orientation="Horizontal"

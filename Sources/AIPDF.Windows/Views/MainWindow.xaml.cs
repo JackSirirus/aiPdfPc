@@ -32,6 +32,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>关闭当前标签命令（Ctrl+W，FR-08）。</summary>
     public static readonly RoutedCommand CloseActiveTabCommand = new(nameof(CloseActiveTabCommand), typeof(MainWindow));
 
+    /// <summary>打印当前文档命令（Ctrl+P 全局快捷键 + 顶栏按钮，FR-30；V3 T6）。</summary>
+    public static readonly RoutedCommand PrintCommand = new(nameof(PrintCommand), typeof(MainWindow));
+
     /// <summary>标签宿主：多标签核心逻辑（同路径去重【D14】/页面实例缓存【D16】/增删）。</summary>
     private TabHostViewModel TabHost { get; } = new();
 
@@ -67,6 +70,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // T4：状态栏 savepill（四态；失败可点击重试）
         SavePill.DataContext = _savePill;
         _savePill.RetryRequested += async (_, _) => await RetryActiveDocumentSaveAsync();
+
+        // V3 T6：状态栏打印进度区（进度文案 + 取消；DataContext 与窗口主 VM 分离）
+        PrintProgressPanel.DataContext = _printProgress;
 
         // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
         QueueToast.MouseLeftButtonDown += OnWizardToastClick;
@@ -528,6 +534,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         // T4：savepill 随激活文档标签刷新（文档 → 显示该文档状态；工具/零标签 → 隐藏）
         UpdateSavePillForActiveTab();
+
+        // V3 T6：标签切换/文档加载完成会改变打印门禁 → 重新查询 Ctrl+P / 顶栏按钮可用性（AC-30.2）。
+        CommandManager.InvalidateRequerySuggested();
     }
 
     // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
@@ -599,6 +608,198 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>菜单「关于·许可」：打开关于模态（版本 / AGPL-3.0-only / LICENSE·NOTICE·第三方声明入口）。</summary>
     private void OnAboutMenuItemClick(object sender, RoutedEventArgs e)
         => AboutDialog.Show(IsLoaded ? this : null);
+
+    // ---- V3 T6 打印入口（Ctrl+P + 顶栏按钮；门禁 / 进度 / 取消） ----
+
+    /// <summary>打印服务（懒建；消费 T3，不修改其文件）。读取设置 <c>PrintDpi</c>，无新增设置。</summary>
+    private PrintService PrintJobService => _printService ??= new PrintService(_settingsStore, _credentials);
+
+    /// <summary>当前激活文档标签的阅读实例状态（无文档标签 / 未登记时为 null）。</summary>
+    private ReaderTabState? ActiveReaderState()
+        => TabHost.SelectedTab is { Kind: TabKind.Document } active
+            && _readerTabs.TryGetValue(active.TabId, out var state)
+            ? state
+            : null;
+
+    /// <summary>
+    /// 解析打印门禁（AC-30.2）：无文档 / 阅读实例未完成加载（加载中）/ 加密未解锁 → 不可打印。
+    /// 复用 T3 <see cref="PrintService.EvaluateGate"/>（经由 <see cref="PrintEntry"/>），不复制判定；
+    /// 「加密」信号 = 会话驻留密码（解锁成功即驻留）。
+    /// </summary>
+    private PrintGateDecision ResolvePrintGate()
+    {
+        var path = ActiveDocumentPath();
+        var hasLoadedDocument = ActiveReaderState()?.ViewModel.HasDocument ?? false;
+        var hasSessionPassword = path is not null && _credentials.Has(path);
+        return PrintEntry.EvaluateGate(PrintJobService, path, hasLoadedDocument, hasSessionPassword);
+    }
+
+    /// <summary>Ctrl+P / 顶栏打印按钮可用性：门禁不通过（加载中 / 无文档 / 未解锁）或作业进行中 → 禁用（AC-30.2）。</summary>
+    private void OnPrintCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = !_printInProgress && ResolvePrintGate().IsPrintable;
+        e.Handled = true;
+    }
+
+    /// <summary>Ctrl+P / 顶栏打印按钮：进入打印作业（门禁已由 CanExecute 保证，Executed 内再校验一次防竞态）。</summary>
+    private async void OnPrintExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        await StartPrintJobAsync();
+    }
+
+    /// <summary>
+    /// 打印当前文档（FR-30）：
+    /// ① 门禁（AC-30.2）；② 系统 <see cref="PrintDialog"/> 预设当前文档 + 范围（全部/当前页/自定义）；
+    /// ③ T3 <see cref="PrintService.PrepareAsync"/> 后台两阶段预渲染（进度可取消）；
+    /// ④ 分页器交给 <see cref="PrintDialog.PrintDocument"/>；⑤ finally 清理临时产物。
+    /// <para>
+    /// 句柄所有权（B2）：预渲染由 T3 自建专用 <see cref="PdfiumRenderService"/> 并在作业内关闭，
+    /// 绝不共享/关闭阅读器句柄，打印前后阅读器均可继续渲染。
+    /// </para>
+    /// <para>
+    /// 线程纪律（F3-BLK-1）：进度用 UI 线程创建的 <see cref="Progress{T}"/> 回封送；原生渲染在 T3 后台阶段，
+    /// UI 线程不做 PDFium 调用；分页器在 UI 线程构造（T3 阶段②），GetPage 仅读临时产物。
+    /// </para>
+    /// </summary>
+    private async Task StartPrintJobAsync()
+    {
+        if (_printInProgress) return; // 防重入：作业进行中的 Ctrl+P 不叠加
+
+        var gate = ResolvePrintGate();
+        if (!gate.IsPrintable)
+        {
+            if (DataContext is ViewModels.MainViewModel blocked)
+            {
+                blocked.StatusText = gate.Message ?? "当前无法打印。";
+            }
+            return;
+        }
+
+        var path = ActiveDocumentPath();
+        var reader = ActiveReaderState();
+        if (path is null || reader is null) return;
+
+        var pageCount = reader.ViewModel.PageCount;
+        var currentPageIndex = Math.Max(0, reader.ViewModel.CurrentPageNumber - 1);
+
+        // 系统打印对话框：预设到当前文档（Min/Max = 页数）；启用范围选项（全部 / 当前页 / 自定义）。
+        var dialog = new PrintDialog
+        {
+            UserPageRangeEnabled = true,
+            MinPage = 1,
+            MaxPage = (uint)Math.Max(1, pageCount),
+            PageRangeSelection = PageRangeSelection.AllPages,
+        };
+
+        bool accepted;
+        try
+        {
+            accepted = dialog.ShowDialog() == true;
+        }
+        catch (Exception ex)
+        {
+            // 无可用打印机 / 打印子系统不可用：状态栏提示而非崩溃（真实出纸交 F3 桌面 QA）。
+            Trace.WriteLine($"[MainWindow] 打开打印对话框失败: {ex.Message}");
+            if (DataContext is ViewModels.MainViewModel noPrinter)
+            {
+                noPrinter.StatusText = "无法打开打印对话框：系统打印机不可用。";
+            }
+            return;
+        }
+
+        if (!accepted) return; // 用户取消对话框：不预渲染、不建临时产物
+
+        var range = PrintEntry.ResolveRange(
+            dialog.PageRangeSelection,
+            dialog.PageRange.PageFrom,
+            dialog.PageRange.PageTo,
+            pageCount,
+            currentPageIndex);
+        if (!range.IsValid || range.Pages.Count == 0)
+        {
+            if (DataContext is ViewModels.MainViewModel badRange)
+            {
+                badRange.StatusText = range.Error ?? "请选择至少一页进行打印。";
+            }
+            return;
+        }
+
+        // 用户范围已解析进预渲染页集合；重置为「全部页」避免 PrintDocument 对分页器二次套用范围。
+        dialog.PageRangeSelection = PageRangeSelection.AllPages;
+
+        _printInProgress = true;
+        _printCts = new CancellationTokenSource();
+        _printProgress.Begin(range.Pages.Count);
+
+        // UI 线程创建的 Progress<T>：阶段① 进度自动回封送到 UI 线程（F3-BLK-1）。
+        var progress = new Progress<PrintProgress>(_printProgress.Report);
+        PrintPrepareResult? result = null;
+        try
+        {
+            result = await PrintJobService.PrepareAsync(path, range.Pages, progress, _printCts.Token);
+            switch (result.Status)
+            {
+                case PrintPrepareStatus.Ready:
+                    _printProgress.Report(new PrintProgress(range.Pages.Count, range.Pages.Count, range.Pages[^1]));
+                    dialog.PrintDocument(result.Paginator!, Path.GetFileName(path));
+                    result.Dispose(); // 打印完成：删除临时产物
+                    result = null;
+                    _printProgress.End();
+                    if (DataContext is ViewModels.MainViewModel done)
+                    {
+                        done.StatusText = $"已发送打印任务：{Path.GetFileName(path)}";
+                    }
+                    break;
+
+                case PrintPrepareStatus.Canceled:
+                    _printProgress.End();
+                    if (DataContext is ViewModels.MainViewModel canceled)
+                    {
+                        canceled.StatusText = "已取消打印。";
+                    }
+                    break;
+
+                default:
+                    // NotPrintable / EmptyRange / Failed：携带中文原因（T3 已归一）
+                    _printProgress.End();
+                    if (DataContext is ViewModels.MainViewModel failed)
+                    {
+                        failed.StatusText = result.Error is { Length: > 0 } error ? $"打印未完成：{error}" : "打印未完成。";
+                    }
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _printProgress.End();
+            if (DataContext is ViewModels.MainViewModel canceled)
+            {
+                canceled.StatusText = "已取消打印。";
+            }
+        }
+        catch (Exception ex)
+        {
+            // 对话框打印 / 落盘的意外异常：归一为状态提示，不让 async void 逃逸（F3-BLK-1）。
+            Trace.WriteLine($"[MainWindow] 打印任务异常: {path} ({ex.Message})");
+            _printProgress.End();
+            if (DataContext is ViewModels.MainViewModel crashed)
+            {
+                crashed.StatusText = $"打印失败：{ex.Message}";
+            }
+        }
+        finally
+        {
+            result?.Dispose(); // 取消 / 异常路径：清理半成品临时产物
+            _printCts?.Dispose();
+            _printCts = null;
+            _printInProgress = false;
+            CommandManager.InvalidateRequerySuggested(); // 恢复入口可用性
+        }
+    }
+
+    /// <summary>状态栏「取消」：取消阶段① 预渲染；T3 逐页检查令牌并清理临时产物。</summary>
+    private void OnCancelPrintClick(object sender, RoutedEventArgs e) => _printCts?.Cancel();
 
     // ---- 顶栏事件（FR-07/FR-08） ----
 
@@ -1349,6 +1550,20 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// 绝不落盘 / 写日志 / 进异常消息；渲染 / 文本 / 保存 / 就地重载均经此取密码。
     /// </summary>
     private readonly SessionCredentialStore _credentials = new();
+
+    // ---- V3 T6 打印入口（Ctrl+P + 顶栏按钮；进度 / 取消） ----
+
+    /// <summary>状态栏打印进度视图模型（阶段① 预渲染进度文案）。</summary>
+    private readonly PrintProgressViewModel _printProgress = new();
+
+    /// <summary>打印服务（懒建；消费 T3，读取 SettingsStore.PrintDpi，作业自建专用渲染句柄 B2）。</summary>
+    private PrintService? _printService;
+
+    /// <summary>当前打印作业的取消源（阶段① 预渲染逐页检查）；无作业时为 null。</summary>
+    private CancellationTokenSource? _printCts;
+
+    /// <summary>是否有打印作业进行中（防重入；作业期间 Ctrl+P 不叠加）。</summary>
+    private bool _printInProgress;
 
     // ---- T6 会话恢复（session.json：tabs / window / leftPanel） ----
 
