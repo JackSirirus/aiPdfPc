@@ -5,30 +5,33 @@ using AIPDF.Windows.Models;
 namespace AIPDF.Windows.Tools;
 
 /// <summary>
-/// V1 工具通道。V1 只有两个实际宿主：<see cref="RightDrawer"/> 与 <see cref="TempTab"/>；
-/// 起始页工具在 V1 也统一落到临时标签承载（起始页只是入口，不是独立宿主）。
+/// V3 工具通道。四通道：<see cref="StartPage"/>（无 PDF 输入）/ <see cref="RightDrawer"/>（单文件内联参数）/
+/// <see cref="Wizard"/>（多文件或多步，居中模态向导）/ <see cref="TempTab"/>（复杂编辑，复用工具页临时标签）。
 /// </summary>
 public enum ToolChannel
 {
-    /// <summary>无 PDF 输入的工具：从起始页发起，V1 以临时标签承载。</summary>
+    /// <summary>无 PDF 输入的工具：从起始页发起，V1 起以临时标签承载。</summary>
     StartPage,
 
     /// <summary>单文件工具：主窗口右侧抽屉内联参数面板【D7】。</summary>
     RightDrawer,
 
-    /// <summary>其余工具：打开现有工具页作为临时标签承载【D16】。</summary>
+    /// <summary>多文件或多步工具：V3 居中模态向导骨架承载（FR-37 / 3.11）。</summary>
+    Wizard,
+
+    /// <summary>复杂编辑工具（crop/edit/forms）：打开现有工具页作为临时标签承载【D16】。</summary>
     TempTab,
 }
 
 /// <summary>
-/// V1 工具通道判定（权威数据源：设计/v1.0-阅读器/prd/01-工具通道映射表.md，四路评审）。
+/// V3 工具通道判定（权威数据源：设计/v1.0-阅读器/prd/01-工具通道映射表.md，四路评审）。
 /// <para>
 /// id 一律显式编码，刻意不从 <see cref="Tool.Multiple"/> 推导：映射表与 Multiple 并不一致，
 /// 例如 <c>pdfa</c> 的 Multiple=true 却属右抽屉，<c>forms</c> 的 Multiple=false 却属临时标签。
 /// </para>
 /// <para>
-/// 分布（01 表）：右抽屉 2（organize / pdfa）+ 起始页 6 + 其余 24 = 32。
-/// V1 不实现浮菜单（选中浮菜单不在 V1 范围）。
+/// 分布（01 表）：起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 21 + 临时标签 3（crop / edit / forms）= 32。
+/// V1 曾把向导降级为临时标签（6/2/24），V3 恢复权威分布并新增模态向导宿主。
 /// </para>
 /// </summary>
 public static class ToolChannels
@@ -51,7 +54,40 @@ public static class ToolChannels
         "html_to_pdf",
     };
 
-    /// <summary>判定工具在 V1 的承载通道；未显式列入右抽屉/起始页的一律临时标签。</summary>
+    /// <summary>
+    /// 向导工具 id（01-工具通道映射表.md「向导」21 行；判据 :39 多文件，或 id=workflow 多步）。
+    /// 复算：merge/split/remove/extract/compress/repair/ocr/pdf_to_images/pdf_to_word/pdf_to_ppt/
+    /// pdf_to_excel/rotate/numbers/watermark/unlock/protect/sign/redact/compare/markdown/workflow。
+    /// </summary>
+    private static readonly HashSet<string> WizardIds = new(StringComparer.Ordinal)
+    {
+        "merge",
+        "split",
+        "remove",
+        "extract",
+        "compress",
+        "repair",
+        "ocr",
+        "pdf_to_images",
+        "pdf_to_word",
+        "pdf_to_ppt",
+        "pdf_to_excel",
+        "rotate",
+        "numbers",
+        "watermark",
+        "unlock",
+        "protect",
+        "sign",
+        "redact",
+        "compare",
+        "markdown",
+        "workflow",
+    };
+
+    /// <summary>
+    /// 判定工具的承载通道。判据优先级（01 表 :11-15，先匹配先得）：
+    /// 右抽屉（显式）→ 起始页（无 PDF 输入）→ 向导（多文件或多步）→ 临时标签（复杂编辑，兜底）。
+    /// </summary>
     public static ToolChannel ChannelFor(Tool tool)
     {
         ArgumentNullException.ThrowIfNull(tool);
@@ -61,11 +97,19 @@ public static class ToolChannels
             return ToolChannel.RightDrawer;
         }
 
-        return StartPageIds.Contains(tool.Id) ? ToolChannel.StartPage : ToolChannel.TempTab;
+        if (StartPageIds.Contains(tool.Id))
+        {
+            return ToolChannel.StartPage;
+        }
+
+        return WizardIds.Contains(tool.Id) ? ToolChannel.Wizard : ToolChannel.TempTab;
     }
 
     /// <summary>该工具是否走右抽屉宿主（organize / pdfa）。</summary>
     public static bool RoutesToRightDrawer(Tool tool) => ChannelFor(tool) == ToolChannel.RightDrawer;
+
+    /// <summary>该工具是否走 V3 居中模态向导宿主（21 个多文件/多步工具）。</summary>
+    public static bool RoutesToWizard(Tool tool) => ChannelFor(tool) == ToolChannel.Wizard;
 }
 
 /// <summary>

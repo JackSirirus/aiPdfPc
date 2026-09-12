@@ -7,8 +7,8 @@ using Xunit;
 namespace AIPDF.Windows.Tests;
 
 /// <summary>
-/// V1 工具通道路由测试。权威基准 = 设计/v1.0-阅读器/prd/01-工具通道映射表.md：
-/// 右抽屉 2（organize / pdfa）+ 起始页 6 + 其余 24 临时标签 = 32。
+/// V3 工具通道路由测试。权威基准 = 设计/v1.0-阅读器/prd/01-工具通道映射表.md：
+/// 起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 21 + 临时标签 3（crop / edit / forms）= 32。
 /// id 显式列出，并验证路由不依赖 <see cref="Tool.Multiple"/>。
 /// </summary>
 public sealed class ToolChannelsTests
@@ -18,13 +18,15 @@ public sealed class ToolChannelsTests
     private static readonly string[] ExpectedStartPage =
         ["scan", "images_to_pdf", "word_to_pdf", "ppt_to_pdf", "excel_to_pdf", "html_to_pdf"];
 
-    private static readonly string[] ExpectedTempTab =
+    private static readonly string[] ExpectedWizard =
     [
         "merge", "split", "remove", "extract", "compress", "repair", "ocr",
         "pdf_to_images", "pdf_to_word", "pdf_to_ppt", "pdf_to_excel", "rotate",
-        "numbers", "watermark", "crop", "edit", "forms", "unlock", "protect",
-        "sign", "redact", "compare", "markdown", "workflow",
+        "numbers", "watermark", "unlock", "protect", "sign", "redact", "compare",
+        "markdown", "workflow",
     ];
+
+    private static readonly string[] ExpectedTempTab = ["crop", "edit", "forms"];
 
     [Fact]
     public void ChannelFor_RightDrawer_IsExactlyOrganizeAndPdfa()
@@ -43,7 +45,15 @@ public sealed class ToolChannelsTests
     }
 
     [Fact]
-    public void ChannelFor_Remaining24Tools_AreTempTab()
+    public void ChannelFor_Wizard_IsExactlyTheTwentyOneMultiFileOrMultiStepTools()
+    {
+        var actual = IdsWith(ToolChannel.Wizard);
+
+        Assert.Equal(ExpectedWizard.OrderBy(id => id), actual);
+    }
+
+    [Fact]
+    public void ChannelFor_ComplexEditorTools_AreTempTab()
     {
         var actual = IdsWith(ToolChannel.TempTab);
 
@@ -61,7 +71,14 @@ public sealed class ToolChannelsTests
         Assert.Equal(32, tools.Count);
         Assert.Equal(ExpectedRightDrawer.Length, byChannel[ToolChannel.RightDrawer].Count);
         Assert.Equal(ExpectedStartPage.Length, byChannel[ToolChannel.StartPage].Count);
+        Assert.Equal(ExpectedWizard.Length, byChannel[ToolChannel.Wizard].Count);
         Assert.Equal(ExpectedTempTab.Length, byChannel[ToolChannel.TempTab].Count);
+
+        // 权威分布：起始页 6 / 右抽屉 2 / 向导 21 / 临时标签 3。
+        Assert.Equal(6, byChannel[ToolChannel.StartPage].Count);
+        Assert.Equal(2, byChannel[ToolChannel.RightDrawer].Count);
+        Assert.Equal(21, byChannel[ToolChannel.Wizard].Count);
+        Assert.Equal(3, byChannel[ToolChannel.TempTab].Count);
 
         var union = byChannel.Values.SelectMany(ids => ids).ToList();
         Assert.Equal(32, union.Count); // 无工具落入两个通道（分组拆解后总数不变）
@@ -87,6 +104,16 @@ public sealed class ToolChannelsTests
         Assert.False(forms.Multiple);
         Assert.Equal(ToolChannel.RightDrawer, ToolChannels.ChannelFor(pdfa));
         Assert.Equal(ToolChannel.TempTab, ToolChannels.ChannelFor(forms));
+    }
+
+    [Fact]
+    public void RoutesToWizard_MatchesChannelFor()
+    {
+        var tools = ToolCatalog.Load();
+
+        Assert.Equal(
+            ExpectedWizard.OrderBy(id => id),
+            tools.Where(ToolChannels.RoutesToWizard).Select(t => t.Id).OrderBy(id => id));
     }
 
     private static IReadOnlyList<string> IdsWith(ToolChannel channel)

@@ -15,6 +15,7 @@ using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
 using AIPDF.Windows.Views.Reader.Panels;
+using AIPDF.Windows.Views.Wizard;
 
 namespace AIPDF.Windows.Views;
 
@@ -66,6 +67,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         SavePill.DataContext = _savePill;
         _savePill.RetryRequested += async (_, _) => await RetryActiveDocumentSaveAsync();
 
+        // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
+        QueueToast.MouseLeftButtonDown += OnWizardToastClick;
+
         // T5：启动时孤儿 GC 一次（>90 天未访问删除、超 100 条淘汰最旧，FR-27）；后台执行不阻塞启动。
         RunReadingStateGarbageCollect();
 
@@ -82,6 +86,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     /// <summary>队列取消 Toast 计时器（2s 自动隐藏）。</summary>
     private DispatcherTimer? _queueToastTimer;
+
+    /// <summary>V3 T4：非 PDF 向导结果待打开的输出文件夹（Toast 点击消费）。</summary>
+    private string? _wizardResultFolder;
 
     private void HookViewModel()
     {
@@ -195,8 +202,121 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return;
         }
 
+        // V3 T4：向导工具（21 个）在临时标签兜底之前走居中模态向导。
+        if (ToolChannels.RoutesToWizard(tool))
+        {
+            ShowWizard(tool, bridge, activeDocument);
+            return;
+        }
+
         var tab = TabHost.EnsureToolTab(tool, () => ToolPageRegistry.TryCreate(tool, bridge));
         ApplyDocumentContext(tab.Content, activeDocument); // 临时标签：打开时交接当前文档（含被激活前的文档）
+    }
+
+    // ---- V3 T4 居中模态向导（Wizard 通道） ----
+
+    /// <summary>
+    /// 向导工具承载：<see cref="ToolPageRegistry.TryCreate"/> 每次新建 fresh 页面 + VM——绝不复用
+    /// <see cref="TabHost"/> 缓存实例（WPF 单父级），向导会话内供参数步往返（D16），关闭即丢弃（Q10）。
+    /// <para>
+    /// 复刻标签宿主的上下文接线：<see cref="ApplyDocumentContext"/>（<see cref="IToolDocumentReceiver"/> 文档注入 +
+    /// <see cref="IToolStartGated"/><c>ToolTaskQueue.BeforeStart</c> 的 FR-21 flush 门禁）；向导提交走同一全局串行
+    /// 队列，不绕过「工具执行前 flush 未保存批注」保证。结果处置：PDF → 开新标签【D5】；非 PDF → Toast + 打开文件夹【ST-29】。
+    /// </para>
+    /// </summary>
+    private void ShowWizard(Models.Tool tool, Bridge.EngineBridge? bridge, string? activeDocument)
+    {
+        // fresh 实例：每次新建（ToolPageRegistry.TryCreate 内部 new），不进 TabHost 缓存。
+        var page = ToolPageRegistry.TryCreate(tool, bridge);
+
+        // 门禁接线（review M1）：文档上下文 + IToolStartGated.StartGate（编辑组直调引擎）；队列型经 Queue.BeforeStart。
+        ApplyDocumentContext(page, activeDocument);
+
+        var adapter = page?.DataContext as IWizardToolAdapter;
+        var queue = (DataContext as ViewModels.MainViewModel)?.Queue ?? ToolTaskQueue.Shared;
+        var viewModel = new WizardViewModel(tool, adapter, queue)
+        {
+            HostedContent = page, // 参数步内容 = fresh 工具页实例
+        };
+        viewModel.PinCurrentDocument(activeDocument); // ST-26：当前文档自动入选置顶并标记「当前文档」
+
+        var dialog = new WizardDialog(viewModel);
+        if (IsLoaded)
+        {
+            dialog.Owner = this;
+        }
+
+        var submitted = dialog.ShowDialog() == true;
+        var results = dialog.Results;
+        if (!submitted || results.Count == 0)
+        {
+            return; // Esc / 点遮罩取消：草稿已丢弃，不产生输出【ST-26】
+        }
+
+        var outputs = results.Where(r => r.Ok).SelectMany(r => r.Outputs).ToList();
+        var anyFailed = results.Any(r => !r.Ok);
+        if (WizardResultPolicy.Decide(outputs, anyFailed) == WizardResultAction.OpenTabs)
+        {
+            foreach (var output in outputs)
+            {
+                OpenDocumentTab(output); // D5：PDF 结果开新标签
+            }
+
+            if (DataContext is ViewModels.MainViewModel opened)
+            {
+                opened.StatusText = $"「{tool.Name}」完成：已打开 {outputs.Count} 个结果标签";
+            }
+
+            return;
+        }
+
+        // ST-29：非 PDF 结果 Toast + 「打开文件夹」（点击 Toast 打开输出目录）。
+        var folder = results.FirstOrDefault(r => r.Ok && !string.IsNullOrEmpty(r.OutputDir))?.OutputDir
+            ?? outputs.Select(Path.GetDirectoryName).FirstOrDefault(d => !string.IsNullOrEmpty(d));
+        ShowWizardFolderToast(folder);
+        if (DataContext is ViewModels.MainViewModel done)
+        {
+            done.StatusText = anyFailed ? $"「{tool.Name}」部分任务失败。" : $"「{tool.Name}」完成：结果已生成。";
+        }
+    }
+
+    /// <summary>非 PDF 向导结果：可点击 Toast（点击打开输出文件夹，4s 自动隐藏）【ST-29】。</summary>
+    private void ShowWizardFolderToast(string? folder)
+    {
+        _wizardResultFolder = folder;
+        QueueToast.IsHitTestVisible = true;
+        QueueToastText.Text = string.IsNullOrEmpty(folder) ? "已生成结果。" : "已生成结果：点击此处打开输出文件夹";
+        QueueToast.Visibility = Visibility.Visible;
+
+        _queueToastTimer?.Stop();
+        _queueToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _queueToastTimer.Tick += (_, _) =>
+        {
+            _queueToastTimer?.Stop();
+            QueueToast.Visibility = Visibility.Collapsed;
+            QueueToast.IsHitTestVisible = false;
+            _wizardResultFolder = null;
+        };
+        _queueToastTimer.Start();
+    }
+
+    /// <summary>非 PDF 结果 Toast 点击：打开输出文件夹（无文件夹时忽略）。</summary>
+    private void OnWizardToastClick(object sender, MouseButtonEventArgs e)
+    {
+        if (_wizardResultFolder is not { Length: > 0 } folder)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[MainWindow] 打开输出文件夹失败: {folder} ({ex.Message})");
+        }
     }
 
     // ---- T7 右抽屉（单文件工具内联宿主，决策 7） ----

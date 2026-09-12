@@ -276,11 +276,12 @@ public sealed class ToolSubmenuRoutingTests
     [Fact]
     public void SubmenuTools_RouteExactlyLikeExistingToolChannels()
     {
+        // V3 T4：固定四项均为多文件向导工具，路由到 Wizard（不再是 V1/V2 的临时标签兜底）。
         var tools = ToolCatalog.Load();
         foreach (var id in ToolSubmenuCatalog.ToolIds)
         {
             var tool = tools.Single(t => t.Id == id);
-            Assert.Equal(ToolChannel.TempTab, ToolChannels.ChannelFor(tool));
+            Assert.Equal(ToolChannel.Wizard, ToolChannels.ChannelFor(tool));
             Assert.False(ToolChannels.RoutesToRightDrawer(tool));
         }
     }
