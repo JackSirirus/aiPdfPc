@@ -447,7 +447,8 @@
                                                             </Style>
                                                         </Ellipse.Style>
                                                     </Ellipse>
-                                                </Grid>
+                                            </Grid>
+
                                                 <!-- V3 T11（C3）：手写/形状几何（Path 描边）。
                                                      Geometry 由 AnnotationOverlay 构建并冻结，坐标相对条目左上角
                                                      （条目经 Canvas.Left/Top 定位到 X/Y），随缩放由 VM 重算。 -->
@@ -750,6 +751,45 @@
                            Foreground="White"
                            FontSize="12" />
             </Border>
+
+            <!-- ============ V4 Option 3：加密文档锁定遮罩 ============
+                 未解锁时不打开文档 / 不解密 / 不渲染任何页；此处以遮罩替代内容区。
+                 「解锁」仅发事件，密码流程（复用 ST-04 对话框）与凭据驻留由宿主负责。 -->
+            <Border x:Name="LockOverlay"
+                    Panel.ZIndex="10"
+                    Background="{DynamicResource Brush.Sidebar}">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="440">
+                    <TextBlock Text="🔒"
+                               FontSize="40"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.LockedTitle}"
+                               Style="{StaticResource SectionTitle}"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.LockedHint}"
+                               Style="{StaticResource FieldHint}"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center"
+                               Margin="0,8,0,0" />
+                    <Button Content="{x:Static reader:ReaderStrings.UnlockButton}"
+                            Style="{StaticResource PrimaryButton}"
+                            MinWidth="96"
+                            HorizontalAlignment="Center"
+                            Margin="0,16,0,0"
+                            Click="OnUnlockClick" />
+                </StackPanel>
+            </Border>
         </Grid>
 
         <!-- ============ 错误条（ST-06 加载失败 / 渲染失败汇总） ============ -->
@@ -833,6 +873,21 @@
                     <Button Style="{StaticResource SpreadButton}"
                             Command="{Binding ToggleSpreadCommand}"
                             Content="{Binding SpreadToggleText}" />
+
+                    <!-- V4 Option 3：仅加密文档显示的锁状态指示；已解锁时提供「锁定」入口 -->
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{Binding LockStatusText}"
+                                   Style="{StaticResource FieldHint}"
+                                   VerticalAlignment="Center"
+                                   Margin="12,0,0,0" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Content="{x:Static reader:ReaderStrings.RelockButton}"
+                                Click="OnRelockClick"
+                                Margin="8,0,0,0"
+                                Visibility="{Binding ShowRelockAction, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
                 </StackPanel>
             </DockPanel>
         </Border>

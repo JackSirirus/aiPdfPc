@@ -661,15 +661,17 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     /// <summary>
     /// 解析打印门禁（AC-30.2）：无文档 / 阅读实例未完成加载（加载中）/ 加密未解锁 → 不可打印。
-    /// 复用 T3 <see cref="PrintService.EvaluateGate"/>（经由 <see cref="PrintEntry"/>），不复制判定；
-    /// 「加密」信号 = 会话驻留密码（解锁成功即驻留）。
+    /// 复用 T3 <see cref="PrintService.EvaluateGate"/>（经由 <see cref="PrintEntry"/>），不复制判定。
+    /// V4 Option 3：「加密」取阅读实例真实 <c>IsEncrypted</c>；锁定标签无 <c>HasDocument</c> 但仍是
+    /// 有效文档标签，故「已加载」视为 <c>HasDocument || IsLocked</c>，由 T3 凭加密 + 凭据裁决 Locked。
     /// </summary>
     private PrintGateDecision ResolvePrintGate()
     {
         var path = ActiveDocumentPath();
-        var hasLoadedDocument = ActiveReaderState()?.ViewModel.HasDocument ?? false;
-        var hasSessionPassword = path is not null && _credentials.Has(path);
-        return PrintEntry.EvaluateGate(PrintJobService, path, hasLoadedDocument, hasSessionPassword);
+        var reader = ActiveReaderState()?.ViewModel;
+        var isLoadedDocument = reader is not null && (reader.HasDocument || reader.IsLocked);
+        var isEncrypted = reader?.IsEncrypted ?? false;
+        return PrintEntry.EvaluateGate(PrintJobService, path, isLoadedDocument, isEncrypted);
     }
 
     /// <summary>Ctrl+P / 顶栏打印按钮可用性：门禁不通过（加载中 / 无文档 / 未解锁）或作业进行中 → 禁用（AC-30.2）。</summary>
@@ -868,7 +870,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// 打开文档标签并承载真实阅读视图（连续滚动/缩放/跳页，FR-01/05/06）；同路径已存在则激活现有标签【D14】。
     /// ReaderViewModel 必须在本方法（UI 线程）构造——其构造捕获 SynchronizationContext 用于渲染结果回传。
     /// LoadDocument 同步且失败不抛：错误经 ErrorMessage/HasError 由 ReaderView 错误条呈现，故不做 try/catch 兜底。
-    /// T9：加密文档走【ST-04】模态密码框；解锁成功驻留密码（进程内存），取消/Esc 不产生标签。
+    /// T9 / V4 Option 3：带会话密码则免密打开；无密码的加密文档以锁定标签打开（不打开/不解密/不渲染），
+    /// 由锁定遮罩的「解锁」按钮（宿主弹出既有【ST-04】密码框）解锁——不再在打开时自动弹框。
     /// </summary>
     private void OpenDocumentTab(string path)
     {
@@ -896,25 +899,45 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         };
 
         // T9：优先用会话驻留密码免密打开（同路径解锁过一次即命中）。
+        // V4 Option 3：无可用密码的加密文档不再自动弹框——以 IsLocked 标签打开（不打开/不解密/不渲染），
+        // 解锁走锁定遮罩上的「解锁」按钮（宿主弹出既有【ST-04】密码框）。会话恢复同路径（无密码）即锁定。
         vm.LoadDocument(fullPath, _credentials.Get(fullPath));
 
-        // T9【ST-04】加密文档：模态密码框；错误行内红字、不清空、不限次数；取消/Esc 不产生标签。
-        if (!vm.HasDocument && vm.LoadRequiresPassword && !PromptForPassword(fullPath, vm))
-        {
-            vm.Dispose(); // 取消：释放部分创建的渲染服务，不产生残留标签
-            return;
-        }
-
         var view = new ReaderView(vm);
-
-        // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
-        // V3 T5：reading-state 未命中时以设置 DefaultZoom / DefaultPanelKey 作为新打开文档的初始值。
-        RestoreReadingState(fullPath, vm, settings);
 
         // T2：浮菜单「用工具处理」接线（可用性探测 + 置顶/页范围预填交回宿主）
         view.ToolAvailabilityProvider = ToolAvailabilityProbe.Check;
         view.ToolLaunchRequested += OnReaderToolLaunchRequested;
 
+        // V4 Option 3：锁定标签的解锁 / 重锁由宿主统一处理（密码框 + 凭据 + 释放 + 打印门禁刷新）。
+        view.UnlockRequested += (_, _) => RequestUnlock(fullPath, vm);
+        view.RelockRequested += (_, _) => RelockDocument(fullPath, vm);
+
+        if (vm.HasDocument)
+        {
+            // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
+            // V3 T5：reading-state 未命中时以设置 DefaultZoom / DefaultPanelKey 作为新打开文档的初始值。
+            WireOpenedDocument(fullPath, vm, settings);
+        }
+
+        var tab = TabHost.OpenDocument(fullPath, () => view);
+        RegisterReaderTab(tab, vm, fullPath);
+
+        if (DataContext is ViewModels.MainViewModel main)
+        {
+            main.StatusText = vm.IsLocked
+                ? $"已打开（锁定）{tab.Title}"
+                : $"已打开 {tab.Title}";
+        }
+    }
+
+    /// <summary>
+    /// V4 Option 3：文档成功打开（或解锁成功）后的宿主接线——恢复阅读状态、挂接搜索、登记批注保存来源、
+    /// 采集冲突基线。锁定态不调用（无解密内容可挂接）。
+    /// </summary>
+    private void WireOpenedDocument(string fullPath, ReaderViewModel vm, AppSettings settings)
+    {
+        RestoreReadingState(fullPath, vm, settings);
         AttachSearchDocument(fullPath); // 先挂接搜索（面板在标签激活时绑定该 docId）
 
         // T4：登记批注保存来源（防抖/快速通道）并采集冲突基线。
@@ -923,13 +946,59 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         EnsureAnnotationSaveService().RegisterDocument(
             new ReaderAnnotationSaveSource(vm, fullPath, _credentials.Get(fullPath)));
         CaptureConflictBaseline(fullPath);
+    }
 
-        var tab = TabHost.OpenDocument(fullPath, () => view);
-        RegisterReaderTab(tab, vm, fullPath);
-
-        if (DataContext is ViewModels.MainViewModel main)
+    /// <summary>
+    /// V4 Option 3 解锁：弹出既有【ST-04】密码框反复尝试；成功则驻留密码、接线文档并刷新打印门禁，
+    /// 取消 / 密码错误保持锁定。密码只存在于对话框回调闭包与凭据存储内存，不落盘 / 不写日志 / 不进异常消息。
+    /// </summary>
+    private void RequestUnlock(string fullPath, ReaderViewModel vm)
+    {
+        var dialog = new PasswordPromptDialog(Path.GetFileName(fullPath), password =>
         {
-            main.StatusText = $"已打开 {tab.Title}";
+            if (!vm.Unlock(password)) return false; // 密码错误：保持锁定，对话框保持打开重试
+            _credentials.Store(fullPath, password);   // 解锁成功：进程内存驻留，后续免密
+            return true;
+        });
+
+        if (IsLoaded) dialog.Owner = this;
+        if (dialog.ShowDialog() != true) return; // 取消 / Esc：保持锁定
+
+        var settings = _settingsStore.Load();
+        WireOpenedDocument(fullPath, vm, settings);
+
+        // 解锁后若该标签为当前激活标签，重新挂接左栏面板；无论哪个标签都刷新打印门禁（加密已解锁 → 可打印）。
+        if (ActiveReaderState()?.ViewModel == vm) AttachPanelsToDocument(fullPath);
+        CommandManager.InvalidateRequerySuggested();
+        if (DataContext is ViewModels.MainViewModel unlocked)
+        {
+            unlocked.StatusText = $"已解锁 {Path.GetFileName(fullPath)}";
+        }
+    }
+
+    /// <summary>
+    /// V4 Option 3 重新锁定（安全关键）：清除该路径会话密码、释放阅读实例全部解密内容
+    /// （<see cref="ReaderViewModel.Lock"/> 关闭句柄 / 清位图 / 清文本与搜索缓存），并释放宿主侧解密内容
+    /// （搜索索引、左栏面板渲染句柄、批注保存会话），随后刷新打印门禁（加密锁定 → Ctrl+P 禁用）。
+    /// </summary>
+    private void RelockDocument(string fullPath, ReaderViewModel vm)
+    {
+        _credentials.Remove(fullPath); // (a) 清除会话密码：本会话不再免密，打印门禁回到 Locked
+        vm.Lock();                     // (b)(c) 释放全部解密内容并置 IsLocked
+
+        // 宿主侧同步释放：搜索文本句柄/索引、面板渲染句柄、批注保存会话（无解密内容残留）。
+        DetachSearchDocument(fullPath);
+        ClosePanelRendererFor(fullPath);
+        _annotationSaves?.UnregisterDocument(fullPath);
+        ResetSearchPanelViewModel();
+        UpdateSavePillForActiveTab();
+
+        // 该标签若为当前激活标签，刷新面板区（清空）与打印门禁可用性。
+        if (ActiveReaderState()?.ViewModel == vm) UpdateTabAreaState();
+        CommandManager.InvalidateRequerySuggested();
+        if (DataContext is ViewModels.MainViewModel locked)
+        {
+            locked.StatusText = $"已锁定 {Path.GetFileName(fullPath)}";
         }
     }
 
@@ -963,34 +1032,6 @@ public partial class MainWindow : Window, ISessionRestoreTarget
                 Trace.WriteLine($"[MainWindow] 打开外部文档失败: {path} ({ex.Message})");
             }
         }
-    }
-
-    /// <summary>
-    /// T9【ST-04】：弹出模态密码框反复尝试解锁同一 <paramref name="vm"/>（不清空、不限次数）。
-    /// 每次尝试把输入密码交给 <see cref="ReaderViewModel.LoadDocument"/>；成功即驻留进
-    /// <see cref="SessionCredentialStore"/> 并返回 true。<b>取消 / Esc 返回 false</b>（宿主不产生标签）。
-    /// 密码仅存在于对话框回调闭包与凭据存储内存中，不落盘、不写日志、不进异常消息。
-    /// </summary>
-    private bool PromptForPassword(string fullPath, ReaderViewModel vm)
-    {
-        var dialog = new PasswordPromptDialog(Path.GetFileName(fullPath), password =>
-        {
-            vm.LoadDocument(fullPath, password);
-            if (!vm.HasDocument)
-            {
-                return false; // 密码错误（或该文档仍无法打开）：对话框保持打开重试
-            }
-
-            _credentials.Store(fullPath, password); // 解锁成功：进程内存驻留，后续免密
-            return true;
-        });
-
-        if (IsLoaded)
-        {
-            dialog.Owner = this; // 启动恢复期窗口尚未 Loaded 时不设 Owner，避免 InvalidOperationException
-        }
-
-        return dialog.ShowDialog() == true;
     }
 
     // ---- 阅读视图接线（T3 ReaderViewModel ↔ 标签/面板联动） ----
@@ -1308,6 +1349,16 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             if (DataContext is ViewModels.MainViewModel main)
             {
                 main.StatusText = "请先打开一篇 PDF 文档再使用全文搜索。";
+            }
+            return;
+        }
+
+        // V4 Option 3：锁定加密标签无解密文本层，搜索需先解锁。
+        if (ActiveReaderState()?.ViewModel.IsLocked == true)
+        {
+            if (DataContext is ViewModels.MainViewModel locked)
+            {
+                locked.StatusText = ReaderStrings.LockedSearchBlocked;
             }
             return;
         }
@@ -1657,6 +1708,13 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// </summary>
     private void AttachPanelsToDocument(string path)
     {
+        // V4 Option 3：锁定加密标签无解密内容，不打开面板渲染句柄/搜索/书签（解锁后由 RequestUnlock 重新挂接）。
+        if (IsLockedDocument(path))
+        {
+            if (_attachedDocId is not null) ClosePanelRendererFor(_attachedDocId);
+            return;
+        }
+
         _panelRenderer ??= new PdfiumRenderService();
 
         string docId;
@@ -1722,6 +1780,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         _bookmarks.SetCurrentPage(_lastKnownPage.GetValueOrDefault(docId, 0));
 
         ShowReaderPanel(_panelState.ActiveKey); // 若当前正显示某面板，切换到新文档的实例
+    }
+
+    /// <summary>V4 Option 3：指定路径对应的文档标签当前是否处于锁定态（无解密文档句柄，面板/搜索不应挂接）。</summary>
+    private bool IsLockedDocument(string path)
+    {
+        var reader = _readerTabs.Values.FirstOrDefault(
+            r => string.Equals(r.DocId, path, StringComparison.OrdinalIgnoreCase));
+        return reader?.ViewModel.IsLocked == true;
     }
 
     /// <summary>

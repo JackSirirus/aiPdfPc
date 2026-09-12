@@ -257,6 +257,126 @@ public sealed class ReaderViewModelTests
         }
     }
 
+    // ---------------------------------------------------------------- V4 Option 3：加密文档锁定标签
+    // 语料 Corpus.Encrypted 为 AES-256 合成加密 PDF（用户密码 SECRET-123，10 页），不读个人文档。
+
+    private const string EncryptedPassword = "SECRET-123";
+
+    [Fact]
+    public void LoadDocument_EncryptedWithoutPassword_OpensLocked_WithoutDecrypting()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted); // 无可用会话密码
+
+        Assert.True(vm.IsEncrypted);
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.IsUnlocked);
+        Assert.False(vm.HasDocument);   // 未打开：不渲染、不解密
+        Assert.Equal(0, vm.PageCount);
+        Assert.Empty(vm.Pages);         // 无页项 → 无位图
+        Assert.Empty(vm.Groups);
+        Assert.Null(vm.DocumentPath);   // 无渲染文档句柄登记
+        Assert.Null(vm.ErrorMessage);   // 锁定不是错误（由遮罩呈现）
+    }
+
+    [Fact]
+    public void LoadDocument_EncryptedRestoreWithoutSessionPassword_ComesBackLocked()
+    {
+        // 会话恢复语义：启动时 SessionCredentialStore 为空（进程退出清除），恢复加密标签必须锁定且不弹框。
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted, password: null);
+
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.HasDocument);
+    }
+
+    [Fact]
+    public void LoadDocument_EncryptedWrongPassword_StaysLocked()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted, "not-the-password");
+
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.HasDocument);
+        Assert.Empty(vm.Pages);
+        Assert.Null(vm.ErrorMessage); // 密码错误由解锁对话框行内提示，不落通用错误条
+    }
+
+    [Fact]
+    public async Task Unlock_CorrectPassword_OpensAndRenders()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted);
+        Assert.True(vm.IsLocked);
+
+        Assert.True(vm.Unlock(EncryptedPassword));
+        Assert.False(vm.IsLocked);
+        Assert.True(vm.IsUnlocked);
+        Assert.True(vm.HasDocument);
+        Assert.Equal(10, vm.PageCount);
+        Assert.Equal(10, vm.Pages.Count);
+
+        vm.UpdateViewport(0, 600, 800);
+        await WaitUntilAsync(() => vm.Pages[0].IsRendered, "解锁后应能正常渲染页 0");
+        Assert.NotNull(vm.Pages[0].Bitmap);
+    }
+
+    [Fact]
+    public void Unlock_WrongPassword_StaysLockedWithoutPages()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted);
+
+        Assert.False(vm.Unlock("wrong-password"));
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.HasDocument);
+        Assert.Empty(vm.Pages);
+    }
+
+    [Fact]
+    public async Task Lock_ReleasesDecryptedContent_AndIsReversible()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Encrypted, EncryptedPassword);
+        vm.UpdateViewport(0, 600, 800);
+        await WaitUntilAsync(() => vm.Pages[0].IsRendered, "解锁态应先渲染页 0");
+
+        var page0 = vm.Pages[0];
+        Assert.NotNull(page0.Bitmap);
+
+        vm.Lock();
+
+        // 安全红线：锁定后无文档句柄、无页项、位图引用被释放，且不再可渲染。
+        Assert.True(vm.IsLocked);
+        Assert.True(vm.IsEncrypted);
+        Assert.False(vm.HasDocument);
+        Assert.Null(vm.DocumentPath);
+        Assert.Equal(0, vm.PageCount);
+        Assert.Empty(vm.Pages);
+        Assert.Empty(vm.Groups);
+        Assert.Null(page0.Bitmap);
+        vm.UpdateViewport(0, 600, 800); // 锁定态视口更新为空操作（无可渲染页）
+        Assert.Empty(vm.Pages);
+
+        // 可逆：锁定后可再次解锁并恢复渲染能力（路径被保留用于重试）。
+        Assert.True(vm.Unlock(EncryptedPassword));
+        Assert.True(vm.HasDocument);
+        Assert.Equal(10, vm.PageCount);
+    }
+
+    [Fact]
+    public void Lock_PlainDocument_IsNoOp()
+    {
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Mixed100);
+
+        vm.Lock();
+
+        Assert.False(vm.IsEncrypted);
+        Assert.False(vm.IsLocked);
+        Assert.True(vm.HasDocument);
+    }
+
     // ---------------------------------------------------------------- 工具
 
     private static async Task WaitUntilAsync(Func<bool> condition, string message, int timeoutMs = 30_000)

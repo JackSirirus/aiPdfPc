@@ -32,6 +32,15 @@ public static class ReaderStrings
     public const string PasswordDialogWrongError = "密码错误，请重试";
     public const string PasswordDialogUnlock = "解锁";
 
+    // ---- V4 Option 3：加密文档锁定标签（未解锁不打开/不解密/不渲染；打印门禁同步禁用） ----
+    public const string LockedTitle = "此文档已锁定";
+    public const string LockedHint = "此 PDF 已加密。解锁后才能查看和打印内容；锁定期间不会保留任何解密内容。";
+    public const string UnlockButton = "解锁";
+    public const string RelockButton = "锁定";
+    public const string LockedStatusLabel = "已锁定";
+    public const string UnlockedStatusLabel = "已解锁";
+    public const string LockedSearchBlocked = "文档已锁定，请先解锁后再使用搜索。";
+
     // ---- T2 选中浮菜单 / 悬停操作 / 笔记 ----
     public const string MenuCopy = "复制";
     public const string MenuHighlight = "高亮";

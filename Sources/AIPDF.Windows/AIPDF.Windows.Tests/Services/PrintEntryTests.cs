@@ -38,7 +38,7 @@ public sealed class PrintEntryTests : IDisposable
     [Fact]
     public void EvaluateGate_NoActiveDocument_IsNotLoaded()
     {
-        var decision = PrintEntry.EvaluateGate(CreateService(), null, readerHasDocument: true, hasSessionPassword: false);
+        var decision = PrintEntry.EvaluateGate(CreateService(), null, readerHasDocument: true, isDocumentEncrypted: false);
         Assert.False(decision.IsPrintable);
         Assert.Equal(PrintGateStatus.NotLoaded, decision.Status);
     }
@@ -47,7 +47,7 @@ public sealed class PrintEntryTests : IDisposable
     public void EvaluateGate_LoadingInProgress_IsNotLoaded()
     {
         // 文档路径已存在但阅读实例尚未完成加载（加载中）→ 不可打印。
-        var decision = PrintEntry.EvaluateGate(CreateService(), _docPath, readerHasDocument: false, hasSessionPassword: false);
+        var decision = PrintEntry.EvaluateGate(CreateService(), _docPath, readerHasDocument: false, isDocumentEncrypted: false);
         Assert.False(decision.IsPrintable);
         Assert.Equal(PrintGateStatus.NotLoaded, decision.Status);
     }
@@ -55,24 +55,26 @@ public sealed class PrintEntryTests : IDisposable
     [Fact]
     public void EvaluateGate_LoadedPlainDocument_IsPrintable()
     {
-        var decision = PrintEntry.EvaluateGate(CreateService(), _docPath, readerHasDocument: true, hasSessionPassword: false);
+        var decision = PrintEntry.EvaluateGate(CreateService(), _docPath, readerHasDocument: true, isDocumentEncrypted: false);
         Assert.True(decision.IsPrintable);
     }
 
     [Fact]
     public void EvaluateGate_EncryptedUnlocked_IsPrintable()
     {
+        // V4 Option 3：加密信号来自阅读实例真实 IsEncrypted；解锁后会话驻留密码 → 仍可打印。
         var credentials = new SessionCredentialStore();
         credentials.Store(_docPath, "SECRET-123");
-        var decision = PrintEntry.EvaluateGate(CreateService(credentials), _docPath, readerHasDocument: true, hasSessionPassword: true);
+        var decision = PrintEntry.EvaluateGate(CreateService(credentials), _docPath, readerHasDocument: true, isDocumentEncrypted: true);
         Assert.True(decision.IsPrintable);
     }
 
     [Fact]
-    public void EvaluateGate_EncryptedSignalWithoutStoredPassword_IsLocked()
+    public void EvaluateGate_EncryptedLocked_IsLocked()
     {
-        // 加密信号存在但会话无密码（防御性：不应出现的未解锁标签）→ 复用 T3 的 Locked 判定。
-        var decision = PrintEntry.EvaluateGate(CreateService(new SessionCredentialStore()), _docPath, readerHasDocument: true, hasSessionPassword: true);
+        // V4 Option 3：加密且锁定（会话无密码）→ Locked（Ctrl+P 禁用）；这是锁定标签的可观测门禁。
+        var decision = PrintEntry.EvaluateGate(
+            CreateService(new SessionCredentialStore()), _docPath, readerHasDocument: true, isDocumentEncrypted: true);
         Assert.False(decision.IsPrintable);
         Assert.Equal(PrintGateStatus.Locked, decision.Status);
     }

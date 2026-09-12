@@ -15,6 +15,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -292,6 +293,12 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private string? _documentPath;
 
     /// <summary>
+    /// V4 Option 3：<see cref="LoadDocument"/> 的输入路径（规范化）。锁定态下渲染/文本句柄与页项
+    /// 均已释放，仅保留该路径用于「解锁」重试。路径本身不是解密内容，不是安全红线。
+    /// </summary>
+    private string? _sourcePath;
+
+    /// <summary>
     /// 本次会话驻留的解密密码（T9）：仅内存，用于惰性文本层句柄重开（选区/搜索）。
     /// 只在打开成功后写入；绝不落盘 / 写日志 / 进异常消息（PRD 4.3.3）。
     /// 渲染/保存的逐请求密码由宿主的 <c>SessionCredentialStore</c> 提供。
@@ -474,6 +481,36 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(PageIndicatorText))]
     private bool _hasDocument;
 
+    /// <summary>
+    /// V4 Option 3：当前文档是否为加密文档（打开时需密码）。由「无密码打开触发 FPDF_ERR_PASSWORD」
+    /// 或「带密码成功打开」判定；供锁定 UI 与打印门禁（<c>PrintEntry</c>）使用。
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsUnlocked))]
+    [NotifyPropertyChangedFor(nameof(LockStatusText))]
+    [NotifyPropertyChangedFor(nameof(ShowRelockAction))]
+    private bool _isEncrypted;
+
+    /// <summary>
+    /// V4 Option 3：加密文档当前是否处于锁定态。锁定态下：未打开任何渲染/文本句柄、不含页项与位图、
+    /// 无搜索/文本缓存；UI 显示锁定遮罩与「解锁」入口；打印门禁禁用。锁定是「本会话不可查看/不可打印，
+    /// 且解密内容已从内存释放」的明确边界（安全红线，见 <see cref="Lock"/>）。
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsUnlocked))]
+    [NotifyPropertyChangedFor(nameof(LockStatusText))]
+    [NotifyPropertyChangedFor(nameof(ShowRelockAction))]
+    private bool _isLocked;
+
+    /// <summary>加密文档是否已解锁（加密且非锁定）。</summary>
+    public bool IsUnlocked => IsEncrypted && !IsLocked;
+
+    /// <summary>状态栏锁状态文案（仅当 <see cref="IsEncrypted"/> 时有意义）。</summary>
+    public string LockStatusText => IsLocked ? ReaderStrings.LockedStatusLabel : ReaderStrings.UnlockedStatusLabel;
+
+    /// <summary>是否显示「锁定」入口（仅已解锁的加密文档提供重新锁定）。</summary>
+    public bool ShowRelockAction => IsUnlocked;
+
     [ObservableProperty]
     private string _jumpText = "";
 
@@ -515,20 +552,26 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// 最近一次 <see cref="LoadDocument"/> 是否因「需要密码」失败（PDFium <c>FPDF_ERR_PASSWORD</c>）。
-    /// 宿主据此进入【ST-04】模态密码框（错误行内红字、不清空、不限次数）；非密码类失败（格式/损坏）保持
-    /// false，仍走既有错误条。
+    /// V4 Option 3 起不再驱动自动弹框（宿主已改为锁定标签 + 手动「解锁」）；保留为诊断/兼容信号。
+    /// 非密码类失败（格式/损坏）保持 false，仍走既有错误条。
     /// </summary>
     public bool LoadRequiresPassword { get; private set; }
 
     /// <summary>
     /// 打开文档并构建虚拟化布局（页尺寸一次取自 T1 缓存）。失败写入 ErrorMessage（ST-06，模态对话框由宿主 T5 负责）。
     /// 密码只在打开成功时驻留本 VM 内存（T9），供惰性文本层重开；不落盘、不写日志。
+    /// <para>
+    /// V4 Option 3：无可用密码打开加密文档时（<c>FPDF_ERR_PASSWORD</c>）不打开、不解密、不渲染——
+    /// 置 <see cref="IsEncrypted"/>=<see cref="IsLocked"/>=true，标签以锁定态呈现；解锁走
+    /// <see cref="Unlock"/>（宿主弹出既有【ST-04】密码框）。锁定不是错误，不写 ErrorMessage。
+    /// </para>
     /// </summary>
     public void LoadDocument(string path, string? password = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ErrorMessage = null;
         LoadRequiresPassword = false;
+        _sourcePath = Path.GetFullPath(path);
 
         try
         {
@@ -537,6 +580,10 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             _service = svc;
             var docId = svc.OpenDocument(path, password);
             _documentPassword = password; // 打开成功才驻留；失败密码不保留
+
+            // V4 Option 3：带密码成功打开 = 加密文档；解除锁定（重开/解锁路径）。
+            if (!string.IsNullOrEmpty(password)) IsEncrypted = true;
+            IsLocked = false;
 
             // 重复加载：释放上一份文档（T1 句柄去重同路径，不同路径才真正关闭）
             if (_docId is not null && _docId != docId)
@@ -604,12 +651,108 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             _groupHeights = [];
             SetSpreadBacking(false);
             _documentPassword = null;
-            LoadRequiresPassword = ex.ErrorCode == PdfiumRenderService.PdfiumErrorPassword;
-            ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
+
+            if (ex.ErrorCode == PdfiumRenderService.PdfiumErrorPassword)
+            {
+                // V4 Option 3：加密文档无可用会话密码 → 保持锁定（未打开任何句柄、未解密、未渲染）。
+                // 失败打开不会保留 document 句柄（T1 失败路径已释放 pin），故无解密内容残留。
+                IsEncrypted = true;
+                IsLocked = true;
+                LoadRequiresPassword = true;
+                ErrorMessage = null; // 锁定不是错误：由锁定遮罩呈现，密码行内提示归解锁对话框
+            }
+            else
+            {
+                ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
+            }
         }
     }
 
     private static PdfiumRenderService CreateService() => new();
+
+    // ------------------------------------------------------------------ V4 Option 3：锁定 / 解锁状态机
+
+    /// <summary>
+    /// 用密码解锁当前锁定文档。仅当「加密且锁定」时有效；成功则打开文档并解除锁定
+    /// （<see cref="IsEncrypted"/> 保持 true），失败保持锁定并返回 false。密码仅驻留本 VM 与宿主
+    /// <c>SessionCredentialStore</c> 内存，不落盘 / 不写日志 / 不进异常消息。
+    /// </summary>
+    public bool Unlock(string password)
+    {
+        if (!IsEncrypted || !IsLocked || string.IsNullOrEmpty(password)) return false;
+        var path = _sourcePath ?? _documentPath;
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        LoadDocument(path, password);
+        return !IsLocked && HasDocument;
+    }
+
+    /// <summary>
+    /// 重新锁定（V4 Option 3，安全关键）：释放全部解密内容并回到锁定态。
+    /// 宿主须同时清除 <c>SessionCredentialStore</c> 中该路径的密码（本 VM 不持有该存储）。
+    /// 保证：锁定后本 VM 不再持有任何文档句柄 / 页项 / 位图 / 文本或搜索缓存。
+    /// </summary>
+    public void Lock()
+    {
+        if (!IsEncrypted || IsLocked) return;
+        ReleaseDecryptedContent();
+        IsLocked = true;
+    }
+
+    /// <summary>
+    /// 释放一切可解密内容（安全红线）：关闭渲染与文本句柄、清在途渲染、清页项与位图、
+    /// 清搜索高亮 / 批注投影 / 选区 / 绘制预览、清文本层与页尺寸缓存、清本 VM 驻留密码。
+    /// 仅保留 <see cref="_sourcePath"/> 供再次解锁（路径非解密内容）。
+    /// </summary>
+    private void ReleaseDecryptedContent()
+    {
+        // ① 关闭渲染文档句柄（T1 CloseDocument 会 drain 在途原生调用；此后无法再渲染/提取）。
+        if (_docId is not null && _service is not null)
+        {
+            try { _service.CloseDocument(_docId); }
+            catch (Exception ex) { Trace.WriteLine($"[ReaderViewModel] 锁定关闭文档失败: {ex.Message}"); }
+        }
+        _docId = null;
+
+        // ② 关闭独立文本层句柄（选区/搜索文本来源）并清缓存。
+        CloseTextDocument();
+        _textLayerCache.Clear();
+        _inFlight.Clear();
+
+        // ③ 释放每一页持有的位图与各类叠加投影；页 VM 本身也不再保留（清空 Pages）。
+        foreach (var page in Pages)
+        {
+            page.Bitmap = null;
+            page.RenderedKey = null;
+            page.PendingKey = null;
+            page.IsRendering = false;
+            page.ClearSearchRects();
+            page.ReleaseAnnotationOverlays();
+            page.SelectionRects.Clear();
+            page.DrawPreview = null;
+            page.DrawPreviewThickness = 0;
+        }
+        Pages.Clear();
+        Groups.Clear();
+
+        // ④ 清布局/尺寸/高亮等一切可推导出文档内容的缓存。
+        _groups = PageGroupMap.Single(0);
+        _groupOffsets = [];
+        _groupHeights = [];
+        _pageSizes = [];
+        _pageRotations = [];
+        _searchHighlightPage = -1;
+        _hasLayout = false;
+        _scrollTop = 0;
+        PageCount = 0;
+        CurrentPageNumber = 0;
+        HasDocument = false;
+        ErrorMessage = null;
+
+        // ⑤ 清除句柄路径与本 VM 驻留密码（真实密码由宿主 SessionCredentialStore 清除）。
+        _documentPath = null;
+        _documentPassword = null;
+    }
 
     // ------------------------------------------------------------------ 对开开关持久化（V3 T9：reading-state，按文件键 size/mtime）
 
@@ -1411,6 +1554,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         _textService = null;
         _textLayerCache.Clear();
         _documentPath = null;
+        _sourcePath = null;
         _documentPassword = null; // T9：随文档关闭清除驻留密码（进程退出即整体清除）
 
         if (_ownsService)

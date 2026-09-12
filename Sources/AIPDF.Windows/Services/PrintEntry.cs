@@ -18,23 +18,24 @@ public static class PrintEntry
     /// 解析门禁输入并复用 T3 <see cref="PrintService.EvaluateGate"/>（AC-30.2，不复制判定逻辑）。
     /// <para>
     /// 「已加载」要求存在激活文档路径且阅读实例已完成加载（<c>HasDocument</c>）；加载中 / 无文档 → 未加载。
-    /// 「加密」取会话驻留密码信号：解锁成功即驻留（<see cref="SessionCredentialStore"/>），
-    /// 加密且未解锁的文档不会产生标签；该信号保证加密已解锁文档仍可打印。
+    /// 「加密」取阅读实例的真实 <c>IsEncrypted</c>（V4 Option 3：加密且已解锁为 true，加密锁定亦为 true，
+    /// 普通文档为 false）——不再以「会话是否驻留密码」推断加密，否则锁定的加密标签会被误判为普通文档。
+    /// 是否可打印仍由 T3 裁决：加密且 <see cref="SessionCredentialStore"/> 无该路径密码 → Locked。
     /// </para>
     /// </summary>
     /// <param name="service">T3 打印服务（门禁判定唯一来源）。</param>
     /// <param name="documentPath">激活文档标签路径（可为 null）。</param>
-    /// <param name="readerHasDocument">激活文档的阅读实例是否已完成加载。</param>
-    /// <param name="hasSessionPassword">该文档是否已在会话内驻留密码（= 加密且已解锁）。</param>
+    /// <param name="readerHasDocument">激活文档的阅读实例是否已完成加载（锁定标签亦视为「已就绪」，由加密/凭据裁决）。</param>
+    /// <param name="isDocumentEncrypted">该文档是否为加密文档（阅读实例 <c>IsEncrypted</c>，真实信号）。</param>
     public static PrintGateDecision EvaluateGate(
         PrintService service,
         string? documentPath,
         bool readerHasDocument,
-        bool hasSessionPassword)
+        bool isDocumentEncrypted)
     {
         ArgumentNullException.ThrowIfNull(service);
         var isLoaded = readerHasDocument && !string.IsNullOrWhiteSpace(documentPath);
-        return service.EvaluateGate(documentPath, isLoaded, isDocumentEncrypted: hasSessionPassword);
+        return service.EvaluateGate(documentPath, isLoaded, isDocumentEncrypted);
     }
 
     /// <summary>

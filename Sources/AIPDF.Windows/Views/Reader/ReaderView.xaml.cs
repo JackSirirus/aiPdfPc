@@ -120,6 +120,24 @@ public partial class ReaderView : UserControl
     /// <summary>「用工具处理」发起：宿主经既有 ToolChannels/ShowToolPage 打开并做置顶/页范围预填。</summary>
     public event EventHandler<ToolLaunchRequest>? ToolLaunchRequested;
 
+    /// <summary>
+    /// V4 Option 3：锁定标签「解锁」请求。宿主负责弹出既有【ST-04】密码框、把密码驻留
+    /// <c>SessionCredentialStore</c> 并调用 <see cref="ReaderViewModel.Unlock"/>；取消则保持锁定。
+    /// </summary>
+    public event EventHandler? UnlockRequested;
+
+    /// <summary>
+    /// V4 Option 3：已解锁加密文档「锁定」请求。宿主负责清除会话密码、释放解密内容
+    /// （<see cref="ReaderViewModel.Lock"/> + 面板/搜索/批注会话）并刷新打印门禁。
+    /// </summary>
+    public event EventHandler? RelockRequested;
+
+    /// <summary>锁定遮罩「解锁」按钮：仅发事件，密码流程由宿主负责（视图不接触密码）。</summary>
+    private void OnUnlockClick(object sender, RoutedEventArgs e) => UnlockRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>状态栏「锁定」按钮：仅发事件，释放解密内容由宿主 + VM 完成。</summary>
+    private void OnRelockClick(object sender, RoutedEventArgs e) => RelockRequested?.Invoke(this, EventArgs.Empty);
+
     // ------------------------------------------------------------ 滚动 ↔ 模型
 
     private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
@@ -961,6 +979,14 @@ public partial class ReaderView : UserControl
         if (e.PropertyName == nameof(ReaderViewModel.SpreadEnabled))
         {
             // V3 T9：单页/双页切换会整体重建组容器，先收起弹层与选区，避免锚点指向已回收元素。
+            CancelDrawing();
+            CloseAllAndClear();
+            return;
+        }
+
+        // V4 Option 3：锁定/解锁会整体替换页项（锁定释放、解锁重建），先收起弹层与选区避免悬空锚点。
+        if (e.PropertyName == nameof(ReaderViewModel.IsLocked))
+        {
             CancelDrawing();
             CloseAllAndClear();
             return;
