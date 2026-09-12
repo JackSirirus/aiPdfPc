@@ -68,6 +68,7 @@ public sealed class SettingsDialog : Window
         {
             Text = "设置",
             Style = FindStyle("PageTitle"),
+            FontFamily = FindFontFamily("FontFamily.Display"),
         };
         rows.Children.Add(title);
         Grid.SetRow(title, row);
@@ -312,6 +313,10 @@ public sealed class SettingsDialog : Window
 
     /// <summary>从 App 级资源取样式；缺失返回 null（控件回退默认外观，不崩）。</summary>
     private static Style? FindStyle(string key) => Application.Current?.TryFindResource(key) as Style;
+
+    /// <summary>从 App 级资源取字体族；缺失回退 sans UI 字体（不静默变衬线）。</summary>
+    private static FontFamily FindFontFamily(string key)
+        => Application.Current?.TryFindResource(key) as FontFamily ?? new FontFamily("Segoe UI Variable Display, Segoe UI");
 
     /// <summary>从 App 级资源取画刷；缺失返回默认（Transparent），避免对话框构造期拿不到资源时崩溃。</summary>
     private static Brush FindBrush(string key)

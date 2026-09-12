@@ -79,6 +79,7 @@ public sealed class AboutDialog : Window
             Text = "AIPDF · 本地 PDF 工作台",
             FontSize = 17,
             FontWeight = FontWeights.SemiBold,
+            FontFamily = FindFontFamily("FontFamily.Display"),
         });
         titlePanel.Children.Add(new TextBlock
         {
@@ -211,6 +212,10 @@ public sealed class AboutDialog : Window
     }
 
     private static Style? FindStyle(string key) => Application.Current?.TryFindResource(key) as Style;
+
+    /// <summary>从 App 级资源取字体族；缺失回退 sans UI 字体（不静默变衬线）。</summary>
+    private static FontFamily FindFontFamily(string key)
+        => Application.Current?.TryFindResource(key) as FontFamily ?? new FontFamily("Segoe UI Variable Display, Segoe UI");
 
     private static Brush FindBrush(string key)
         => Application.Current?.TryFindResource(key) as Brush ?? Brushes.Transparent;

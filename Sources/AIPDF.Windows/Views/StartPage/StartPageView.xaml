@@ -142,6 +142,7 @@
                         <TextBlock Margin="0,16,0,0"
                                    Text="开始使用 AIPDF"
                                    FontSize="24"
+                                   FontFamily="{StaticResource FontFamily.Display}"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.TextPrimary}" />
                         <TextBlock Margin="0,8,0,0"

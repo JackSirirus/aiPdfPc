@@ -83,10 +83,17 @@
         <SolidColorBrush x:Key="Brush.Dark.DropZoneBackground" Color="#23201A" />
         <SolidColorBrush x:Key="Brush.Dark.DropZoneHoverBackground" Color="#2C3346" />
 
+        <!-- 衬线展示字体（A+C Phase 1）：只用于展示/标题（PageTitle、SectionTitle、工具页标题、
+             hero 标题与模态标题）。正文、表单、按钮、状态栏、图标字形（Segoe MDL2 Assets）保持 sans。
+             WPF FontFamily 支持逗号回退链；Windows 原生一般命中 SimSun（宋体）。
+             字体不随主题切换，故样式内用 StaticResource 引用（审计只禁止 StaticResource Brush.*）。 -->
+        <FontFamily x:Key="FontFamily.Display">Source Han Serif SC, Noto Serif SC, Songti SC, SimSun, Georgia</FontFamily>
+
         <!-- 字号阶梯：26 页标题 / 15 区块标题 / 13 正文与字段 / 12 辅助 / 11 脚注（与 MainWindow 一致） -->
         <Style x:Key="PageTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="26" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontFamily" Value="{StaticResource FontFamily.Display}" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
         </Style>
         <Style x:Key="PageSubtitle" TargetType="TextBlock">
@@ -96,6 +103,7 @@
         <Style x:Key="SectionTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="15" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontFamily" Value="{StaticResource FontFamily.Display}" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
         </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock">

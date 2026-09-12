@@ -11,6 +11,7 @@
     <Style x:Key="PageTitleText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="26" />
         <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontFamily" Value="{StaticResource FontFamily.Display}" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
     </Style>
 
@@ -29,6 +30,7 @@
     <Style x:Key="SectionTitleText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontFamily" Value="{StaticResource FontFamily.Display}" />
         <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="Margin" Value="0,22,0,8" />
     </Style>
