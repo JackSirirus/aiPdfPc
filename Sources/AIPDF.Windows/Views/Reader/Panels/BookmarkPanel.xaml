@@ -6,6 +6,8 @@
         <Style x:Key="BookmarkItemStyle" TargetType="ListBoxItem">
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
+            <!-- A+C Phase 2：选中态 token 化（对齐 SearchPanel）；标题 TextBlock 不设 Foreground，继承此处以随选中变色 -->
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
@@ -25,11 +27,11 @@
                                                FontSize="11"
                                                VerticalAlignment="Center"
                                                Foreground="{DynamicResource Brush.Accent}" />
+                                    <!-- 不设 Foreground：继承 ListBoxItem（默认 TextPrimary / 选中 AccentText） -->
                                     <TextBlock Text="{Binding Title}"
                                                FontSize="12"
                                                Margin="8,0,0,0"
-                                               VerticalAlignment="Center"
-                                               Foreground="{DynamicResource Brush.TextPrimary}" />
+                                               VerticalAlignment="Center" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
                                         Command="{Binding DataContext.RemoveBookmarkCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
@@ -60,6 +62,10 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

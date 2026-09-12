@@ -14,6 +14,37 @@
                  VirtualizingPanel.VirtualizationMode="Recycling"
                  VirtualizingPanel.ScrollUnit="Pixel"
                  SelectionChanged="OnThumbSelected">
+            <!-- A+C Phase 2：选中缩略图 = 2px 强调描边（复用 Brush.Accent，不新增 token）。
+                 容器自绘外框，避免系统默认高亮；内层条目边框保持 1px 暖边框。 -->
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="SnapsToDevicePixels" Value="True" />
+                    <Setter Property="Cursor" Value="Hand" />
+                    <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <Border x:Name="SelectionOutline"
+                                        Background="Transparent"
+                                        BorderBrush="Transparent"
+                                        BorderThickness="2"
+                                        CornerRadius="8"
+                                        SnapsToDevicePixels="True">
+                                    <ContentPresenter />
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <Setter TargetName="SelectionOutline"
+                                                Property="BorderBrush"
+                                                Value="{DynamicResource Brush.Accent}" />
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <Border Margin="2,4"

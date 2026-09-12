@@ -89,6 +89,43 @@
              字体不随主题切换，故样式内用 StaticResource 引用（审计只禁止 StaticResource Brush.*）。 -->
         <FontFamily x:Key="FontFamily.Display">Source Han Serif SC, Noto Serif SC, Songti SC, SimSun, Georgia</FontFamily>
 
+        <!-- A+C Phase 2：焦点环 = accent（仅键盘焦点时由 WPF 装饰层绘制，不占布局）。
+             AccentFocusVisual：按钮等通用控件 = 2px Brush.Accent 外环；
+             InputFocusVisual：输入类 = Brush.Accent 边框 + Brush.AccentSoft 3px 柔环。
+             引用的样式资源非 Brush.*，审计允许 StaticResource。 -->
+        <Style x:Key="AccentFocusVisual">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="1"
+                                   RadiusX="6"
+                                   RadiusY="6"
+                                   Stroke="{DynamicResource Brush.Accent}"
+                                   StrokeThickness="2"
+                                   SnapsToDevicePixels="True" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="InputFocusVisual">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Grid>
+                            <Border BorderBrush="{DynamicResource Brush.AccentSoft}"
+                                    BorderThickness="3"
+                                    CornerRadius="8"
+                                    Margin="-3" />
+                            <Border BorderBrush="{DynamicResource Brush.Accent}"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Margin="-1" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 字号阶梯：26 页标题 / 15 区块标题 / 13 正文与字段 / 12 辅助 / 11 脚注（与 MainWindow 一致） -->
         <Style x:Key="PageTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="26" />
@@ -124,6 +161,13 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Background" Value="{DynamicResource Brush.FieldBackground}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+            <!-- A+C Phase 2：输入聚焦 = Accent 边框 + AccentSoft 3px 焦点环 -->
+            <Setter Property="FocusVisualStyle" Value="{StaticResource InputFocusVisual}" />
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="FieldTextBox" TargetType="TextBox" BasedOn="{StaticResource FieldInput}" />
         <Style x:Key="FieldComboBox" TargetType="ComboBox" BasedOn="{StaticResource FieldInput}" />
@@ -135,6 +179,7 @@
             <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         </Style>
         <Style x:Key="SecondaryButton" TargetType="Button">
             <Setter Property="Padding" Value="14,6" />
@@ -143,6 +188,7 @@
             <Setter Property="Background" Value="{DynamicResource Brush.FieldBackground}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         </Style>
         <Style x:Key="ErrorText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12" />
