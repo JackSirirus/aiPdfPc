@@ -93,7 +93,7 @@ public sealed class PdfiumPreviewDocumentTests : IDisposable
     [Fact]
     public void Rotation_PageSize_MatchesSpikeValues_NoOldStack()
     {
-        // 旧栈 PdfPreviewDocument 已随单栈收敛删除（T7），不再做旧/新栈交叉验证；
+        // 旧 PdfPreviewDocument 已随 T7 单栈收敛删除（现统一为 PdfiumPreviewDocument），不再做新旧栈交叉验证；
         // 此处固化尖刺 #1 记录的四角度可见尺寸（.omo/evidence/v3-task2-rotation-spike.txt），
         // 并验证 mapper 采用可见尺寸（不做 derotation）。
         var bytes = TestPdfFactory.CreateRotated(400, 300, 0, 90, 180, 270);

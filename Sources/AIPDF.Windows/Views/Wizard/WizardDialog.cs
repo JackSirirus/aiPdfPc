@@ -18,7 +18,7 @@ namespace AIPDF.Windows.Views.Wizard;
 /// </summary>
 public sealed class WizardDialog : Window
 {
-    // 全窗遮罩：主题无关的半透明叠层（亮/暗通用），显式保留。
+    // 全窗遮罩：主题无关的半透明叠层（亮/暗通用），显式保留（已在 ThemeManagerTests.DialogCodeColorWhitelist 登记）。
     private static readonly Brush ScrimBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x10, 0x14, 0x1C));
 
     private readonly WizardViewModel _viewModel;

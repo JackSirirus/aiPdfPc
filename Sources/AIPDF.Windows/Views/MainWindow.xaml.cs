@@ -275,6 +275,20 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         var outputs = results.Where(r => r.Ok).SelectMany(r => r.Outputs).ToList();
         var anyFailed = results.Any(r => !r.Ok);
+        if (anyFailed && outputs.Count == 0)
+        {
+            // 全部失败且无输出（如 FR-21 flush 门禁拦截向导提交）：原因不得静默丢弃，
+            // 也不能落「已生成结果」的误导 Toast。
+            var reason = results.FirstOrDefault(r => !r.Ok)?.Error ?? "向导未执行。";
+            if (DataContext is ViewModels.MainViewModel failed)
+            {
+                failed.StatusText = $"「{tool.Name}」未执行：{reason}";
+            }
+
+            ShowWizardFailureToast($"「{tool.Name}」未执行：{reason}");
+            return;
+        }
+
         if (WizardResultPolicy.Decide(outputs, anyFailed) == WizardResultAction.OpenTabs)
         {
             foreach (var output in outputs)
@@ -316,6 +330,24 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             QueueToast.Visibility = Visibility.Collapsed;
             QueueToast.IsHitTestVisible = false;
             _wizardResultFolder = null;
+        };
+        _queueToastTimer.Start();
+    }
+
+    /// <summary>向导未执行/全部失败：原因 Toast（不可点击，4s 自动隐藏；绝不显示「已生成结果」）。</summary>
+    private void ShowWizardFailureToast(string message)
+    {
+        _wizardResultFolder = null;
+        QueueToast.IsHitTestVisible = false;
+        QueueToastText.Text = message;
+        QueueToast.Visibility = Visibility.Visible;
+
+        _queueToastTimer?.Stop();
+        _queueToastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _queueToastTimer.Tick += (_, _) =>
+        {
+            _queueToastTimer?.Stop();
+            QueueToast.Visibility = Visibility.Collapsed;
         };
         _queueToastTimer.Start();
     }

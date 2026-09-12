@@ -164,6 +164,11 @@ public sealed class WizardTests
         Assert.Equal(1, gateCalls);        // 门禁确实触发
         Assert.Empty(adapter.Executed);    // 拦截：工作委托不执行
         Assert.True(viewModel.HasSubmitted);
+
+        // C2：门禁拦截原因必须落到结果步（不得静默空白）
+        var result = Assert.Single(viewModel.Results);
+        Assert.False(result.Ok);
+        Assert.Contains("批注保存失败", result.Error);
     }
 
     [Fact]

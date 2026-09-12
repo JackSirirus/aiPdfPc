@@ -245,7 +245,8 @@ public sealed class PdfiumRenderService : IDisposable
     }
 
     /// <summary>
-    /// 【T2 预览内部入口】共享读打开（FileShare.ReadWrite，等价旧 PdfPreviewDocument.OpenFile）：
+    /// 【T2 预览内部入口】共享读打开（FileShare.ReadWrite，语义沿用已删除的旧 PdfPreviewDocument.OpenFile；
+    /// 旧类型随 T7 单栈收敛删除，现为 PdfiumPreviewDocument）：
     /// 允许预览刚被引擎写入/被其他进程以 ReadWrite 持有的文件，避免 <see cref="OpenDocument"/>
     /// 的 File.ReadAllBytes（FileShare.Read）回归失败。仅服务预览/打印；阅读器既有路径不变。
     /// </summary>

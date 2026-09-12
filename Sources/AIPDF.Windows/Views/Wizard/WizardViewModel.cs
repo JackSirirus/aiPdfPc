@@ -314,17 +314,33 @@ public sealed partial class WizardViewModel : ObservableObject
             }
 
             var items = new List<ToolTaskItem>(snapshots.Count);
+            var workStarted = new bool[snapshots.Count];
             for (var i = 0; i < snapshots.Count; i++)
             {
                 var snapshot = snapshots[i];
+                var index = i;
                 // 逐项唯一去重键（VM 工具 id + 固化文件集 + 索引）：绝不用 this，避免 N 项塌缩为 1。
                 var key = new WizardDedupKey(Tool.Id, string.Join('\u001f', snapshot.Files), i);
-                items.Add(_queue.Submit(snapshot.Name, token => ExecuteSnapshotAsync(snapshot, token), key));
+                items.Add(_queue.Submit(snapshot.Name, token =>
+                {
+                    workStarted[index] = true;
+                    return ExecuteSnapshotAsync(snapshot, token);
+                }, key));
             }
 
-            foreach (var item in items)
+            for (var i = 0; i < items.Count; i++)
             {
-                await item.Completion.Task.ConfigureAwait(true);
+                await items[i].Completion.Task.ConfigureAwait(true);
+
+                // FR-21 门禁（ToolTaskQueue.BeforeStart）拦截时工作委托未执行、不会产生结果项：
+                // 把队列记录的原因显式落到结果步，避免「批注保存失败，工具未启动」在向导内静默丢失。
+                if (!workStarted[i] && items[i].State == ToolTaskState.Failed)
+                {
+                    var reason = string.IsNullOrWhiteSpace(items[i].Error)
+                        ? "批注保存失败，向导未执行。"
+                        : items[i].Error!;
+                    _results.Add(WizardItemResult.Failure(reason));
+                }
             }
 
             HasSubmitted = true;

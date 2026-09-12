@@ -219,7 +219,7 @@ public partial class PdfPreviewControl : UserControl
             return;
         }
 
-        _dispatcher.InvokeAsync(() =>
+        PostToUiThread(() =>
         {
             if (generation != _renderGeneration || !ReferenceEquals(_document, document))
             {
@@ -227,6 +227,28 @@ public partial class PdfPreviewControl : UserControl
             }
             ApplyBitmap(bitmap);
         });
+    }
+
+    /// <summary>
+    /// 封送渲染结果回 UI 线程（F3-BLK-1）。Dispatcher 已关闭/正在关闭时不投递、不抛异常（082c7fd 模式）：
+    /// 死 Dispatcher 上的投递要么委托永不执行、要么抛 InvalidOperationException；此处结果无处应用即静默丢弃。
+    /// 显式丢弃 InvokeAsync 返回的 operation，避免 CS4014。
+    /// </summary>
+    private void PostToUiThread(Action action)
+    {
+        if (_dispatcher.HasShutdownStarted || _dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = _dispatcher.InvokeAsync(action);
+        }
+        catch (InvalidOperationException)
+        {
+            // 检查与 InvokeAsync 之间 Dispatcher 关闭：同样丢弃，绝不产生未观察异常/崩溃。
+        }
     }
 
     /// <summary>UI 线程应用已渲染位图（尺寸沿用像素尺寸，1px = 1DIP，与旧栈一致）。</summary>

@@ -3,7 +3,7 @@
 // V3 T10 / C2 夜间模式单测：
 //   1. ThemeManager 主题解析（light/dark/system/未知回退）；
 //   2. token 集完整性（App.xaml 每项亮色 token 均须有 Brush.Dark.* 对应，且与 ThemeTokens.All 一致）；
-//   3. token 审计（白名单外无硬编码主题色 / 静态主题引用；批注·内容色显式白名单）。
+//   3. token 审计（白名单外无硬编码主题色 / 静态主题引用；批注·内容色与代码构建对话框的颜色调用显式白名单）。
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -169,6 +169,21 @@ public class ThemeManagerTests
         Assert.True(offenders.Count == 0, "主题审计白名单外命中：\n" + string.Join("\n", offenders));
     }
 
+    /// <summary>
+    /// 代码构建对话框的显式白名单：键 =（文件相对路径, 归一化颜色调用）。
+    /// 仅登记主题无关的语义色；归一化 = 去掉调用表达式内的全部空白字符。
+    /// 新增白名单必须在此显式登记（审计绑定文件相对路径 + 表达式，不做泛化放宽）。
+    /// </summary>
+    private static readonly HashSet<(string File, string Call)> DialogCodeColorWhitelist = new()
+    {
+        // 向导全窗遮罩：主题无关的半透明叠层（亮/暗通用），不是主题色。
+        ("Views/Wizard/WizardDialog.cs", "Color.FromArgb(0x66,0x10,0x14,0x1C)"),
+    };
+
+    private static readonly Regex ColorCallRegex = new(
+        "Color\\.From(?:Argb|Rgb)\\([^)]*\\)", RegexOptions.Compiled);
+    private static readonly Regex WhiteSpaceRegex = new("\\s+", RegexOptions.Compiled);
+
     [Fact]
     public void DialogCodeAudit_NoHardcodedThemeColors()
     {
@@ -180,6 +195,7 @@ public class ThemeManagerTests
             "Views/Wizard/WizardDialog.cs",
         ];
 
+        // 语义常量色：主色按钮文字 / 透明底——不随主题改写，全局放行。
         var allowedBrushes = new HashSet<string>(StringComparer.Ordinal) { "White", "Black", "Transparent" };
         var brushRegex = new Regex("Brushes\\.([A-Za-z]+)", RegexOptions.Compiled);
         var offenders = new List<string>();
@@ -192,9 +208,14 @@ public class ThemeManagerTests
                 offenders.Add($"{relative}: 含 #RRGGBB 硬编码色");
             }
 
-            if (text.Contains("Color.FromRgb(", StringComparison.Ordinal))
+            // Color.FromArgb / Color.FromRgb 一并审计：此前只查 FromRgb，遮罩类 FromArgb 调用逃过审计（review C1）。
+            foreach (Match match in ColorCallRegex.Matches(text))
             {
-                offenders.Add($"{relative}: 含 Color.FromRgb 硬编码主题色（须走 Brush.* token）");
+                var call = WhiteSpaceRegex.Replace(match.Value, "");
+                if (!DialogCodeColorWhitelist.Contains((relative, call)))
+                {
+                    offenders.Add($"{relative}: 硬编码颜色调用 {call}（须走 Brush.* token；主题无关语义色须显式登记白名单）");
+                }
             }
 
             foreach (Match match in brushRegex.Matches(text))
