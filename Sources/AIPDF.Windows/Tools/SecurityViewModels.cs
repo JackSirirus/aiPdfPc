@@ -8,6 +8,7 @@ using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -29,7 +30,7 @@ public sealed class ToolResultItem
 /// 引擎调用直接走 T12 的 EngineBridge（一次请求 stdin 单行 JSON → stdout 单行结果）；
 /// 引擎业务错误（Ok=false，如"需要正确的打开密码"）回到页面错误横幅，不抛异常。
 /// </summary>
-public abstract partial class ToolViewModelBase : ObservableObject
+public abstract partial class ToolViewModelBase : ObservableObject, IWizardToolAdapter
 {
     private readonly EngineBridge? _bridge;
     private ToolTaskItem? _activeTask;
@@ -158,6 +159,57 @@ public abstract partial class ToolViewModelBase : ObservableObject
         }
 
         return null;
+    }
+
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>
+    /// 参数步内联校验【ST-25】：按暂存文件复用既有校验语义（不读 VM 的 <see cref="Files"/>，
+    /// 因为向导暂存与工具页文件列表是两条输入）。
+    /// </summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        if (ValidateWizardInput(stagedFiles) is { } inputError)
+        {
+            return inputError;
+        }
+
+        if (WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _) is { } outputError)
+        {
+            return outputError;
+        }
+
+        return ValidateParameterExtras();
+    }
+
+    /// <summary>向导暂存文件输入校验；compare 收紧为“正好两份”。</summary>
+    protected virtual string? ValidateWizardInput(IReadOnlyList<string> stagedFiles)
+        => stagedFiles.Count == 0 ? "请先选择文件。" : null;
+
+    /// <summary>工具特有参数校验（向导与工具页共用）；子类覆写。</summary>
+    protected virtual string? ValidateParameterExtras() => null;
+
+    /// <summary>提交快照：提交时刻读取当前参数/输出目录并交给 <see cref="WizardSubmitItem"/> 固化（review M2）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        return WizardAdapterSupport.BuildItems(Tool, stagedFiles, BuildOptions(), outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎，不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (_bridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await _bridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(Tool.Id, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
     }
 
     /// <summary>过滤出真实存在且扩展名匹配目录声明的文件；目录条目忽略。</summary>
@@ -372,10 +424,10 @@ public sealed partial class ProtectViewModel : SingleFileToolViewModelBase
     [ObservableProperty]
     private bool _allowCopy;
 
-    protected override string? Validate()
-        => base.Validate() ?? (string.IsNullOrEmpty(NewPasswordProvider?.Invoke())
-            ? "请设置非空的打开密码。"
-            : null);
+    protected override string? Validate() => base.Validate() ?? ValidateParameterExtras();
+
+    protected override string? ValidateParameterExtras()
+        => string.IsNullOrEmpty(NewPasswordProvider?.Invoke()) ? "请设置非空的打开密码。" : null;
 
     protected override Dictionary<string, object?> BuildOptions() => new()
     {
@@ -424,10 +476,12 @@ public sealed partial class SignViewModel : SingleFileToolViewModelBase
     [ObservableProperty]
     private string _height;
 
-    protected override string? Validate()
-        => base.Validate() ?? (SignatureText.Length == 0 && SignatureImage.Length == 0
+    protected override string? Validate() => base.Validate() ?? ValidateParameterExtras();
+
+    protected override string? ValidateParameterExtras()
+        => SignatureText.Length == 0 && SignatureImage.Length == 0
             ? "请输入签名姓名或选择签名图片。"
-            : null);
+            : null;
 
     protected override Dictionary<string, object?> BuildOptions() => new()
     {
@@ -560,6 +614,10 @@ public sealed partial class CompareViewModel : ToolViewModelBase
 
         return null;
     }
+
+    /// <summary>向导批量：比较总是“正好两份”一组（compare 引擎契约），逐份任务无意义。</summary>
+    protected override string? ValidateWizardInput(IReadOnlyList<string> stagedFiles)
+        => stagedFiles.Count == 2 ? null : "比较需要正好两份 PDF，请按旧版、新版的顺序添加。";
 
     protected override Dictionary<string, object?> BuildOptions() => [];
 }

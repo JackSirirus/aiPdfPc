@@ -5,12 +5,17 @@ using System.Windows.Controls;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Tools;
+using AIPDF.Windows.Views.Wizard;
 using Microsoft.Win32;
 
 namespace AIPDF.Windows.Views.Workflow;
 
-/// <summary>流程工具组页面：流程步骤+预设 / 批量处理 / 处理记录 三个页签。</summary>
-public partial class WorkflowPage : UserControl
+/// <summary>
+/// 工作流程工具页：流程步骤+预设 / 批量处理 / 处理记录 三页标签。
+/// V3 T8：页面即宿主的 DataContext（复合三 VM），故按向导契约转发到步骤 VM（<see cref="StepsVm"/>），
+/// 使向导宿主能经 <c>DataContext as IWizardToolAdapter</c> 发现 workflow 适配器。
+/// </summary>
+public partial class WorkflowPage : UserControl, IWizardToolAdapter
 {
     public WorkflowPage()
     {
@@ -21,11 +26,24 @@ public partial class WorkflowPage : UserControl
     public WorkflowPage(EngineBridge? bridge, IReadOnlyList<Tool> catalogTools, Tool tool) : this()
     {
         Tool = tool;
-        StepsVm = new WorkflowToolViewModel(bridge, catalogTools);
+        StepsVm = new WorkflowToolViewModel(bridge, catalogTools, catalogTool: tool);
         BatchVm = new BatchToolViewModel(bridge, catalogTools);
         HistoryVm = new HistoryToolViewModel();
         DataContext = this;
     }
+
+    // ---- V3 T8 向导契约转发（页面 DataContext = this，宿主发现的是页面而非复合 VM） ----
+
+    string? IWizardToolAdapter.ValidateParameters(IReadOnlyList<string> stagedFiles)
+        => StepsVm.ValidateParameters(stagedFiles);
+
+    IReadOnlyList<WizardSubmitItem> IWizardToolAdapter.BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+        => StepsVm.BuildSubmitItems(stagedFiles);
+
+    Task<WizardItemResult> IWizardToolAdapter.ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+        => StepsVm.ExecuteItemAsync(item, token);
+
+    IReadOnlyList<string> IWizardToolAdapter.AdditionalStepTitles() => StepsVm.AdditionalStepTitles();
 
     /// <summary>目录中的流程工具条目（页头标题与说明）。</summary>
     public Tool Tool { get; } = new() { Name = "工作流程", Subtitle = "", Note = "" };

@@ -10,6 +10,7 @@ using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -152,7 +153,7 @@ public sealed class ConverterResultItem
 /// 输出目录 → 执行/取消 → 进度与结果。引擎调用直接走注入的 EngineBridge；
 /// 依赖缺失在构造时探测为 DependencyWarning，执行前校验拦截，引擎仍是权威。
 /// </summary>
-public abstract partial class ConverterToolViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
+public abstract partial class ConverterToolViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable, IWizardToolAdapter
 {
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
 
@@ -579,6 +580,53 @@ public abstract partial class ConverterToolViewModelBase : ObservableObject, ITo
         return output.Length == 0 || !Path.IsPathRooted(output) || !Directory.Exists(output)
             ? "请选择有效的输出文件夹。"
             : null;
+    }
+
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>参数步内联校验【ST-25】：按暂存文件复用既有依赖/选项校验（不读 VM 的 <see cref="Files"/>）。</summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        // 依赖缺失优先提示：这是用户最先要解决的事。
+        if (DependencyWarning is not null)
+        {
+            return DependencyWarning;
+        }
+
+        if (stagedFiles.Count == 0 && !CanRunWithoutFiles)
+        {
+            return "请先选择文件。";
+        }
+
+        if (WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _) is { } outputError)
+        {
+            return outputError;
+        }
+
+        return ValidateOptions();
+    }
+
+    /// <summary>提交快照：提交时刻读取当前参数/输出目录并交给 <see cref="WizardSubmitItem"/> 固化（review M2）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        return WizardAdapterSupport.BuildItems(Tool, stagedFiles, BuildOptions(), outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎，不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (_bridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await _bridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(Tool.Id, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
     }
 
     /// <summary>表单状态 → 引擎 options。值一律为字符串（引擎把目录默认值与请求选项按字符串合并）。</summary>

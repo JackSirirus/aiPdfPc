@@ -10,6 +10,7 @@ using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.ViewModels;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -403,7 +404,7 @@ public partial class WorkflowStepViewModel : ObservableObject
 }
 
 /// <summary>流程工具页（catalog 工具 workflow）：步骤串联 + 本机预设 + 真引擎执行。</summary>
-public partial class WorkflowToolViewModel : ObservableObject
+public partial class WorkflowToolViewModel : ObservableObject, IWizardToolAdapter
 {
     private readonly EngineBridge? _bridge;
     private readonly WorkflowPresetStore _presets;
@@ -423,14 +424,19 @@ public partial class WorkflowToolViewModel : ObservableObject
         EngineBridge? bridge,
         IReadOnlyList<Tool> catalogTools,
         WorkflowPresetStore? presetStore = null,
-        WorkflowHistory? history = null)
+        WorkflowHistory? history = null,
+        Tool? catalogTool = null)
     {
         _bridge = bridge;
         _presets = presetStore ?? new WorkflowPresetStore();
         _history = history ?? WorkflowHistory.Shared;
+        CatalogTool = catalogTool;
         AllowedOperations = [.. catalogTools.Where(tool => EngineAllowedSteps.Contains(tool.Id))];
         RefreshPresets(selectFirst: false);
     }
+
+    /// <summary>目录条目（向导接入需要 Name/Multiple）；由宿主页面在构造时注入，测试可为 null。</summary>
+    public Tool? CatalogTool { get; }
 
     public IReadOnlyList<Tool> AllowedOperations { get; }
 
@@ -630,7 +636,8 @@ public partial class WorkflowToolViewModel : ObservableObject
     // ---------- 构建请求与执行 ----------
 
     /// <summary>表单状态 → 引擎请求。steps 形状与 backend/engine.py 的 workflow 分支逐字段一致。</summary>
-    internal EngineRequest BuildRequest()
+    /// <param name="files">可选文件集覆盖；向导提交用暂存文件（不读 VM 的 <see cref="Files"/>）。</param>
+    internal EngineRequest BuildRequest(IReadOnlyList<string>? files = null)
     {
         var options = new Dictionary<string, object?>();
         options["steps"] = Steps
@@ -649,10 +656,60 @@ public partial class WorkflowToolViewModel : ObservableObject
         return new EngineRequest
         {
             Operation = OperationId,
-            Files = [.. Files],
+            Files = [.. (files ?? Files)],
             Options = options,
             OutputDir = OutputDir,
         };
+    }
+
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>workflow 多步例外（Q2）：额外参数步标题；每步复用本适配器的参数校验。</summary>
+    public IReadOnlyList<string> AdditionalStepTitles() => ["选择预设", "步骤参数"];
+
+    /// <summary>参数步内联校验【ST-25】：按暂存文件复用步骤/输出目录校验（不读 VM 的 <see cref="Files"/>）。</summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        if (stagedFiles.Count == 0)
+        {
+            return "请先添加文件。";
+        }
+
+        if (Steps.Count == 0)
+        {
+            return "请至少添加一个工作流程步骤。";
+        }
+
+        if (Steps.Count > 20)
+        {
+            return "每个流程最多 20 步。";
+        }
+
+        return WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _);
+    }
+
+    /// <summary>提交快照：提交时刻固化 steps/password/输出目录（review M2；密码仅内存、不落盘）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        var tool = CatalogTool ?? new Tool { Id = OperationId, Name = "工作流程", Multiple = true };
+        return WizardAdapterSupport.BuildItems(tool, stagedFiles, BuildRequest(stagedFiles).Options, outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎，不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (_bridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await _bridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(OperationId, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
     }
 
     /// <summary>返回 null 表示通过；否则为用户可读的校验提示（不发引擎请求）。</summary>

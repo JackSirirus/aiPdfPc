@@ -9,6 +9,7 @@ using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -39,7 +40,7 @@ public sealed class PageResultItem
 /// 页面整理组工具页视图模型基类：文件输入（拖拽 + 浏览）→ 参数表单 → 输出目录 → 执行/取消 → 进度与结果。
 /// 输出约定：outputDir 只传父目录，引擎在其下新建 AIPDF-日期-编号 任务子目录，绝不覆盖源文件。
 /// </summary>
-public abstract partial class PageOrganizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
+public abstract partial class PageOrganizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable, IWizardToolAdapter
 {
     /// <summary>与 backend/engine.py parse_pages 的单项格式一致（数字或 a-b）。</summary>
     private static readonly Regex PagesItemPattern = new(@"^\s*\d+\s*(?:-\s*\d+\s*)?$", RegexOptions.Compiled);
@@ -404,6 +405,12 @@ public abstract partial class PageOrganizerViewModelBase : ObservableObject, ITo
             return "此工具一次处理一份文件。";
         }
 
+        // merge 是引擎硬约束（至少两份 PDF）；归入基类，向导与工具页共用（向导参数校验在 ValidateParameters）。
+        if (NeedsAtLeastTwoFiles && Files.Count < 2)
+        {
+            return "请至少添加两份 PDF。";
+        }
+
         if (ValidateOptions() is { } optionError)
         {
             return optionError;
@@ -420,6 +427,52 @@ public abstract partial class PageOrganizerViewModelBase : ObservableObject, ITo
 
     /// <summary>子类选项校验（在输出目录检查之前执行）。</summary>
     protected virtual string? ValidateOptions() => null;
+
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>参数步内联校验【ST-25】：按暂存文件复用既有校验语义（不读 VM 的 <see cref="Files"/>）。</summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        if (stagedFiles.Count == 0)
+        {
+            return "请先选择文件。";
+        }
+
+        if (NeedsAtLeastTwoFiles && stagedFiles.Count < 2)
+        {
+            return "请至少添加两份 PDF。";
+        }
+
+        if (WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _) is { } outputError)
+        {
+            return outputError;
+        }
+
+        return ValidateOptions();
+    }
+
+    /// <summary>提交快照：提交时刻读取当前参数/输出目录并交给 <see cref="WizardSubmitItem"/> 固化（review M2）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        return WizardAdapterSupport.BuildItems(Tool, stagedFiles, BuildOptions(), outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎，不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (_bridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await _bridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(Tool.Id, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
+    }
 
     /// <summary>取目录字段默认值（catalog 权威）。</summary>
     protected static string FieldValue(Tool tool, string key)
@@ -477,9 +530,6 @@ public sealed partial class MergeViewModel : PageOrganizerViewModelBase
     }
 
     protected override Dictionary<string, object?> BuildOptions() => new Dictionary<string, object?>();
-
-    protected override string? ValidateOptions()
-        => Files.Count < 2 ? "请至少添加两份 PDF。" : null;
 }
 
 /// <summary>拆分 PDF：按范围拆分（分号分组），留空逐页一份。</summary>

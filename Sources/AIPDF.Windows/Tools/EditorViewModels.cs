@@ -2,8 +2,10 @@
 // Copyright (C) 2026 AIPDF contributors
 using System.Globalization;
 using System.IO;
+using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Controls;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -22,7 +24,7 @@ public delegate Task ExecuteEditorToolDelegate(
     CancellationToken cancellationToken);
 
 /// <summary>编辑组工具页的公共基类：文件/输出目录选择、页面范围、执行命令与错误展示。</summary>
-public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDocumentPinnable, IToolStartGated
+public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDocumentPinnable, IToolStartGated, IWizardToolAdapter
 {
     private readonly ExecuteEditorToolDelegate _execute;
 
@@ -146,6 +148,53 @@ public abstract partial class EditorToolViewModel : ObservableObject, ICurrentDo
 
     /// <summary>工具特有参数预检；返回 null 表示通过。</summary>
     protected virtual string? ValidateParameters() => null;
+
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>
+    /// 向导快照执行所需的引擎桥：由 <c>EditorPages</c> 在承载向导时注入。
+    /// 工具页自身执行仍走构造时的 <see cref="ExecuteEditorToolDelegate"/>（既有语义不变）。
+    /// </summary>
+    internal EngineBridge? WizardBridge { get; set; }
+
+    /// <summary>参数步内联校验【ST-25】：按暂存文件校验输出目录 + 复用工具特有参数预检。</summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        if (stagedFiles.Count == 0)
+        {
+            return "请先选择要处理的 PDF 文件。";
+        }
+
+        if (WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _) is { } outputError)
+        {
+            return outputError;
+        }
+
+        return ValidateParameters();
+    }
+
+    /// <summary>提交快照：提交时刻读取当前参数/输出目录并交给 <see cref="WizardSubmitItem"/> 固化（review M2）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        return WizardAdapterSupport.BuildItems(Tool, stagedFiles, BuildOptions(), outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎（快照 options），不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (WizardBridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await WizardBridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(Tool.Id, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
+    }
 
     /// <summary>catalog 字段默认值（field() 的 value 输出，恒为字符串）。</summary>
     protected string FieldDefault(string key) =>

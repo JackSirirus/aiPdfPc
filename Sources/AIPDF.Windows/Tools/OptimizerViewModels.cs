@@ -11,6 +11,7 @@ using System.Windows;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.Views.Wizard;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -43,7 +44,7 @@ public sealed class OptimizerResultItem
 /// 引擎返回新任务目录（AIPDF-日期-编号），源文件保持不变。
 /// 文件条目为本组自包含定义（与 T14 的 PageFileItem/PageResultItem 同构，便于终审合并）。
 /// </summary>
-public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable
+public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDocumentReceiver, ICurrentDocumentPinnable, IWizardToolAdapter
 {
     private readonly EngineBridge? _bridge;
     private ToolTaskItem? _activeTask;
@@ -411,6 +412,50 @@ public abstract partial class OptimizerViewModelBase : ObservableObject, IToolDo
         return null;
     }
 
+    // ---------- V3 T8 向导接入（IWizardToolAdapter 最小注入点） ----------
+
+    /// <summary>参数步内联校验【ST-25】：按暂存文件复用既有校验语义（不读 VM 的 <see cref="Files"/>）。</summary>
+    public string? ValidateParameters(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+
+        if (stagedFiles.Count == 0)
+        {
+            return "请先选择文件。";
+        }
+
+        if (WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out _) is { } outputError)
+        {
+            return outputError;
+        }
+
+        return ValidateParameterExtras();
+    }
+
+    /// <summary>工具特有参数校验（向导与工具页共用）；子类覆写。</summary>
+    protected virtual string? ValidateParameterExtras() => null;
+
+    /// <summary>提交快照：提交时刻读取当前参数/输出目录并交给 <see cref="WizardSubmitItem"/> 固化（review M2）。</summary>
+    public IReadOnlyList<WizardSubmitItem> BuildSubmitItems(IReadOnlyList<string> stagedFiles)
+    {
+        ArgumentNullException.ThrowIfNull(stagedFiles);
+        WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
+        return WizardAdapterSupport.BuildItems(Tool, stagedFiles, BuildOptions(), outputDir);
+    }
+
+    /// <summary>执行单个已固化快照项：直接调引擎，不回读 VM 可变状态、不触碰 UI 绑定。</summary>
+    public async Task<WizardItemResult> ExecuteItemAsync(WizardSubmitItem item, CancellationToken token)
+    {
+        if (_bridge is null)
+        {
+            return WizardItemResult.Failure("引擎未就绪：未配置执行桥。");
+        }
+
+        var result = await _bridge.ExecuteAsync(WizardAdapterSupport.BuildRequest(Tool.Id, item), token)
+            .ConfigureAwait(true);
+        return WizardAdapterSupport.ToResult(result);
+    }
+
     /// <summary>组装引擎 options（值一律字符串，与 catalog 默认值合并，多选项按字符串传递）。</summary>
     protected abstract IReadOnlyDictionary<string, object?> BuildOptions();
 
@@ -668,8 +713,10 @@ public sealed partial class OcrViewModel : OptimizerViewModelBase
         return options;
     }
 
-    protected override string? Validate()
-        => base.Validate() ?? (PagesText.Trim().Length == 0 ? null : ValidatePagesSpec(PagesText));
+    protected override string? Validate() => base.Validate() ?? ValidateParameterExtras();
+
+    protected override string? ValidateParameterExtras()
+        => PagesText.Trim().Length == 0 ? null : ValidatePagesSpec(PagesText);
 }
 
 /// <summary>WindowsOcrHelper 的 UI 侧轻量访问：--list-languages 输出解析与产物路径解析。</summary>

@@ -25,14 +25,25 @@ public static class EditorPages
         ArgumentNullException.ThrowIfNull(tool);
         return tool.Id switch
         {
-            "rotate" => new RotatePage { DataContext = new RotateViewModel(tool, Runner(bridge)) },
-            "numbers" => new PageNumbersPage { DataContext = new PageNumbersViewModel(tool, Runner(bridge)) },
-            "watermark" => new WatermarkPage { DataContext = new WatermarkViewModel(tool, Runner(bridge)) },
-            "crop" => new CropPage { DataContext = new CropViewModel(tool, Runner(bridge)) },
-            "edit" => new EditPage { DataContext = new EditViewModel(tool, Runner(bridge)) },
-            "forms" => new FormsPage { DataContext = new FormsViewModel(tool, Runner(bridge)) },
+            "rotate" => Wire(new RotatePage(), new RotateViewModel(tool, Runner(bridge)), bridge),
+            "numbers" => Wire(new PageNumbersPage(), new PageNumbersViewModel(tool, Runner(bridge)), bridge),
+            "watermark" => Wire(new WatermarkPage(), new WatermarkViewModel(tool, Runner(bridge)), bridge),
+            "crop" => Wire(new CropPage(), new CropViewModel(tool, Runner(bridge)), bridge),
+            "edit" => Wire(new EditPage(), new EditViewModel(tool, Runner(bridge)), bridge),
+            "forms" => Wire(new FormsPage(), new FormsViewModel(tool, Runner(bridge)), bridge),
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// V3 T8：把引擎桥注入编辑工具 VM，供向导快照执行（<c>IWizardToolAdapter.ExecuteItemAsync</c>）使用。
+    /// 工具页自身执行仍走 <see cref="Runner"/> 委托，既有语义不变（向导参数步复用同一 fresh 页面实例）。
+    /// </summary>
+    private static FrameworkElement Wire(FrameworkElement page, EditorToolViewModel viewModel, EngineBridge? bridge)
+    {
+        viewModel.WizardBridge = bridge;
+        page.DataContext = viewModel;
+        return page;
     }
 
     /// <summary>注册进全局工具页注册表（MainWindow 启动时调用一次；重复调用无副作用）。</summary>
