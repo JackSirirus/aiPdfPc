@@ -263,7 +263,7 @@
                           CanContentScroll="True"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Background="{DynamicResource Brush.Sidebar}"
+                          Background="{DynamicResource Brush.PreviewBg}"
                           PreviewMouseWheel="OnPreviewMouseWheel"
                           ScrollChanged="OnScrollChanged">
                 <ScrollViewer.Style>

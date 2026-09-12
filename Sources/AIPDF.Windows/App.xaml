@@ -12,22 +12,22 @@
              - 工具页是独立 UserControl，共享 token 放在应用级；本文件是色值唯一来源，
                各工具页/资源字典不得再复制 Brush.* 定义（含暗色）。
              - 批注/内容色（高亮色板、框选叠层等）是文档内容色，不是主题色，仍留在使用处。 -->
-        <SolidColorBrush x:Key="Brush.Window" Color="#FFFFFF" />
-        <SolidColorBrush x:Key="Brush.Sidebar" Color="#F6F6F8" />
-        <SolidColorBrush x:Key="Brush.Hover" Color="#EBEBEF" />
-        <SolidColorBrush x:Key="Brush.Border" Color="#E4E4E9" />
-        <SolidColorBrush x:Key="Brush.BorderStrong" Color="#C9C9D1" />
-        <SolidColorBrush x:Key="Brush.TextPrimary" Color="#1D1D1F" />
-        <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6E73" />
-        <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9A9AA0" />
+        <SolidColorBrush x:Key="Brush.Window" Color="#FBFAF7" />
+        <SolidColorBrush x:Key="Brush.Sidebar" Color="#F4F1EA" />
+        <SolidColorBrush x:Key="Brush.Hover" Color="#ECE7DD" />
+        <SolidColorBrush x:Key="Brush.Border" Color="#E4DDCF" />
+        <SolidColorBrush x:Key="Brush.BorderStrong" Color="#C9C0AE" />
+        <SolidColorBrush x:Key="Brush.TextPrimary" Color="#2A251E" />
+        <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6659" />
+        <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9C9384" />
         <SolidColorBrush x:Key="Brush.Accent" Color="#3159D9" />
         <SolidColorBrush x:Key="Brush.AccentHover" Color="#2749AE" />
         <SolidColorBrush x:Key="Brush.AccentPressed" Color="#1F3B8F" />
-        <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E4EAFB" />
+        <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E7EBF8" />
         <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
         <SolidColorBrush x:Key="Brush.Error" Color="#C4321F" />
-        <SolidColorBrush x:Key="Brush.FieldBackground" Color="#FFFFFF" />
-        <SolidColorBrush x:Key="Brush.Surface" Color="#FAFAFC" />
+        <SolidColorBrush x:Key="Brush.FieldBackground" Color="#FFFDF8" />
+        <SolidColorBrush x:Key="Brush.Surface" Color="#F7F4EC" />
         <!-- 搜索命中高亮（T8）：半透明琥珀填充 + 较深边框；叠加在渲染页上，跟随主题切换但保持可辨 -->
         <SolidColorBrush x:Key="Brush.SearchHighlight" Color="#66FFD84D" />
         <SolidColorBrush x:Key="Brush.SearchHighlightBorder" Color="#CCFFB300" />
@@ -36,52 +36,52 @@
         <SolidColorBrush x:Key="Brush.SuccessSoft" Color="#E4F3E9" />
         <SolidColorBrush x:Key="Brush.Danger" Color="#B3382E" />
         <SolidColorBrush x:Key="Brush.DangerSoft" Color="#FBEAE8" />
-        <SolidColorBrush x:Key="Brush.NeutralSoft" Color="#F0F0F3" />
+        <SolidColorBrush x:Key="Brush.NeutralSoft" Color="#EFEAE0" />
         <!-- 依赖缺失警示横幅（Converter 组） -->
-        <SolidColorBrush x:Key="Brush.ConverterWarnBackground" Color="#FCF3E3" />
+        <SolidColorBrush x:Key="Brush.ConverterWarnBackground" Color="#FBF2DF" />
         <SolidColorBrush x:Key="Brush.ConverterWarnText" Color="#8A5300" />
         <!-- 预览控件底色 / 底部工具栏（PdfPreviewControl，原本地调色板已上收） -->
-        <SolidColorBrush x:Key="Brush.PreviewBg" Color="#EDEFF2" />
-        <SolidColorBrush x:Key="Brush.Toolbar" Color="#F6F6F8" />
+        <SolidColorBrush x:Key="Brush.PreviewBg" Color="#ECE7DC" />
+        <SolidColorBrush x:Key="Brush.Toolbar" Color="#F4F1EA" />
         <!-- 拖拽槽常态 / 悬停底色（PageOrganizer、Security 组） -->
-        <SolidColorBrush x:Key="Brush.DropZoneBackground" Color="#FBFBFC" />
-        <SolidColorBrush x:Key="Brush.DropZoneHoverBackground" Color="#F0F4FE" />
+        <SolidColorBrush x:Key="Brush.DropZoneBackground" Color="#FCFAF4" />
+        <SolidColorBrush x:Key="Brush.DropZoneHoverBackground" Color="#EEF1FA" />
 
         <!-- ============================================================
              暗色 token 集（与上方亮色 token 一一对应）。
              仅由 Services/ThemeManager 读取并写入同名 `Brush.*` 键；
              XAML 不直接引用 `Brush.Dark.*`。选中「亮色」时用 ThemeManager 启动快照还原。
              ============================================================ -->
-        <SolidColorBrush x:Key="Brush.Dark.Window" Color="#1B1C1E" />
-        <SolidColorBrush x:Key="Brush.Dark.Sidebar" Color="#212225" />
-        <SolidColorBrush x:Key="Brush.Dark.Hover" Color="#2E2F33" />
-        <SolidColorBrush x:Key="Brush.Dark.Border" Color="#3A3B40" />
-        <SolidColorBrush x:Key="Brush.Dark.BorderStrong" Color="#4A4B52" />
-        <SolidColorBrush x:Key="Brush.Dark.TextPrimary" Color="#E8E9EC" />
-        <SolidColorBrush x:Key="Brush.Dark.TextSecondary" Color="#B4B6BC" />
-        <SolidColorBrush x:Key="Brush.Dark.TextTertiary" Color="#85878E" />
-        <SolidColorBrush x:Key="Brush.Dark.Accent" Color="#5B82F0" />
-        <SolidColorBrush x:Key="Brush.Dark.AccentHover" Color="#6E92F5" />
-        <SolidColorBrush x:Key="Brush.Dark.AccentPressed" Color="#4A6FD8" />
-        <SolidColorBrush x:Key="Brush.Dark.AccentSoft" Color="#25304D" />
-        <SolidColorBrush x:Key="Brush.Dark.AccentText" Color="#9DB8FA" />
-        <SolidColorBrush x:Key="Brush.Dark.Error" Color="#F1776A" />
-        <SolidColorBrush x:Key="Brush.Dark.FieldBackground" Color="#26272B" />
-        <SolidColorBrush x:Key="Brush.Dark.Surface" Color="#232427" />
+        <SolidColorBrush x:Key="Brush.Dark.Window" Color="#1C1A17" />
+        <SolidColorBrush x:Key="Brush.Dark.Sidebar" Color="#23201A" />
+        <SolidColorBrush x:Key="Brush.Dark.Hover" Color="#302C24" />
+        <SolidColorBrush x:Key="Brush.Dark.Border" Color="#3A3529" />
+        <SolidColorBrush x:Key="Brush.Dark.BorderStrong" Color="#4C4636" />
+        <SolidColorBrush x:Key="Brush.Dark.TextPrimary" Color="#EDE7DA" />
+        <SolidColorBrush x:Key="Brush.Dark.TextSecondary" Color="#B3AA99" />
+        <SolidColorBrush x:Key="Brush.Dark.TextTertiary" Color="#877F6F" />
+        <SolidColorBrush x:Key="Brush.Dark.Accent" Color="#7E9CD8" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentHover" Color="#90ACDF" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentPressed" Color="#6B88C4" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentSoft" Color="#272F41" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentText" Color="#A9C0EA" />
+        <SolidColorBrush x:Key="Brush.Dark.Error" Color="#E88B7D" />
+        <SolidColorBrush x:Key="Brush.Dark.FieldBackground" Color="#262219" />
+        <SolidColorBrush x:Key="Brush.Dark.Surface" Color="#201D17" />
         <!-- 搜索高亮是叠加在渲染页上的内容标记，亮暗保持一致 -->
         <SolidColorBrush x:Key="Brush.Dark.SearchHighlight" Color="#66FFD84D" />
         <SolidColorBrush x:Key="Brush.Dark.SearchHighlightBorder" Color="#CCFFB300" />
-        <SolidColorBrush x:Key="Brush.Dark.Success" Color="#66C88A" />
-        <SolidColorBrush x:Key="Brush.Dark.SuccessSoft" Color="#1E3327" />
-        <SolidColorBrush x:Key="Brush.Dark.Danger" Color="#F08A80" />
-        <SolidColorBrush x:Key="Brush.Dark.DangerSoft" Color="#3A2422" />
-        <SolidColorBrush x:Key="Brush.Dark.NeutralSoft" Color="#2A2B2F" />
+        <SolidColorBrush x:Key="Brush.Dark.Success" Color="#7FC08E" />
+        <SolidColorBrush x:Key="Brush.Dark.SuccessSoft" Color="#1F2C22" />
+        <SolidColorBrush x:Key="Brush.Dark.Danger" Color="#E88B7D" />
+        <SolidColorBrush x:Key="Brush.Dark.DangerSoft" Color="#38231F" />
+        <SolidColorBrush x:Key="Brush.Dark.NeutralSoft" Color="#2C2820" />
         <SolidColorBrush x:Key="Brush.Dark.ConverterWarnBackground" Color="#3A2F1C" />
         <SolidColorBrush x:Key="Brush.Dark.ConverterWarnText" Color="#E6B36A" />
-        <SolidColorBrush x:Key="Brush.Dark.PreviewBg" Color="#17181A" />
-        <SolidColorBrush x:Key="Brush.Dark.Toolbar" Color="#212225" />
-        <SolidColorBrush x:Key="Brush.Dark.DropZoneBackground" Color="#232427" />
-        <SolidColorBrush x:Key="Brush.Dark.DropZoneHoverBackground" Color="#26314D" />
+        <SolidColorBrush x:Key="Brush.Dark.PreviewBg" Color="#26221C" />
+        <SolidColorBrush x:Key="Brush.Dark.Toolbar" Color="#23201A" />
+        <SolidColorBrush x:Key="Brush.Dark.DropZoneBackground" Color="#23201A" />
+        <SolidColorBrush x:Key="Brush.Dark.DropZoneHoverBackground" Color="#2C3346" />
 
         <!-- 字号阶梯：26 页标题 / 15 区块标题 / 13 正文与字段 / 12 辅助 / 11 脚注（与 MainWindow 一致） -->
         <Style x:Key="PageTitle" TargetType="TextBlock">
