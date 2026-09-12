@@ -626,6 +626,7 @@
                             BorderThickness="0,0,1,0"
                             Visibility="Collapsed">
                         <Border.Effect>
+                            <!-- A+C Phase 3：页影维持 #000000。原因：(1) ThemeManager 仅换 Brush 而非 Color，暖化需要 Color token（超出当前机制）；(2) 审计脚本对 #000000 阴影做了显式跳过，换成暖色会被判定为白名单外硬编码。 -->
                             <DropShadowEffect BlurRadius="18" ShadowDepth="0" Direction="0" Opacity="0.14" Color="#000000" />
                         </Border.Effect>
                         <Grid>
@@ -696,6 +697,7 @@
                             BorderThickness="1,0,0,0"
                             Visibility="Collapsed">
                         <Border.Effect>
+                            <!-- A+C Phase 3：页影维持 #000000。原因：(1) ThemeManager 仅换 Brush 而非 Color，暖化需要 Color token（超出当前机制）；(2) 审计脚本对 #000000 阴影做了显式跳过，换成暖色会被判定为白名单外硬编码。 -->
                             <DropShadowEffect BlurRadius="18" ShadowDepth="0" Direction="180" Opacity="0.14" Color="#000000" />
                         </Border.Effect>
                         <Grid>
