@@ -6,7 +6,7 @@
              AllowDrop="True"
              PreviewDragOver="OnPreviewDragOver"
              PreviewDrop="OnPreviewDrop"
-             Background="{StaticResource Brush.Window}">
+             Background="{DynamicResource Brush.Window}">
 
     <!-- 起始页（PRD 3.10 FR-33/34/35）：打开入口 + 最近文件卡片 + 常用工具网格【R19】+ 全部工具完整入口。
          色板与字号全部引用应用级设计 token（App.xaml），不新增色值。 -->
@@ -20,7 +20,7 @@
         <!-- 品牌 / 工具字母徽标：沿用应用「A」徽标的既有视觉语言（T5 空态同款） -->
         <Style x:Key="ToolBadge" TargetType="Border">
             <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
             <Setter Property="Width" Value="34" />
             <Setter Property="Height" Value="34" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -28,7 +28,7 @@
         <Style x:Key="ToolBadgeText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="15" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
             <Setter Property="HorizontalAlignment" Value="Center" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
@@ -39,14 +39,14 @@
             <Setter Property="Margin" Value="0,0,12,12" />
             <Setter Property="Padding" Value="12,10" />
             <Setter Property="CornerRadius" Value="8" />
-            <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Cursor" Value="Hand" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -54,12 +54,12 @@
         <Style x:Key="CardName" TargetType="TextBlock">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="ToolTip" Value="{Binding Path}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Exists}" Value="False">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
                     <Setter Property="TextDecorations" Value="Strikethrough" />
                 </DataTrigger>
             </Style.Triggers>
@@ -82,7 +82,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -94,7 +94,7 @@
         <Style x:Key="TextLinkButton" TargetType="Button">
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="6,2" />
@@ -109,7 +109,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -130,12 +130,12 @@
                     <StackPanel HorizontalAlignment="Center" TextBlock.TextAlignment="Center">
                         <Border Width="56" Height="56"
                                 CornerRadius="14"
-                                Background="{StaticResource Brush.AccentSoft}"
+                                Background="{DynamicResource Brush.AccentSoft}"
                                 HorizontalAlignment="Center">
                             <TextBlock Text="A"
                                        FontSize="26"
                                        FontWeight="Bold"
-                                       Foreground="{StaticResource Brush.Accent}"
+                                       Foreground="{DynamicResource Brush.Accent}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center" />
                         </Border>
@@ -143,12 +143,12 @@
                                    Text="开始使用 AIPDF"
                                    FontSize="24"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource Brush.TextPrimary}" />
+                                   Foreground="{DynamicResource Brush.TextPrimary}" />
                         <TextBlock Margin="0,8,0,0"
                                    Text="打开 PDF 文档开始阅读，或使用下方工具处理文件。所有操作都在本机完成，文档不会上传。"
                                    FontSize="13"
                                    LineHeight="20"
-                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   Foreground="{DynamicResource Brush.TextSecondary}"
                                    TextWrapping="Wrap" />
                         <Button Margin="0,18,0,0"
                                 Style="{StaticResource PrimaryButton}"
@@ -160,7 +160,7 @@
                         <TextBlock Margin="0,8,0,0"
                                    Text="或将 PDF 文件拖入本窗口"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                                   Foreground="{DynamicResource Brush.TextTertiary}" />
                     </StackPanel>
 
                     <!-- ===== 最近打开（FR-34）：无记录整体隐藏【ST-02】，不显示空占位 ===== -->
@@ -187,18 +187,18 @@
                         <Border Margin="0,8,0,0"
                                 Padding="12,8"
                                 CornerRadius="8"
-                                Background="{StaticResource Brush.Sidebar}"
-                                BorderBrush="{StaticResource Brush.Border}"
+                                Background="{DynamicResource Brush.Sidebar}"
+                                BorderBrush="{DynamicResource Brush.Border}"
                                 BorderThickness="1"
                                 Visibility="{Binding IsClearPending, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="确定清除所有最近文件记录？此操作同时清除阅读进度。"
                                            FontSize="12"
                                            VerticalAlignment="Center"
-                                           Foreground="{StaticResource Brush.TextPrimary}" />
+                                           Foreground="{DynamicResource Brush.TextPrimary}" />
                                 <Button Margin="12,0,0,0"
                                         Style="{StaticResource TextLinkButton}"
-                                        Foreground="{StaticResource Brush.Error}"
+                                        Foreground="{DynamicResource Brush.Error}"
                                         FontWeight="SemiBold"
                                         Content="清除"
                                         AutomationProperties.Name="确认清除记录"
@@ -241,14 +241,14 @@
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                 <TextBlock Style="{StaticResource CardName}" Text="{Binding Name}" />
                                                 <TextBlock FontSize="11"
-                                                           Foreground="{StaticResource Brush.TextTertiary}">
+                                                           Foreground="{DynamicResource Brush.TextTertiary}">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Text" Value="{Binding DisplayDate}" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding Exists}" Value="False">
                                                                     <Setter Property="Text" Value="文件不存在" />
-                                                                    <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
@@ -257,13 +257,13 @@
                                                 <!-- V2 进度元信息（FR-33 / AC-33.2）：页数 · 体积 + 上次阅读进度 -->
                                                 <TextBlock Margin="0,2,0,0"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource Brush.TextSecondary}"
+                                                           Foreground="{DynamicResource Brush.TextSecondary}"
                                                            TextTrimming="CharacterEllipsis"
                                                            Text="{Binding MetaText}"
                                                            Visibility="{Binding HasMeta, Converter={StaticResource BoolToVisibility}}" />
                                                 <TextBlock Margin="0,1,0,0"
                                                            FontSize="10.5"
-                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           Foreground="{DynamicResource Brush.AccentText}"
                                                            TextTrimming="CharacterEllipsis"
                                                            Text="{Binding ProgressText}"
                                                            Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}" />
@@ -277,7 +277,7 @@
                                                     AutomationProperties.Name="从最近列表移除"
                                                     Click="OnRemoveRecentClick">
                                                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="10"
-                                                           Foreground="{StaticResource Brush.TextTertiary}" />
+                                                           Foreground="{DynamicResource Brush.TextTertiary}" />
                                             </Button>
                                         </Grid>
                                     </Border>
@@ -305,7 +305,7 @@
                                             Click="OnToolClick">
                                         <StackPanel>
                                             <Border Width="40" Height="40" CornerRadius="10"
-                                                    Background="{StaticResource Brush.AccentSoft}"
+                                                    Background="{DynamicResource Brush.AccentSoft}"
                                                     HorizontalAlignment="Center">
                                                 <TextBlock Style="{StaticResource ToolBadgeText}"
                                                            FontSize="17"
@@ -314,7 +314,7 @@
                                             <TextBlock Margin="0,8,0,0"
                                                        Text="{Binding Name}"
                                                        FontSize="12"
-                                                       Foreground="{StaticResource Brush.TextPrimary}"
+                                                       Foreground="{DynamicResource Brush.TextPrimary}"
                                                        HorizontalAlignment="Center" />
                                         </StackPanel>
                                     </Button>
@@ -346,7 +346,7 @@
                                                Text="{Binding Name}"
                                                FontSize="12"
                                                FontWeight="SemiBold"
-                                               Foreground="{StaticResource Brush.TextTertiary}" />
+                                               Foreground="{DynamicResource Brush.TextTertiary}" />
                                     <ItemsControl ItemsSource="{Binding Tools}">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -372,11 +372,11 @@
                                                             <TextBlock Text="{Binding Name}"
                                                                        FontSize="12"
                                                                        FontWeight="SemiBold"
-                                                                       Foreground="{StaticResource Brush.TextPrimary}" />
+                                                                       Foreground="{DynamicResource Brush.TextPrimary}" />
                                                             <TextBlock Text="{Binding Subtitle}"
                                                                        FontSize="10"
                                                                        MaxWidth="150"
-                                                                       Foreground="{StaticResource Brush.TextTertiary}"
+                                                                       Foreground="{DynamicResource Brush.TextTertiary}"
                                                                        TextTrimming="CharacterEllipsis" />
                                                         </StackPanel>
                                                     </StackPanel>
@@ -399,7 +399,7 @@
                 Margin="0,0,0,28"
                 Padding="16,10"
                 CornerRadius="8"
-                Background="{StaticResource Brush.TextPrimary}"
+                Background="{DynamicResource Brush.TextPrimary}"
                 Visibility="Collapsed">
             <TextBlock x:Name="ToastText"
                        FontSize="12"

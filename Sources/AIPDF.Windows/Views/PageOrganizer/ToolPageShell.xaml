@@ -29,8 +29,8 @@
                     Margin="0,10,0,0"
                     Padding="8,2"
                     CornerRadius="4"
-                    Background="{StaticResource Brush.AccentSoft}"
-                    BorderBrush="{StaticResource Brush.Accent}"
+                    Background="{DynamicResource Brush.AccentSoft}"
+                    BorderBrush="{DynamicResource Brush.Accent}"
                     BorderThickness="1">
                 <Border.Style>
                     <Style TargetType="Border">
@@ -44,7 +44,7 @@
                 </Border.Style>
                 <TextBlock Text="{Binding PinnedDocumentLabel}"
                            FontSize="11"
-                           Foreground="{StaticResource Brush.AccentText}" />
+                           Foreground="{DynamicResource Brush.AccentText}" />
             </Border>
 
             <!-- ① 文件输入：拖拽 + 浏览按钮 -->
@@ -57,8 +57,8 @@
                     <Style TargetType="Border" BasedOn="{StaticResource DropZoneBorder}">
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsFileDragOver, RelativeSource={RelativeSource AncestorType=local:ToolPageShell}}" Value="True">
-                                <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                                <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                                <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                                <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -66,7 +66,7 @@
                 <StackPanel Margin="16,14">
                     <TextBlock HorizontalAlignment="Center"
                                FontSize="13"
-                               Foreground="{StaticResource Brush.TextSecondary}"
+                               Foreground="{DynamicResource Brush.TextSecondary}"
                                Text="拖入文件到此处，或" />
                     <Button Style="{StaticResource SecondaryButton}"
                             Content="浏览文件…"
@@ -76,13 +76,13 @@
                     <TextBlock HorizontalAlignment="Center"
                                FontSize="11"
                                Margin="0,8,0,0"
-                               Foreground="{StaticResource Brush.TextTertiary}"
+                               Foreground="{DynamicResource Brush.TextTertiary}"
                                Text="可多选，按列表顺序处理。"
                                Visibility="{Binding SupportsMultipleFiles, Converter={StaticResource BoolToVisibility}}" />
                     <TextBlock HorizontalAlignment="Center"
                                FontSize="11"
                                Margin="0,8,0,0"
-                               Foreground="{StaticResource Brush.TextTertiary}"
+                               Foreground="{DynamicResource Brush.TextTertiary}"
                                Text="此工具一次处理一份文件。"
                                Visibility="{Binding SupportsMultipleFiles, Converter={StaticResource InverseBoolToVisibility}}" />
                 </StackPanel>
@@ -103,7 +103,7 @@
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding Name}"
                                                FontSize="13"
-                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               Foreground="{DynamicResource Brush.TextPrimary}"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding Path=Path, Mode=OneWay}" />
@@ -167,7 +167,7 @@
                          Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
             <TextBlock Text="{Binding ProgressMessage, Mode=OneWay}"
                        FontSize="11"
-                       Foreground="{StaticResource Brush.TextTertiary}"
+                       Foreground="{DynamicResource Brush.TextTertiary}"
                        Margin="0,6,0,0"
                        Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
 
@@ -176,7 +176,7 @@
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="FontSize" Value="12" />
-                        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
                         <Setter Property="TextWrapping" Value="Wrap" />
                         <Setter Property="Margin" Value="0,12,0,0" />
                         <Style.Triggers>
@@ -194,7 +194,7 @@
                         <Setter Property="Margin" Value="0,20,0,8" />
                         <Setter Property="FontSize" Value="12" />
                         <Setter Property="FontWeight" Value="SemiBold" />
-                        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding Results.Count}" Value="0">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -211,7 +211,7 @@
                             <Border Style="{StaticResource ListRowBorder}">
                                 <TextBlock Text="{Binding Name}"
                                            FontSize="13"
-                                           Foreground="{StaticResource Brush.TextPrimary}"
+                                           Foreground="{DynamicResource Brush.TextPrimary}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            ToolTip="{Binding Path=Path, Mode=OneWay}" />

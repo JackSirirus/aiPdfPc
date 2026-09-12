@@ -42,7 +42,7 @@
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding}"
                                                FontSize="12"
-                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               Foreground="{DynamicResource Brush.TextPrimary}"
                                                TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding}"
                                                VerticalAlignment="Center" />
@@ -89,11 +89,11 @@
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Setter Property="Text" Value="{Binding SignatureImage}" />
-                        <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding SignatureImage}" Value="">
                                 <Setter Property="Text" Value="未选择图片" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -166,7 +166,7 @@
                         <TextBlock Margin="0,2"
                                    Text="{Binding Name, StringFormat=已生成：{0}}"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                    ToolTip="{Binding Path}" />
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

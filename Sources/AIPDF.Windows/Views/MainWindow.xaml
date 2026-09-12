@@ -36,19 +36,10 @@
     </Window.CommandBindings>
 
     <Window.Resources>
-        <!-- 色板：中性灰系 + AIPDF 蓝（#3159D9，与引擎默认编辑色一致） -->
-        <SolidColorBrush x:Key="Brush.Window" Color="#FFFFFF" />
-        <SolidColorBrush x:Key="Brush.Sidebar" Color="#F6F6F8" />
-        <SolidColorBrush x:Key="Brush.Hover" Color="#EBEBEF" />
-        <SolidColorBrush x:Key="Brush.Border" Color="#E4E4E9" />
-        <SolidColorBrush x:Key="Brush.TextPrimary" Color="#1D1D1F" />
-        <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6E73" />
-        <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9A9AA0" />
-        <SolidColorBrush x:Key="Brush.Accent" Color="#3159D9" />
-        <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E4EAFB" />
-        <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
+        <!-- 色板 token 统一由应用级 App.xaml 提供（V3 T10：亮/暗两套 + ThemeManager 运行时注入）；
+             此处不再复制 Brush.* 定义，所有主题引用为 DynamicResource 以支持运行时切换。 -->
 
-        <!-- V2 T7：队列控件可见性（执行中/有排队项时显示） -->
+        <!-- V2 T7：队列控件可见性（执行�?有排队项时显示） -->
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
         <Style x:Key="SidebarToolItem" TargetType="ListBoxItem">
@@ -69,11 +60,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -95,7 +86,7 @@
                            Margin="0,1,0,0"
                            Text="{Binding Subtitle}"
                            FontSize="11"
-                           Foreground="{StaticResource Brush.TextSecondary}"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
                            TextTrimming="CharacterEllipsis" />
             </Grid>
         </DataTemplate>
@@ -105,14 +96,14 @@
                        Margin="8,16,0,6"
                        FontSize="12"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource Brush.TextTertiary}" />
+                       Foreground="{DynamicResource Brush.TextTertiary}" />
         </DataTemplate>
 
         <!-- 顶栏图标按钮：＋ 新建标签 / 搜索 / ⚙ 设置 -->
         <Style x:Key="TopBarIconButton" TargetType="Button">
             <Setter Property="Padding" Value="7,4" />
             <Setter Property="Margin" Value="4,0,0,0" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -125,7 +116,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.4" />
@@ -139,7 +130,7 @@
         <Style x:Key="TabCloseButton" TargetType="Button">
             <Setter Property="Width" Value="18" />
             <Setter Property="Height" Value="18" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -151,8 +142,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -168,7 +159,7 @@
                            FontSize="11"
                            Margin="0,0,6,1"
                            VerticalAlignment="Center"
-                           Foreground="{StaticResource Brush.TextSecondary}" />
+                           Foreground="{DynamicResource Brush.TextSecondary}" />
                 <TextBlock Text="{Binding Title}"
                            MaxWidth="168"
                            FontSize="12"
@@ -208,11 +199,11 @@
                                     <Condition Property="IsMouseOver" Value="True" />
                                     <Condition Property="IsSelected" Value="False" />
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </MultiTrigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Window}" />
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Window}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -251,7 +242,7 @@
         <!-- 左栏阅读面板切换器（骨架按钮组；面板内容由 T4 填充） -->
         <Style x:Key="ReaderPanelToggle" TargetType="RadioButton">
             <Setter Property="GroupName" Value="ReaderPanels" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -267,11 +258,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                                <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                                 <Setter Property="FontWeight" Value="SemiBold" />
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -288,7 +279,7 @@
         </Style>
 
         <Style x:Key="TabHostStyle" TargetType="TabControl">
-            <Setter Property="Background" Value="{StaticResource Brush.Window}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="ItemContainerStyle" Value="{StaticResource TabHostItem}" />
             <Setter Property="Template">
@@ -304,7 +295,7 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="{StaticResource Brush.Window}">
+    <Border Background="{DynamicResource Brush.Window}">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -314,8 +305,8 @@
 
             <!-- 顶栏：品牌区 + 标签条 + ＋ 新建 + 全文搜索入口 + ⚙ 设置占位（FR-07） -->
             <Border Grid.Row="0"
-                    Background="{StaticResource Brush.Sidebar}"
-                    BorderBrush="{StaticResource Brush.Border}"
+                    Background="{DynamicResource Brush.Sidebar}"
+                    BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="0,0,0,1">
                 <Grid Height="44">
                     <Grid.ColumnDefinitions>
@@ -331,7 +322,7 @@
                                 Margin="14,0,10,0">
                         <Border Width="20" Height="20"
                                 CornerRadius="6"
-                                Background="{StaticResource Brush.Accent}"
+                                Background="{DynamicResource Brush.Accent}"
                                 VerticalAlignment="Center">
                             <TextBlock Text="A"
                                        FontSize="12"
@@ -343,7 +334,7 @@
                         <TextBlock Text="AIPDF"
                                    FontSize="14"
                                    FontWeight="Bold"
-                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                    Margin="8,0,0,0"
                                    VerticalAlignment="Center" />
                     </StackPanel>
@@ -427,7 +418,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- 左栏：阅读面板容器（T4 填充）。工具箱已移至顶栏按钮 + 主区左对齐滑出面板（T20），左栏仅保留阅读面板。 -->
-                <Border x:Name="LeftPanel" Grid.Column="0" Background="{StaticResource Brush.Sidebar}">
+                <Border x:Name="LeftPanel" Grid.Column="0" Background="{DynamicResource Brush.Sidebar}">
                     <Grid Margin="14,14,10,12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -485,12 +476,12 @@
                             </StackPanel.Style>
                             <Border Width="72" Height="72"
                                     CornerRadius="18"
-                                    Background="{StaticResource Brush.AccentSoft}"
+                                    Background="{DynamicResource Brush.AccentSoft}"
                                     HorizontalAlignment="Center">
                                 <TextBlock Text="A"
                                            FontSize="34"
                                            FontWeight="Bold"
-                                           Foreground="{StaticResource Brush.Accent}"
+                                           Foreground="{DynamicResource Brush.Accent}"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center" />
                             </Border>
@@ -498,11 +489,11 @@
                                        Text="从顶部「工具箱」选择工具开始"
                                        FontSize="18"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource Brush.TextPrimary}" />
+                                       Foreground="{DynamicResource Brush.TextPrimary}" />
                             <TextBlock Margin="0,8,0,0"
                                        Text="选择工具后添加文件、调整参数即可处理。所有操作都在本机完成，文档不会上传。"
                                        FontSize="13"
-                                       Foreground="{StaticResource Brush.TextSecondary}"
+                                       Foreground="{DynamicResource Brush.TextSecondary}"
                                        TextWrapping="Wrap" />
                         </StackPanel>
 
@@ -523,26 +514,26 @@
                             <Border HorizontalAlignment="Left"
                                     CornerRadius="10"
                                     Padding="8,3"
-                                    Background="{StaticResource Brush.AccentSoft}">
+                                    Background="{DynamicResource Brush.AccentSoft}">
                                 <TextBlock Text="{Binding SelectedTool.Category}"
                                            FontSize="11"
                                            FontWeight="SemiBold"
-                                           Foreground="{StaticResource Brush.AccentText}" />
+                                           Foreground="{DynamicResource Brush.AccentText}" />
                             </Border>
                             <TextBlock Margin="0,14,0,0"
                                        Text="{Binding SelectedTool.Name}"
                                        FontSize="26"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource Brush.TextPrimary}" />
+                                       Foreground="{DynamicResource Brush.TextPrimary}" />
                             <TextBlock Margin="0,6,0,0"
                                        Text="{Binding SelectedTool.Subtitle}"
                                        FontSize="14"
-                                       Foreground="{StaticResource Brush.TextSecondary}" />
+                                       Foreground="{DynamicResource Brush.TextSecondary}" />
                             <TextBlock Margin="0,18,0,0"
                                        Text="{Binding SelectedTool.Note}"
                                        FontSize="12"
                                        LineHeight="20"
-                                       Foreground="{StaticResource Brush.TextTertiary}"
+                                       Foreground="{DynamicResource Brush.TextTertiary}"
                                        TextWrapping="Wrap" />
                             <Button Margin="0,24,0,0"
                                     Content="开始处理"
@@ -551,12 +542,12 @@
                                     Padding="18,7"
                                     FontSize="13"
                                     Foreground="White"
-                                    Background="{StaticResource Brush.Accent}"
+                                    Background="{DynamicResource Brush.Accent}"
                                     BorderThickness="0" />
                             <TextBlock Margin="0,10,0,0"
                                        Text="工具操作界面将在后续版本中提供。"
                                        FontSize="11"
-                                       Foreground="{StaticResource Brush.TextTertiary}" />
+                                       Foreground="{DynamicResource Brush.TextTertiary}" />
                         </StackPanel>
                     </Grid>
 
@@ -569,8 +560,8 @@
                     <Border x:Name="ToolboxPanel"
                             Width="340"
                             HorizontalAlignment="Left"
-                            Background="{StaticResource Brush.Window}"
-                            BorderBrush="{StaticResource Brush.Border}"
+                            Background="{DynamicResource Brush.Window}"
+                            BorderBrush="{DynamicResource Brush.Border}"
                             BorderThickness="0,0,1,0"
                             Visibility="Collapsed">
                         <Border.Effect>
@@ -584,8 +575,8 @@
 
                             <!-- 面板头：标题「工具箱」+ 关闭 ✕ -->
                             <Border Grid.Row="0"
-                                    Background="{StaticResource Brush.Sidebar}"
-                                    BorderBrush="{StaticResource Brush.Border}"
+                                    Background="{DynamicResource Brush.Sidebar}"
+                                    BorderBrush="{DynamicResource Brush.Border}"
                                     BorderThickness="0,0,0,1"
                                     Padding="14,8,8,8">
                                 <Grid>
@@ -597,11 +588,11 @@
                                         <TextBlock Text="工具箱"
                                                    FontSize="14"
                                                    FontWeight="SemiBold"
-                                                   Foreground="{StaticResource Brush.TextPrimary}" />
+                                                   Foreground="{DynamicResource Brush.TextPrimary}" />
                                         <TextBlock Margin="0,2,0,0"
                                                    Text="{Binding Tools.Count, StringFormat={}{0} 个工具 · 全部本机处理}"
                                                    FontSize="11"
-                                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                                                   Foreground="{DynamicResource Brush.TextTertiary}" />
                                     </StackPanel>
                                     <Button Grid.Column="1"
                                             Style="{StaticResource TopBarIconButton}"
@@ -639,8 +630,8 @@
                     <Border x:Name="RightDrawer"
                             Width="380"
                             HorizontalAlignment="Right"
-                            Background="{StaticResource Brush.Window}"
-                            BorderBrush="{StaticResource Brush.Border}"
+                            Background="{DynamicResource Brush.Window}"
+                            BorderBrush="{DynamicResource Brush.Border}"
                             BorderThickness="1,0,0,0"
                             Visibility="Collapsed">
                         <Border.Effect>
@@ -654,8 +645,8 @@
 
                             <!-- 抽屉头：工具名 + 关闭 ✕ -->
                             <Border Grid.Row="0"
-                                    Background="{StaticResource Brush.Sidebar}"
-                                    BorderBrush="{StaticResource Brush.Border}"
+                                    Background="{DynamicResource Brush.Sidebar}"
+                                    BorderBrush="{DynamicResource Brush.Border}"
                                     BorderThickness="0,0,0,1"
                                     Padding="14,8,8,8">
                                 <Grid>
@@ -667,7 +658,7 @@
                                                Grid.Column="0"
                                                FontSize="14"
                                                FontWeight="SemiBold"
-                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               Foreground="{DynamicResource Brush.TextPrimary}"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis" />
                                     <Button Grid.Column="1"
@@ -692,7 +683,7 @@
                             Margin="0,12,0,0"
                             Padding="14,7"
                             CornerRadius="8"
-                            Background="{StaticResource Brush.TextPrimary}"
+                            Background="{DynamicResource Brush.TextPrimary}"
                             Visibility="Collapsed"
                             IsHitTestVisible="False">
                         <TextBlock x:Name="RestoreHintText"
@@ -710,7 +701,7 @@
                     Margin="0,0,0,20"
                     Padding="14,7"
                     CornerRadius="8"
-                    Background="{StaticResource Brush.TextPrimary}"
+                    Background="{DynamicResource Brush.TextPrimary}"
                     Visibility="Collapsed"
                     IsHitTestVisible="False"
                     Panel.ZIndex="20">
@@ -727,7 +718,7 @@
                     Margin="0,0,0,20"
                     Padding="14,7"
                     CornerRadius="8"
-                    Background="{StaticResource Brush.TextPrimary}"
+                    Background="{DynamicResource Brush.TextPrimary}"
                     Visibility="Collapsed"
                     IsHitTestVisible="False"
                     Panel.ZIndex="21">
@@ -738,8 +729,8 @@
 
             <!-- 底部状态栏 -->
             <Border Grid.Row="2"
-                    Background="{StaticResource Brush.Sidebar}"
-                    BorderBrush="{StaticResource Brush.Border}"
+                    Background="{DynamicResource Brush.Sidebar}"
+                    BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="0,1,0,0"
                     Padding="16,6">
                 <Grid>
@@ -750,7 +741,7 @@
                     <StackPanel Grid.Column="0" Orientation="Horizontal">
                         <TextBlock Text="{Binding StatusText}"
                                    FontSize="11"
-                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   Foreground="{DynamicResource Brush.TextSecondary}"
                                    VerticalAlignment="Center" />
                         <!-- T4 savepill（FR-19 四态）：仅文档标签激活时可见；失败态可点击重试 -->
                         <Button x:Name="SavePill"
@@ -781,7 +772,7 @@
                                     Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
                             <TextBlock Text="{Binding Text}"
                                        FontSize="11"
-                                       Foreground="{StaticResource Brush.AccentText}"
+                                       Foreground="{DynamicResource Brush.AccentText}"
                                        VerticalAlignment="Center" />
                             <Button Margin="6,0,0,0"
                                     Padding="8,1"
@@ -802,7 +793,7 @@
                             <TextBlock Margin="12,0,0,0"
                                        Text="{Binding Queue.StatusText}"
                                        FontSize="11"
-                                       Foreground="{StaticResource Brush.AccentText}"
+                                       Foreground="{DynamicResource Brush.AccentText}"
                                        VerticalAlignment="Center" />
                             <ItemsControl Margin="6,0,0,0"
                                           VerticalAlignment="Center"
@@ -817,16 +808,16 @@
                                         <Border Margin="6,0,0,0"
                                                 Padding="6,1"
                                                 CornerRadius="4"
-                                                Background="{StaticResource Brush.AccentSoft}">
+                                                Background="{DynamicResource Brush.AccentSoft}">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="{Binding PositionText}"
                                                            FontSize="11"
-                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           Foreground="{DynamicResource Brush.AccentText}"
                                                            VerticalAlignment="Center" />
                                                 <TextBlock Margin="4,0,0,0"
                                                            Text="{Binding Name}"
                                                            FontSize="11"
-                                                           Foreground="{StaticResource Brush.AccentText}"
+                                                           Foreground="{DynamicResource Brush.AccentText}"
                                                            VerticalAlignment="Center" />
                                                 <Button Margin="4,0,0,0"
                                                         Padding="2,0"
@@ -849,7 +840,7 @@
                     <TextBlock Grid.Column="1"
                                Text="AIPDF for Windows · v0.1.0"
                                FontSize="11"
-                               Foreground="{StaticResource Brush.TextTertiary}"
+                               Foreground="{DynamicResource Brush.TextTertiary}"
                                VerticalAlignment="Center" />
                 </Grid>
             </Border>

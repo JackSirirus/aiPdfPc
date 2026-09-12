@@ -39,8 +39,8 @@
                     <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,10"
                                Text="把 PDF 拖到这里，或点击添加；每次处理都会生成新的任务目录，不覆盖源文件。" />
 
-                    <Border Background="{StaticResource Brush.Sidebar}"
-                            BorderBrush="{StaticResource Brush.Border}"
+                    <Border Background="{DynamicResource Brush.Sidebar}"
+                            BorderBrush="{DynamicResource Brush.Border}"
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="14,18">
@@ -56,7 +56,7 @@
                         </Border.Style>
                         <TextBlock Text="尚未添加文件"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                                   Foreground="{DynamicResource Brush.TextTertiary}" />
                     </Border>
 
                     <ItemsControl ItemsSource="{Binding Files}">
@@ -72,7 +72,7 @@
                         </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border BorderBrush="{StaticResource Brush.Border}"
+                                <Border BorderBrush="{DynamicResource Brush.Border}"
                                         BorderThickness="0,0,0,1"
                                         Padding="0,7">
                                     <Grid>
@@ -84,7 +84,7 @@
                                                    Text="{Binding Name}"
                                                    FontSize="13"
                                                    TextTrimming="CharacterEllipsis"
-                                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                                    ToolTip="{Binding Path}" />
                                         <Button Grid.Column="1"
                                                 Margin="10,0,0,0"

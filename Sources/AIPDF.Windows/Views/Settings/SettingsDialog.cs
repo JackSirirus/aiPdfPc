@@ -20,6 +20,7 @@ namespace AIPDF.Windows.Views.Settings;
 public sealed class SettingsDialog : Window
 {
     private readonly SettingsStore _store;
+    private readonly ThemeManager? _themeManager;
 
     private readonly ComboBox _zoomBox = NewCombo();
     private readonly ComboBox _panelBox = NewCombo();
@@ -33,10 +34,11 @@ public sealed class SettingsDialog : Window
     /// <summary>保存成功后的已归一化设置；取消 / 关闭为 null。</summary>
     public AppSettings? SavedSettings { get; private set; }
 
-    public SettingsDialog(SettingsStore store)
+    public SettingsDialog(SettingsStore store, ThemeManager? themeManager = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         _store = store;
+        _themeManager = themeManager;
 
         Title = "设置";
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -128,7 +130,7 @@ public sealed class SettingsDialog : Window
         AddComboItem(_themeBox, "亮色", AppSettings.ThemeLight);
         AddComboItem(_themeBox, "暗色", AppSettings.ThemeDark);
         SelectComboValue(_themeBox, current.Theme);
-        AddRow(rows, ref row, "主题", "外观主题；主题切换实现由后续版本提供。", _themeBox);
+        AddRow(rows, ref row, "主题", "外观主题：亮色 / 暗色 / 跟随系统；保存后立即生效（无需重启）。", _themeBox);
 
         // 5. 打印 DPI（Q6/Q11）
         _printDpiBox.Text = current.PrintDpi.ToString(CultureInfo.InvariantCulture);
@@ -252,6 +254,9 @@ public sealed class SettingsDialog : Window
             MessageBox.Show(this, $"设置保存失败：{ex.Message}", "设置", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+
+        // V3 T10 / C2：主题保存后即时应用（SettingsStore.Theme 为持久化真相源；不改已打开文档内容）。
+        _themeManager?.ApplyFromSettings();
 
         DialogResult = true;
     }

@@ -24,12 +24,12 @@
                                        FontSize="12"
                                        Padding="0,3"
                                        TextTrimming="CharacterEllipsis"
-                                       Foreground="{StaticResource Brush.TextPrimary}">
+                                       Foreground="{DynamicResource Brush.TextPrimary}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding CanNavigate}" Value="False">
-                                                <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -40,7 +40,7 @@
                                        FontSize="10"
                                        Margin="8,0,0,0"
                                        VerticalAlignment="Center"
-                                       Foreground="{StaticResource Brush.TextTertiary}" />
+                                       Foreground="{DynamicResource Brush.TextTertiary}" />
                         </Grid>
                     </Border>
                 </HierarchicalDataTemplate>
@@ -48,7 +48,7 @@
         </TreeView>
 
         <!-- 空态【ST-17】：无大纲 → 引导替代路径 -->
-        <Border Background="{StaticResource Brush.Sidebar}"
+        <Border Background="{DynamicResource Brush.Sidebar}"
                 CornerRadius="8"
                 Padding="16,14"
                 VerticalAlignment="Top"
@@ -71,18 +71,18 @@
                 <TextBlock Text="此文档没有目录"
                            FontSize="12"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource Brush.TextSecondary}" />
+                           Foreground="{DynamicResource Brush.TextSecondary}" />
                 <TextBlock Margin="0,4,0,0"
                            Text="可用缩略图浏览，或为常看页面添加书签。"
                            FontSize="11"
                            LineHeight="16"
                            TextWrapping="Wrap"
-                           Foreground="{StaticResource Brush.TextTertiary}" />
+                           Foreground="{DynamicResource Brush.TextTertiary}" />
             </StackPanel>
         </Border>
 
         <!-- 读取失败提示 -->
-        <Border Background="{StaticResource Brush.Sidebar}"
+        <Border Background="{DynamicResource Brush.Sidebar}"
                 CornerRadius="8"
                 Padding="12,8"
                 VerticalAlignment="Top"
@@ -100,7 +100,7 @@
             <TextBlock Text="{Binding ErrorMessage}"
                        FontSize="11"
                        TextWrapping="Wrap"
-                       Foreground="{StaticResource Brush.TextSecondary}" />
+                       Foreground="{DynamicResource Brush.TextSecondary}" />
         </Border>
     </Grid>
 </UserControl>

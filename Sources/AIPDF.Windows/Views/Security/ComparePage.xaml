@@ -43,11 +43,11 @@
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Text" Value="{Binding FirstFile}" />
-                                    <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding FirstFile}" Value="">
                                             <Setter Property="Text" Value="点击下方按钮选择，或拖入旧版 PDF" />
-                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -68,11 +68,11 @@
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Text" Value="{Binding SecondFile}" />
-                                    <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding SecondFile}" Value="">
                                             <Setter Property="Text" Value="点击下方按钮选择，或拖入新版 PDF" />
-                                            <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
@@ -119,7 +119,7 @@
                         <TextBlock Margin="0,2"
                                    Text="{Binding Name, StringFormat=已生成：{0}}"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                    ToolTip="{Binding Path}" />
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

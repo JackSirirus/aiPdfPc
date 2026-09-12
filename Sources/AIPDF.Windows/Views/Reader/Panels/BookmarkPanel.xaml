@@ -24,12 +24,12 @@
                                                Text="&#xE735;"
                                                FontSize="11"
                                                VerticalAlignment="Center"
-                                               Foreground="{StaticResource Brush.Accent}" />
+                                               Foreground="{DynamicResource Brush.Accent}" />
                                     <TextBlock Text="{Binding Title}"
                                                FontSize="12"
                                                Margin="8,0,0,0"
                                                VerticalAlignment="Center"
-                                               Foreground="{StaticResource Brush.TextPrimary}" />
+                                               Foreground="{DynamicResource Brush.TextPrimary}" />
                                 </StackPanel>
                                 <Button Grid.Column="1"
                                         Command="{Binding DataContext.RemoveBookmarkCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
@@ -44,12 +44,12 @@
                                                 <TextBlock FontFamily="Segoe MDL2 Assets"
                                                            Text="&#xE711;"
                                                            FontSize="9"
-                                                           Foreground="{StaticResource Brush.TextTertiary}" />
+                                                           Foreground="{DynamicResource Brush.TextTertiary}" />
                                             </Border>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
-                                                    <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+                                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -59,7 +59,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -80,7 +80,7 @@
                 Padding="10,6"
                 HorizontalContentAlignment="Center"
                 Command="{Binding AddCurrentPageCommand}"
-                Background="{StaticResource Brush.AccentSoft}"
+                Background="{DynamicResource Brush.AccentSoft}"
                 BorderThickness="0"
                 Cursor="Hand"
                 ToolTip="把当前正在阅读的页加入书签">
@@ -89,11 +89,11 @@
                            Text="&#xE735;"
                            FontSize="12"
                            VerticalAlignment="Center"
-                           Foreground="{StaticResource Brush.AccentText}" />
+                           Foreground="{DynamicResource Brush.AccentText}" />
                 <TextBlock Text="收藏当前页"
                            FontSize="12"
                            Margin="6,0,0,0"
-                           Foreground="{StaticResource Brush.AccentText}" />
+                           Foreground="{DynamicResource Brush.AccentText}" />
             </StackPanel>
             <Button.Style>
                 <Style TargetType="Button">
@@ -120,7 +120,7 @@
 
         <!-- 空态【ST-18】：尚无书签 -->
         <Border Grid.Row="1"
-                Background="{StaticResource Brush.Sidebar}"
+                Background="{DynamicResource Brush.Sidebar}"
                 CornerRadius="8"
                 Padding="16,14"
                 VerticalAlignment="Top"
@@ -139,13 +139,13 @@
                 <TextBlock Text="尚无书签"
                            FontSize="12"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource Brush.TextSecondary}" />
+                           Foreground="{DynamicResource Brush.TextSecondary}" />
                 <TextBlock Margin="0,4,0,0"
                            Text="点「收藏当前页」记录常看位置；书签会随阅读状态保存，下次打开同一文件仍在。"
                            FontSize="11"
                            LineHeight="16"
                            TextWrapping="Wrap"
-                           Foreground="{StaticResource Brush.TextTertiary}" />
+                           Foreground="{DynamicResource Brush.TextTertiary}" />
             </StackPanel>
         </Border>
     </Grid>

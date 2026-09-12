@@ -18,19 +18,16 @@ namespace AIPDF.Windows.Views.Wizard;
 /// </summary>
 public sealed class WizardDialog : Window
 {
+    // 全窗遮罩：主题无关的半透明叠层（亮/暗通用），显式保留。
     private static readonly Brush ScrimBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x10, 0x14, 0x1C));
-    private static readonly Brush CardBrush = Brushes.White;
-    private static readonly Brush AccentBrush = new SolidColorBrush(Color.FromRgb(0x25, 0x63, 0xEB));
-    private static readonly Brush MutedBrush = new SolidColorBrush(Color.FromRgb(0x64, 0x74, 0x8B));
-    private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26));
 
     private readonly WizardViewModel _viewModel;
     private readonly StackPanel _stepStrip = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel _stagingRows = new();
     private readonly StackPanel _resultRows = new();
     private readonly ContentControl _parameterHost = new();
-    private readonly TextBlock _validationText = new() { Foreground = ErrorBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
-    private readonly TextBlock _statusText = new() { Foreground = MutedBrush, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
+    private readonly TextBlock _validationText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly TextBlock _statusText = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
     private readonly Grid _body = new();
     private readonly StackPanel _footerButtons = new()
     {
@@ -69,6 +66,10 @@ public sealed class WizardDialog : Window
         _parameterPanel = BuildParameterPanel();
         _resultPanel = BuildResultPanel();
 
+        // 主题 token 经资源引用（亮/暗由 ThemeManager 注入，运行时可跟随）
+        _validationText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Error");
+        _statusText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
+
         Content = BuildRoot();
 
         _viewModel.PropertyChanged += (_, _) => Refresh();
@@ -92,9 +93,7 @@ public sealed class WizardDialog : Window
 
         var card = new Border
         {
-            Background = CardBrush,
             CornerRadius = new CornerRadius(10),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xD6, 0xDD, 0xE8)),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(22, 18, 22, 16),
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -102,6 +101,8 @@ public sealed class WizardDialog : Window
             MaxWidth = 960,
             MaxHeight = 760,
         };
+        card.SetResourceReference(Border.BackgroundProperty, "Brush.Window");
+        card.SetResourceReference(Border.BorderBrushProperty, "Brush.Border");
 
         var layout = new DockPanel();
         DockPanel.SetDock(_stepStrip, Dock.Top);
@@ -153,19 +154,19 @@ public sealed class WizardDialog : Window
 
         var dropZone = new Border
         {
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0xCB, 0xD5, 0xE1)),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(14, 20, 14, 20),
-            Background = new SolidColorBrush(Color.FromRgb(0xF8, 0xFA, 0xFC)),
             AllowDrop = true,
         };
+        dropZone.SetResourceReference(Border.BorderBrushProperty, "Brush.Border");
+        dropZone.SetResourceReference(Border.BackgroundProperty, "Brush.DropZoneBackground");
         var dropHint = new TextBlock
         {
             Text = "将文件拖到这里，或点击下方「添加文件」。当前文档会自动入选并置顶。",
-            Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap,
         };
+        dropHint.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
         dropZone.Child = dropHint;
         dropZone.DragOver += OnDropDragOver;
         dropZone.Drop += OnDrop;
@@ -231,14 +232,15 @@ public sealed class WizardDialog : Window
         {
             var step = _viewModel.Steps[i];
             var current = i == _viewModel.CurrentStepIndex;
-            _stepStrip.Children.Add(new TextBlock
+            var label = new TextBlock
             {
                 Text = $"{(current ? "●" : "○")} {step.Title}",
-                Foreground = current ? AccentBrush : MutedBrush,
                 FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal,
                 Margin = new Thickness(0, 0, 16, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-            });
+            };
+            label.SetResourceReference(TextBlock.ForegroundProperty, current ? "Brush.Accent" : "Brush.TextSecondary");
+            _stepStrip.Children.Add(label);
         }
     }
 
@@ -258,8 +260,8 @@ public sealed class WizardDialog : Window
                 ?? new TextBlock
                 {
                     Text = "该工具尚未接入向导（等待 T8 工具接入）。",
-                    Foreground = MutedBrush,
                     TextWrapping = TextWrapping.Wrap,
+                    Foreground = FindBrush("Brush.TextSecondary"),
                 };
             _body.Children.Add(_parameterPanel);
             return;
@@ -306,7 +308,7 @@ public sealed class WizardDialog : Window
         _stagingRows.Children.Clear();
         if (_viewModel.StagedFiles.Count == 0)
         {
-            _stagingRows.Children.Add(new TextBlock { Text = "尚未添加文件。", Foreground = MutedBrush, Margin = new Thickness(2, 6, 0, 0) });
+            _stagingRows.Children.Add(new TextBlock { Text = "尚未添加文件。", Foreground = FindBrush("Brush.TextSecondary"), Margin = new Thickness(2, 6, 0, 0) });
             return;
         }
 
@@ -314,7 +316,7 @@ public sealed class WizardDialog : Window
         {
             var row = new Border
             {
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0xE2, 0xE8, 0xF0)),
+                BorderBrush = FindBrush("Brush.Border"),
                 BorderThickness = new Thickness(0, 0, 0, 1),
                 Padding = new Thickness(2, 6, 0, 6),
             };
@@ -329,7 +331,7 @@ public sealed class WizardDialog : Window
             {
                 label.Children.Add(new Border
                 {
-                    Background = AccentBrush,
+                    Background = FindBrush("Brush.Accent"),
                     CornerRadius = new CornerRadius(3),
                     Padding = new Thickness(6, 1, 6, 1),
                     Margin = new Thickness(8, 0, 0, 0),
@@ -407,7 +409,7 @@ public sealed class WizardDialog : Window
         _resultRows.Children.Clear();
         if (_viewModel.Results.Count == 0)
         {
-            _resultRows.Children.Add(new TextBlock { Text = "尚无结果。", Foreground = MutedBrush });
+            _resultRows.Children.Add(new TextBlock { Text = "尚无结果。", Foreground = FindBrush("Brush.TextSecondary") });
             return;
         }
 
@@ -420,7 +422,7 @@ public sealed class WizardDialog : Window
             {
                 Text = text,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = result.Ok ? Brushes.Black : ErrorBrush,
+                Foreground = result.Ok ? FindBrush("Brush.TextPrimary") : FindBrush("Brush.Error"),
                 Margin = new Thickness(0, 3, 0, 3),
             });
         }
@@ -479,4 +481,8 @@ public sealed class WizardDialog : Window
         DialogResult = true;
         Close();
     }
+
+    /// <summary>从应用级资源取主题 token（亮/暗由 ThemeManager 注入）；缺失回退 Transparent，不崩。</summary>
+    private static Brush FindBrush(string key)
+        => Application.Current?.TryFindResource(key) as Brush ?? Brushes.Transparent;
 }

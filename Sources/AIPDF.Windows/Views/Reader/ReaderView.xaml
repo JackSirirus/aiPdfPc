@@ -35,9 +35,9 @@
             <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitWidthToolTip}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsFitWidthActive}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -48,9 +48,9 @@
             <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitPageToolTip}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsFitPageActive}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -63,9 +63,9 @@
             <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.SpreadToggleToolTip}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding SpreadEnabled}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -78,15 +78,15 @@
             <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.JumpBoxToolTip}" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsJumpInvalid}" Value="True">
-                    <Setter Property="BorderBrush" Value="{StaticResource Brush.Error}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Error}" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
 
         <!-- T2 浮菜单/悬停操作条：与右抽屉同一视觉语言（App 级色板 + SecondaryButton 基类） -->
         <Style x:Key="FlyoutPanel" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Padding" Value="4" />
@@ -103,10 +103,10 @@
             <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{StaticResource Brush.Hover}" />
+                    <Setter Property="Background" Value="{DynamicResource Brush.Hover}" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -117,7 +117,7 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="4,0,0,0" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
     </UserControl.Resources>
@@ -160,7 +160,7 @@
                           CanContentScroll="True"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Background="{StaticResource Brush.Sidebar}"
+                          Background="{DynamicResource Brush.Sidebar}"
                           PreviewMouseWheel="OnPreviewMouseWheel"
                           ScrollChanged="OnScrollChanged">
                 <ScrollViewer.Style>
@@ -224,8 +224,8 @@
                                             <Grid Width="{Binding DisplayWidth}"
                                                   Height="{Binding DisplayHeight}">
                                 <!-- 骨架占位：快速滚动未渲染页状态 -->
-                                <Border Background="{StaticResource Brush.Hover}"
-                                        BorderBrush="{StaticResource Brush.Border}"
+                                <Border Background="{DynamicResource Brush.Hover}"
+                                        BorderBrush="{DynamicResource Brush.Border}"
                                         BorderThickness="1"
                                         CornerRadius="2">
                                     <Border.Style>
@@ -241,11 +241,11 @@
                                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Number, StringFormat=第 {0} 页}"
                                                    FontSize="13"
-                                                   Foreground="{StaticResource Brush.TextSecondary}" />
+                                                   Foreground="{DynamicResource Brush.TextSecondary}" />
                                         <TextBlock Text="{x:Static reader:ReaderStrings.RenderingHint}"
                                                    FontSize="11"
                                                    Margin="0,4,0,0"
-                                                   Foreground="{StaticResource Brush.TextTertiary}">
+                                                   Foreground="{DynamicResource Brush.TextTertiary}">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Visible" />
@@ -288,8 +288,8 @@
                                             <Border Width="{Binding Width}"
                                                     Height="{Binding Height}"
                                                     IsHitTestVisible="False"
-                                                    Background="{StaticResource Brush.SearchHighlight}"
-                                                    BorderBrush="{StaticResource Brush.SearchHighlightBorder}"
+                                                    Background="{DynamicResource Brush.SearchHighlight}"
+                                                    BorderBrush="{DynamicResource Brush.SearchHighlightBorder}"
                                                     BorderThickness="1" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -328,7 +328,7 @@
                                                          HorizontalAlignment="Right"
                                                          VerticalAlignment="Top"
                                                          Margin="0,-5,-5,0"
-                                                         Fill="{StaticResource Brush.Accent}"
+                                                         Fill="{DynamicResource Brush.Accent}"
                                                          Stroke="White"
                                                          StrokeThickness="1">
                                                     <Ellipse.Style>
@@ -370,8 +370,8 @@
                                             <Border Width="{Binding Width}"
                                                     Height="{Binding Height}"
                                                     IsHitTestVisible="False"
-                                                    Background="{StaticResource Brush.Accent}"
-                                                    BorderBrush="{StaticResource Brush.Accent}"
+                                                    Background="{DynamicResource Brush.Accent}"
+                                                    BorderBrush="{DynamicResource Brush.Accent}"
                                                     BorderThickness="1"
                                                     Opacity="0.28" />
                                         </DataTemplate>
@@ -533,7 +533,7 @@
                     Margin="0,0,0,24"
                     Padding="14,7"
                     CornerRadius="6"
-                    Background="{StaticResource Brush.TextPrimary}"
+                    Background="{DynamicResource Brush.TextPrimary}"
                     Opacity="0.92"
                     Visibility="Collapsed"
                     IsHitTestVisible="False">
@@ -545,8 +545,8 @@
 
         <!-- ============ 错误条（ST-06 加载失败 / 渲染失败汇总） ============ -->
         <Border Grid.Row="1"
-                Background="{StaticResource Brush.FieldBackground}"
-                BorderBrush="{StaticResource Brush.Border}"
+                Background="{DynamicResource Brush.FieldBackground}"
+                BorderBrush="{DynamicResource Brush.Border}"
                 BorderThickness="0,1,0,0"
                 Padding="12,6">
             <Border.Style>
@@ -566,8 +566,8 @@
 
         <!-- ============ 状态栏：页码跳转（FR-05）+ 缩放控制（FR-06） ============ -->
         <Border Grid.Row="2"
-                Background="{StaticResource Brush.Window}"
-                BorderBrush="{StaticResource Brush.Border}"
+                Background="{DynamicResource Brush.Window}"
+                BorderBrush="{DynamicResource Brush.Border}"
                 BorderThickness="0,1,0,0"
                 Padding="12,6">
             <DockPanel LastChildFill="False">

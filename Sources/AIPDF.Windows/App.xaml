@@ -3,48 +3,109 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
 
-        <!-- 应用级设计 token：色板与 MainWindow / PdfPreviewControl 保持一致。
-             工具页是独立 UserControl，StaticResource 无法回溯到宿主 Window 的资源，
-             因此共享 token 放在应用级；值不得与 MainWindow 漂移。 -->
+        <!-- 应用级设计 token（V3 T10 / C2 夜间模式）：
+             - 下面是「亮色」默认 token 集，键名 `Brush.*` 语义不变（全仓引用）；
+             - 紧随其后是 `Brush.Dark.*` 暗色对应项（每项一一对应，禁止只加亮不加暗）；
+             - 运行时由 Services/ThemeManager 把选定 token 集写入 Application.Resources
+               （亮/暗/跟随系统），因此所有主题引用必须是 DynamicResource——
+               替换已解析的 StaticResource 不会更新界面。
+             - 工具页是独立 UserControl，共享 token 放在应用级；本文件是色值唯一来源，
+               各工具页/资源字典不得再复制 Brush.* 定义（含暗色）。
+             - 批注/内容色（高亮色板、框选叠层等）是文档内容色，不是主题色，仍留在使用处。 -->
         <SolidColorBrush x:Key="Brush.Window" Color="#FFFFFF" />
         <SolidColorBrush x:Key="Brush.Sidebar" Color="#F6F6F8" />
         <SolidColorBrush x:Key="Brush.Hover" Color="#EBEBEF" />
         <SolidColorBrush x:Key="Brush.Border" Color="#E4E4E9" />
+        <SolidColorBrush x:Key="Brush.BorderStrong" Color="#C9C9D1" />
         <SolidColorBrush x:Key="Brush.TextPrimary" Color="#1D1D1F" />
         <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6E73" />
         <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9A9AA0" />
         <SolidColorBrush x:Key="Brush.Accent" Color="#3159D9" />
+        <SolidColorBrush x:Key="Brush.AccentHover" Color="#2749AE" />
+        <SolidColorBrush x:Key="Brush.AccentPressed" Color="#1F3B8F" />
         <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E4EAFB" />
         <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
         <SolidColorBrush x:Key="Brush.Error" Color="#C4321F" />
         <SolidColorBrush x:Key="Brush.FieldBackground" Color="#FFFFFF" />
-        <!-- 搜索命中高亮（T8）：半透明琥珀填充 + 较深边框，叠加在渲染页上仍清晰可辨且不遮字符 -->
+        <SolidColorBrush x:Key="Brush.Surface" Color="#FAFAFC" />
+        <!-- 搜索命中高亮（T8）：半透明琥珀填充 + 较深边框；叠加在渲染页上，跟随主题切换但保持可辨 -->
         <SolidColorBrush x:Key="Brush.SearchHighlight" Color="#66FFD84D" />
         <SolidColorBrush x:Key="Brush.SearchHighlightBorder" Color="#CCFFB300" />
+        <!-- 状态语义色（流程/批量状态胶囊） -->
+        <SolidColorBrush x:Key="Brush.Success" Color="#1F7A3D" />
+        <SolidColorBrush x:Key="Brush.SuccessSoft" Color="#E4F3E9" />
+        <SolidColorBrush x:Key="Brush.Danger" Color="#B3382E" />
+        <SolidColorBrush x:Key="Brush.DangerSoft" Color="#FBEAE8" />
+        <SolidColorBrush x:Key="Brush.NeutralSoft" Color="#F0F0F3" />
+        <!-- 依赖缺失警示横幅（Converter 组） -->
+        <SolidColorBrush x:Key="Brush.ConverterWarnBackground" Color="#FCF3E3" />
+        <SolidColorBrush x:Key="Brush.ConverterWarnText" Color="#8A5300" />
+        <!-- 预览控件底色 / 底部工具栏（PdfPreviewControl，原本地调色板已上收） -->
+        <SolidColorBrush x:Key="Brush.PreviewBg" Color="#EDEFF2" />
+        <SolidColorBrush x:Key="Brush.Toolbar" Color="#F6F6F8" />
+        <!-- 拖拽槽常态 / 悬停底色（PageOrganizer、Security 组） -->
+        <SolidColorBrush x:Key="Brush.DropZoneBackground" Color="#FBFBFC" />
+        <SolidColorBrush x:Key="Brush.DropZoneHoverBackground" Color="#F0F4FE" />
+
+        <!-- ============================================================
+             暗色 token 集（与上方亮色 token 一一对应）。
+             仅由 Services/ThemeManager 读取并写入同名 `Brush.*` 键；
+             XAML 不直接引用 `Brush.Dark.*`。选中「亮色」时用 ThemeManager 启动快照还原。
+             ============================================================ -->
+        <SolidColorBrush x:Key="Brush.Dark.Window" Color="#1B1C1E" />
+        <SolidColorBrush x:Key="Brush.Dark.Sidebar" Color="#212225" />
+        <SolidColorBrush x:Key="Brush.Dark.Hover" Color="#2E2F33" />
+        <SolidColorBrush x:Key="Brush.Dark.Border" Color="#3A3B40" />
+        <SolidColorBrush x:Key="Brush.Dark.BorderStrong" Color="#4A4B52" />
+        <SolidColorBrush x:Key="Brush.Dark.TextPrimary" Color="#E8E9EC" />
+        <SolidColorBrush x:Key="Brush.Dark.TextSecondary" Color="#B4B6BC" />
+        <SolidColorBrush x:Key="Brush.Dark.TextTertiary" Color="#85878E" />
+        <SolidColorBrush x:Key="Brush.Dark.Accent" Color="#5B82F0" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentHover" Color="#6E92F5" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentPressed" Color="#4A6FD8" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentSoft" Color="#25304D" />
+        <SolidColorBrush x:Key="Brush.Dark.AccentText" Color="#9DB8FA" />
+        <SolidColorBrush x:Key="Brush.Dark.Error" Color="#F1776A" />
+        <SolidColorBrush x:Key="Brush.Dark.FieldBackground" Color="#26272B" />
+        <SolidColorBrush x:Key="Brush.Dark.Surface" Color="#232427" />
+        <!-- 搜索高亮是叠加在渲染页上的内容标记，亮暗保持一致 -->
+        <SolidColorBrush x:Key="Brush.Dark.SearchHighlight" Color="#66FFD84D" />
+        <SolidColorBrush x:Key="Brush.Dark.SearchHighlightBorder" Color="#CCFFB300" />
+        <SolidColorBrush x:Key="Brush.Dark.Success" Color="#66C88A" />
+        <SolidColorBrush x:Key="Brush.Dark.SuccessSoft" Color="#1E3327" />
+        <SolidColorBrush x:Key="Brush.Dark.Danger" Color="#F08A80" />
+        <SolidColorBrush x:Key="Brush.Dark.DangerSoft" Color="#3A2422" />
+        <SolidColorBrush x:Key="Brush.Dark.NeutralSoft" Color="#2A2B2F" />
+        <SolidColorBrush x:Key="Brush.Dark.ConverterWarnBackground" Color="#3A2F1C" />
+        <SolidColorBrush x:Key="Brush.Dark.ConverterWarnText" Color="#E6B36A" />
+        <SolidColorBrush x:Key="Brush.Dark.PreviewBg" Color="#17181A" />
+        <SolidColorBrush x:Key="Brush.Dark.Toolbar" Color="#212225" />
+        <SolidColorBrush x:Key="Brush.Dark.DropZoneBackground" Color="#232427" />
+        <SolidColorBrush x:Key="Brush.Dark.DropZoneHoverBackground" Color="#26314D" />
 
         <!-- 字号阶梯：26 页标题 / 15 区块标题 / 13 正文与字段 / 12 辅助 / 11 脚注（与 MainWindow 一致） -->
         <Style x:Key="PageTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="26" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
         </Style>
         <Style x:Key="PageSubtitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="14" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
         </Style>
         <Style x:Key="SectionTitle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="15" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
         </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <Style x:Key="FieldHint" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
 
@@ -53,8 +114,8 @@
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Padding" Value="8,6" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="{StaticResource Brush.FieldBackground}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.FieldBackground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         </Style>
         <Style x:Key="FieldTextBox" TargetType="TextBox" BasedOn="{StaticResource FieldInput}" />
         <Style x:Key="FieldComboBox" TargetType="ComboBox" BasedOn="{StaticResource FieldInput}" />
@@ -63,21 +124,21 @@
             <Setter Property="Padding" Value="18,7" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="White" />
-            <Setter Property="Background" Value="{StaticResource Brush.Accent}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style x:Key="SecondaryButton" TargetType="Button">
             <Setter Property="Padding" Value="14,6" />
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
-            <Setter Property="Background" Value="{StaticResource Brush.FieldBackground}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+            <Setter Property="Background" Value="{DynamicResource Brush.FieldBackground}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="Cursor" Value="Hand" />
         </Style>
         <Style x:Key="ErrorText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
 

@@ -38,7 +38,7 @@
             <!-- 进度消息 -->
             <TextBlock Margin="0,12,0,0"
                        FontSize="12"
-                       Foreground="{StaticResource Brush.TextSecondary}"
+                       Foreground="{DynamicResource Brush.TextSecondary}"
                        Text="{Binding ProgressMessage}">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
@@ -66,14 +66,14 @@
                         <Setter Property="FontSize" Value="12" />
                         <Setter Property="LineHeight" Value="19" />
                         <Setter Property="TextWrapping" Value="Wrap" />
-                        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
                         <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding HasStatus}" Value="True">
                                 <Setter Property="Visibility" Value="Visible" />
                             </DataTrigger>
                             <DataTrigger Binding="{Binding IsErrorStatus}" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>
@@ -87,7 +87,7 @@
                         <TextBlock Margin="0,3,0,3"
                                    Text="{Binding Path}"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   Foreground="{DynamicResource Brush.TextSecondary}"
                                    TextTrimming="CharacterEllipsis"
                                    ToolTip="{Binding Path}" />
                     </DataTemplate>

@@ -11,22 +11,22 @@
 
     <!-- 拖拽槽：拖悬停时淡蓝高亮 -->
     <Style x:Key="DropZoneBorder" TargetType="Border">
-        <Setter Property="Background" Value="#FBFBFC" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.DropZoneBackground}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="Padding" Value="14" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="#F0F4FE" />
-                <Setter Property="BorderBrush" Value="{StaticResource Brush.AccentSoft}" />
+                <Setter Property="Background" Value="{DynamicResource Brush.DropZoneHoverBackground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource Brush.AccentSoft}" />
             </Trigger>
         </Style.Triggers>
     </Style>
 
     <!-- 错误横幅（引擎业务错误 / 参数校验失败） -->
     <Style x:Key="ErrorBannerBorder" TargetType="Border">
-        <Setter Property="Background" Value="#FBEAE9" />
+        <Setter Property="Background" Value="{DynamicResource Brush.DangerSoft}" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="Padding" Value="12,10" />
     </Style>
@@ -36,7 +36,7 @@
         <Setter Property="Width" Value="22" />
         <Setter Property="Height" Value="22" />
         <Setter Property="FontSize" Value="10" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
@@ -49,8 +49,8 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#FBEAE9" />
-                            <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.DangerSoft}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -62,6 +62,6 @@
     <Style x:Key="SlotTitle" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
     </Style>
 </ResourceDictionary>

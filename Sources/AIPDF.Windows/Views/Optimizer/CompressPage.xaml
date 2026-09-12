@@ -27,8 +27,8 @@
                     Margin="0,10,0,0"
                     Padding="8,2"
                     CornerRadius="4"
-                    Background="{StaticResource Brush.AccentSoft}"
-                    BorderBrush="{StaticResource Brush.Accent}"
+                    Background="{DynamicResource Brush.AccentSoft}"
+                    BorderBrush="{DynamicResource Brush.Accent}"
                     BorderThickness="1">
                 <Border.Style>
                     <Style TargetType="Border">
@@ -42,7 +42,7 @@
                 </Border.Style>
                 <TextBlock Text="{Binding PinnedDocumentLabel}"
                            FontSize="11"
-                           Foreground="{StaticResource Brush.AccentText}" />
+                           Foreground="{DynamicResource Brush.AccentText}" />
             </Border>
 
             <!-- 文件 -->
@@ -63,8 +63,8 @@
                                Text="把 PDF 拖到这里，或点击添加；每次处理都会生成新的任务目录，不覆盖源文件。" />
 
                     <!-- 空态 -->
-                    <Border Background="{StaticResource Brush.Sidebar}"
-                            BorderBrush="{StaticResource Brush.Border}"
+                    <Border Background="{DynamicResource Brush.Sidebar}"
+                            BorderBrush="{DynamicResource Brush.Border}"
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="14,18">
@@ -80,7 +80,7 @@
                         </Border.Style>
                         <TextBlock Text="尚未添加文件"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextTertiary}" />
+                                   Foreground="{DynamicResource Brush.TextTertiary}" />
                     </Border>
 
                     <!-- 文件列表 -->
@@ -97,7 +97,7 @@
                         </ItemsControl.Style>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border BorderBrush="{StaticResource Brush.Border}"
+                                <Border BorderBrush="{DynamicResource Brush.Border}"
                                         BorderThickness="0,0,0,1"
                                         Padding="0,7">
                                     <Grid>
@@ -109,7 +109,7 @@
                                                    Text="{Binding Name}"
                                                    FontSize="13"
                                                    TextTrimming="CharacterEllipsis"
-                                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                                    ToolTip="{Binding Path}" />
                                         <Button Grid.Column="1"
                                                 Margin="10,0,0,0"

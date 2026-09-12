@@ -7,19 +7,14 @@
              KeyboardNavigation.TabNavigation="Cycle">
 
     <UserControl.Resources>
-        <!-- 色板与 MainWindow 一致；预览底色与框选橙取自上游 PDFPreview.swift -->
-        <SolidColorBrush x:Key="Brush.PreviewBg" Color="#EDEFF2" />
-        <SolidColorBrush x:Key="Brush.Toolbar" Color="#F6F6F8" />
-        <SolidColorBrush x:Key="Brush.Border" Color="#E4E4E9" />
-        <SolidColorBrush x:Key="Brush.TextPrimary" Color="#1D1D1F" />
-        <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6E73" />
-        <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9A9AA0" />
-        <SolidColorBrush x:Key="Brush.Accent" Color="#3159D9" />
+        <!-- 主题色统一走应用级 App.xaml token（PreviewBg/Toolbar/Border/Text*/Accent 已上收，
+             V3 T10 起亮/暗两套由 ThemeManager 注入）。
+             以下两个是框选叠层色：文档交互语义色，不是主题色，明确保留本地定义。 -->
         <SolidColorBrush x:Key="Brush.SelectionStroke" Color="#FF9500" />
         <SolidColorBrush x:Key="Brush.SelectionFill" Color="#24FF9500" />
     </UserControl.Resources>
 
-    <Border Background="{StaticResource Brush.PreviewBg}">
+    <Border Background="{DynamicResource Brush.PreviewBg}">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
@@ -49,8 +44,8 @@
                             LostMouseCapture="OnSelectionLostCapture">
                         <Rectangle x:Name="SelectionRect"
                                    Visibility="Collapsed"
-                                   Stroke="{StaticResource Brush.SelectionStroke}"
-                                   Fill="{StaticResource Brush.SelectionFill}"
+                                   Stroke="{DynamicResource Brush.SelectionStroke}"
+                                   Fill="{DynamicResource Brush.SelectionFill}"
                                    StrokeThickness="1.5"
                                    StrokeDashArray="5 3"
                                    StrokeDashCap="Flat" />
@@ -64,10 +59,10 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     MaxWidth="360"
-                    BorderBrush="{StaticResource Brush.Border}"
+                    BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="1.5"
                     CornerRadius="12"
-                    Background="#FFFFFF"
+                    Background="{DynamicResource Brush.Window}"
                     Padding="28,22">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.10" />
@@ -76,22 +71,22 @@
                     <TextBlock Text="尚无预览"
                                FontSize="15"
                                FontWeight="SemiBold"
-                               Foreground="{StaticResource Brush.TextPrimary}" />
+                               Foreground="{DynamicResource Brush.TextPrimary}" />
                     <TextBlock Margin="0,6,0,0"
                                Text="打开 PDF 文件后在此预览。"
                                FontSize="12"
-                               Foreground="{StaticResource Brush.TextSecondary}" />
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
                     <TextBlock Margin="0,10,0,0"
                                Text="Ctrl+滚轮 缩放 · PageUp / PageDown 翻页"
                                FontSize="11"
-                               Foreground="{StaticResource Brush.TextTertiary}" />
+                               Foreground="{DynamicResource Brush.TextTertiary}" />
                 </StackPanel>
             </Border>
 
             <!-- 底部工具栏：翻页 + 页码 + 缩放显示 -->
             <Border Grid.Row="1"
-                    Background="{StaticResource Brush.Toolbar}"
-                    BorderBrush="{StaticResource Brush.Border}"
+                    Background="{DynamicResource Brush.Toolbar}"
+                    BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="0,1,0,0"
                     Padding="14,5">
                 <Grid>
@@ -101,7 +96,7 @@
                                 Click="OnPrevPageClick"
                                 Padding="12,4"
                                 FontSize="12"
-                                Foreground="{StaticResource Brush.TextPrimary}"
+                                Foreground="{DynamicResource Brush.TextPrimary}"
                                 IsEnabled="False" />
                         <TextBlock x:Name="PageIndicator"
                                    Text="– / –"
@@ -110,13 +105,13 @@
                                    TextAlignment="Center"
                                    VerticalAlignment="Center"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextPrimary}" />
+                                   Foreground="{DynamicResource Brush.TextPrimary}" />
                         <Button x:Name="NextPageButton"
                                 Content="下一页 ›"
                                 Click="OnNextPageClick"
                                 Padding="12,4"
                                 FontSize="12"
-                                Foreground="{StaticResource Brush.TextPrimary}"
+                                Foreground="{DynamicResource Brush.TextPrimary}"
                                 IsEnabled="False" />
                     </StackPanel>
                     <TextBlock x:Name="ZoomIndicator"
@@ -124,7 +119,7 @@
                                HorizontalAlignment="Right"
                                VerticalAlignment="Center"
                                FontSize="11"
-                               Foreground="{StaticResource Brush.TextTertiary}" />
+                               Foreground="{DynamicResource Brush.TextTertiary}" />
                 </Grid>
             </Border>
         </Grid>

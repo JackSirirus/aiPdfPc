@@ -44,7 +44,7 @@
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding}"
                                                FontSize="12"
-                                               Foreground="{StaticResource Brush.TextPrimary}"
+                                               Foreground="{DynamicResource Brush.TextPrimary}"
                                                TextTrimming="CharacterEllipsis"
                                                ToolTip="{Binding}"
                                                VerticalAlignment="Center" />
@@ -116,7 +116,7 @@
                         <TextBlock Margin="0,2"
                                    Text="{Binding Name, StringFormat=已生成：{0}}"
                                    FontSize="12"
-                                   Foreground="{StaticResource Brush.TextPrimary}"
+                                   Foreground="{DynamicResource Brush.TextPrimary}"
                                    ToolTip="{Binding Path}" />
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

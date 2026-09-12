@@ -12,8 +12,8 @@
                 Margin="0,0,0,10"
                 Padding="8,2"
                 CornerRadius="4"
-                Background="{StaticResource Brush.AccentSoft}"
-                BorderBrush="{StaticResource Brush.Accent}"
+                Background="{DynamicResource Brush.AccentSoft}"
+                BorderBrush="{DynamicResource Brush.Accent}"
                 BorderThickness="1">
             <Border.Style>
                 <Style TargetType="Border">
@@ -27,7 +27,7 @@
             </Border.Style>
             <TextBlock Text="{Binding PinnedDocumentLabel}"
                        FontSize="11"
-                       Foreground="{StaticResource Brush.AccentText}" />
+                       Foreground="{DynamicResource Brush.AccentText}" />
         </Border>
         <Grid>
             <Grid.ColumnDefinitions>

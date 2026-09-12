@@ -2,18 +2,8 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:local="clr-namespace:AIPDF.Windows.Views.PageOrganizer">
 
-    <!-- 色板：与 MainWindow.xaml 同一色系（独立副本：Wave 5 各工具组任务维护各自的资源字典，避免共享文件合并冲突） -->
-    <SolidColorBrush x:Key="Brush.Window" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="Brush.Sidebar" Color="#F6F6F8" />
-    <SolidColorBrush x:Key="Brush.Hover" Color="#EBEBEF" />
-    <SolidColorBrush x:Key="Brush.Border" Color="#E4E4E9" />
-    <SolidColorBrush x:Key="Brush.TextPrimary" Color="#1D1D1F" />
-    <SolidColorBrush x:Key="Brush.TextSecondary" Color="#6E6E73" />
-    <SolidColorBrush x:Key="Brush.TextTertiary" Color="#9A9AA0" />
-    <SolidColorBrush x:Key="Brush.Accent" Color="#3159D9" />
-    <SolidColorBrush x:Key="Brush.AccentSoft" Color="#E4EAFB" />
-    <SolidColorBrush x:Key="Brush.AccentText" Color="#2A4CBB" />
-    <SolidColorBrush x:Key="Brush.Surface" Color="#FAFAFC" />
+    <!-- 色板 token（含 Surface）统一由应用级 App.xaml 提供（V3 T10：亮/暗两套 + ThemeManager 注入）；
+         本文件不再复制 Brush.* 定义，所有主题引用为 DynamicResource。 -->
 
     <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
     <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
@@ -21,44 +11,44 @@
     <Style x:Key="PageTitleText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="26" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
     </Style>
 
     <Style x:Key="PageSubtitleText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="14" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
     </Style>
 
     <Style x:Key="PageNoteText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="LineHeight" Value="20" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style x:Key="SectionTitleText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="Margin" Value="0,22,0,8" />
     </Style>
 
     <Style x:Key="FieldLabelText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
     </Style>
 
     <Style x:Key="HelpText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="11" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style x:Key="FormTextBox" TargetType="TextBox">
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Padding" Value="8,6" />
-        <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -66,8 +56,8 @@
     <Style x:Key="FormComboBox" TargetType="ComboBox">
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Padding" Value="8,5" />
-        <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
@@ -76,7 +66,7 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Padding" Value="18,7" />
         <Setter Property="Foreground" Value="White" />
-        <Setter Property="Background" Value="{StaticResource Brush.Accent}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
@@ -104,9 +94,9 @@
     <Style x:Key="SecondaryButton" TargetType="Button">
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Padding" Value="14,6" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextPrimary}" />
-        <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
@@ -122,7 +112,7 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter TargetName="Bd" Property="Opacity" Value="0.4" />
@@ -137,7 +127,7 @@
         <Setter Property="Width" Value="26" />
         <Setter Property="Height" Value="26" />
         <Setter Property="FontSize" Value="13" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextSecondary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Margin" Value="2,0" />
@@ -152,8 +142,8 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.AccentSoft}" />
-                            <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.35" />
@@ -166,16 +156,16 @@
 
     <!-- 拖放区基础样式；拖拽悬停的高亮在 ToolPageShell 里用触发器叠加 -->
     <Style x:Key="DropZoneBorder" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="AllowDrop" Value="True" />
     </Style>
 
     <Style x:Key="ListRowBorder" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="CornerRadius" Value="6" />
         <Setter Property="Padding" Value="10,6" />

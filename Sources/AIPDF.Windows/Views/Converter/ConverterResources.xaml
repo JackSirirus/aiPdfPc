@@ -3,17 +3,14 @@
     <!--
         转换组（格式转换）工具页本地样式。
         通用 token（画刷、PageTitle/FieldLabel/FieldTextBox/PrimaryButton 等）一律取自 App.xaml
-        应用级资源；本文件只放转换组特有的卡片 / 警示横幅样式，色值不与 App.xaml 重复。
+        应用级资源；ConverterWarnBackground/ConverterWarnText 亦已在 V3 T10 上收至 App.xaml（亮/暗两套），
+        本文件只放转换组特有的卡片 / 警示横幅样式，不定义任何 Brush.* 色值。
     -->
-
-    <!-- 警示横幅（依赖缺失提示）：扩展 token，键名带 Converter 前缀避免与其他组漂移 -->
-    <SolidColorBrush x:Key="Brush.ConverterWarnBackground" Color="#FCF3E3" />
-    <SolidColorBrush x:Key="Brush.ConverterWarnText" Color="#8A5300" />
 
     <!-- 内容卡片：白底 + 细边框 + 8px 圆角（与侧栏条目 6px、空态图标 18px 同一圆角阶梯） -->
     <Style x:Key="ConverterCard" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource Brush.Window}" />
-        <Setter Property="BorderBrush" Value="{StaticResource Brush.Border}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Window}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="Padding" Value="16" />
@@ -21,7 +18,7 @@
     </Style>
 
     <Style x:Key="ConverterWarnBanner" TargetType="Border">
-        <Setter Property="Background" Value="{StaticResource Brush.ConverterWarnBackground}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.ConverterWarnBackground}" />
         <Setter Property="CornerRadius" Value="8" />
         <Setter Property="Padding" Value="12,10" />
         <Setter Property="Margin" Value="0,0,0,12" />
@@ -36,7 +33,7 @@
 
     <Style x:Key="ConverterWarnText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.ConverterWarnText}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.ConverterWarnText}" />
         <Setter Property="TextWrapping" Value="Wrap" />
         <Setter Property="LineHeight" Value="18" />
     </Style>
@@ -50,7 +47,7 @@
     <Style x:Key="ConverterRemoveButton" TargetType="Button">
         <Setter Property="Content" Value="✕" />
         <Setter Property="FontSize" Value="11" />
-        <Setter Property="Foreground" Value="{StaticResource Brush.TextTertiary}" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
@@ -64,8 +61,8 @@
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Foreground" Value="{StaticResource Brush.Error}" />
-                            <Setter Property="Background" Value="{StaticResource Brush.Hover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
+                            <Setter Property="Background" Value="{DynamicResource Brush.Hover}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -75,7 +72,7 @@
 
     <!-- 执行按钮：主色圆角（PrimaryButton 的圆角模板化版本，仅本组使用） -->
     <Style x:Key="ConverterPrimaryButton" TargetType="Button">
-        <Setter Property="Background" Value="{StaticResource Brush.Accent}" />
+        <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
         <Setter Property="Foreground" Value="White" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Padding" Value="20,8" />

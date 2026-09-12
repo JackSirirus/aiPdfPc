@@ -42,6 +42,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     {
         InitializeComponent();
 
+        // V3 T10 / C2：按持久化设置应用主题（亮/暗/跟随系统），窗口 Show 前完成，避免亮色闪烁；
+        // 关闭时 Dispose 反订阅系统主题事件（无事件泄漏）。
+        _themeManager = new ThemeManager(_settingsStore);
+        _themeManager.ApplyFromSettings();
+        Closed += (_, _) => _themeManager.Dispose();
+
         // T8：窗口级唯一搜索栈——一个文本层服务 + 一个索引服务（MUST：每窗口各一份）
         _searchIndexService = new SearchIndexService(_searchTextService);
 
@@ -588,7 +594,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// </summary>
     private void OnSettingsMenuItemClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_settingsStore);
+        var dialog = new SettingsDialog(_settingsStore, _themeManager);
         if (IsLoaded)
         {
             dialog.Owner = this;
@@ -1544,6 +1550,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// 应用设置存储（V3 T5）：打开文档 / 打印时读取，设置保存后仅对「随后新打开的文档」生效
     /// （FR-38 边界；已打开文档不受影响）。</summary>
     private readonly SettingsStore _settingsStore = new();
+
+    /// <summary>
+    /// 主题管理器（V3 T10 / C2）：启动时按设置应用亮/暗/跟随系统，设置保存后即时切换；
+    /// system 态订阅系统主题变化（Dispose 时反订阅）。资源写入封送 UI 线程（F3-BLK-1）。
+    /// </summary>
+    private readonly ThemeManager _themeManager;
 
     /// <summary>
     /// T9 会话密码驻留（PRD 4.4.3）：内存路径→密码，解锁一次标签内免密，进程退出清除。

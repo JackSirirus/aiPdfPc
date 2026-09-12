@@ -103,7 +103,7 @@
                         <TextBlock Text="{Binding Path}"
                                    ToolTip="{Binding Path}"
                                    FontSize="11"
-                                   Foreground="{StaticResource Brush.TextSecondary}"
+                                   Foreground="{DynamicResource Brush.TextSecondary}"
                                    TextTrimming="CharacterEllipsis"
                                    Margin="0,2" />
                     </DataTemplate>

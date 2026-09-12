@@ -3,16 +3,11 @@
                     xmlns:wf="clr-namespace:AIPDF.Windows.Views.Workflow">
 
     <!--
-      流程工具组样式与语义色扩展。
-      核心中性色与 AIPDF 蓝（Brush.Window/Sidebar/Hover/Border/Text*/Accent*）沿用 MainWindow 的同名键，
-      页面全部经 DynamicResource 引用（控件装入窗口后沿逻辑树上溯解析，与主窗口保持单一来源）。
-      本字典只补充状态语义色（成功/危险/中性软底）——设计系统的增量扩展。
+      流程工具组样式。
+      核心中性色与 AIPDF 蓝（Brush.Window/Sidebar/Hover/Border/Text*/Accent*）沿用应用级 App.xaml 同名键。
+      状态语义色（Success/SuccessSoft/Danger/DangerSoft/NeutralSoft）在 V3 T10 上收至 App.xaml（亮/暗两套），
+      本字典只保留样式与转换器；所有主题引用为 DynamicResource，运行时切换即时生效。
     -->
-    <SolidColorBrush x:Key="Brush.Success" Color="#1F7A3D" />
-    <SolidColorBrush x:Key="Brush.SuccessSoft" Color="#E4F3E9" />
-    <SolidColorBrush x:Key="Brush.Danger" Color="#B3382E" />
-    <SolidColorBrush x:Key="Brush.DangerSoft" Color="#FBEAE8" />
-    <SolidColorBrush x:Key="Brush.NeutralSoft" Color="#F0F0F3" />
 
     <wf:InverseBooleanConverter x:Key="InverseBool" />
     <wf:StringToBoolConverter x:Key="StrBool" />
