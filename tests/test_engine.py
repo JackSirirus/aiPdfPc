@@ -305,6 +305,104 @@ class EngineTests(unittest.TestCase):
         unlocked=self.run_tool("unlock",{"password":"contract-pw"},protected["outputs"])
         with self.pdf(unlocked) as d:self.assertFalse(d.needs_pass)
 
+    # --- V3 T11（C3）：手写/形状批注写回（尖刺 #4 定稿 API） ---
+
+    def test_ink_and_shape_annotation_roundtrip(self):
+        path=self._annotation_path("annot-ink-shape.pdf")
+        result=self._save_annotations(path,[
+            {"action":"add","id":"ink1","kind":"ink","page":0,"color":"#0000FF",
+             "strokes":[[[60,120],[120,160],[180,110]],[[60,200],[160,240]]],"width":3},
+            {"action":"add","id":"sq1","kind":"shape","shape":"square","page":0,"color":"#00FF00",
+             "rect":[60,300,220,360],"width":2},
+            {"action":"add","id":"ci1","kind":"shape","shape":"circle","page":0,"color":"#FF00FF",
+             "rect":[260,300,380,400],"width":2},
+            {"action":"add","id":"li1","kind":"shape","shape":"line","page":0,"color":"#FF0000",
+             "points":[[60,450],[240,520]],"width":2},
+            {"action":"add","id":"ar1","kind":"shape","shape":"arrow","page":0,"color":"#000000",
+             "points":[[300,450],[420,520]],"width":2},
+        ])
+        self.assertTrue(result["ok"])
+        for key in ("ink1","sq1","ci1","li1","ar1"):
+            self.assertIn(key,result["annotationHandles"])
+        with fitz.open(str(path)) as doc:
+            types=sorted(a.type[1] for a in doc[0].annots())
+            self.assertEqual(types,["Circle","Ink","Line","Line","Square"])
+            names={a.info.get("name") for a in doc[0].annots()}
+            self.assertEqual(names,{"ink1","sq1","ci1","li1","ar1"})
+            ends={a.info.get("name"):a.line_ends for a in doc[0].annots() if a.type[1]=="Line"}
+            self.assertEqual(ends["li1"],(0,0))          # 线：无端点
+            self.assertEqual(ends["ar1"],(0,4))          # 箭头：终点 OPEN_ARROW
+            self.assertEqual(len(doc),3)
+        # 第三方（pypdf）可打开并看到五类注释
+        reader=PdfReader(str(path))
+        subtypes=sorted(a.get_object().get("/Subtype") for pg in reader.pages for a in (pg.get("/Annots") or []))
+        self.assertEqual(subtypes,["/Circle","/Ink","/Line","/Line","/Square"])
+        # 稳定名改色 + 删除
+        handles=result["annotationHandles"]
+        self._save_annotations(path,[{"action":"setColor","name":handles["ink1"],"color":"#00FF00"}])
+        with fitz.open(str(path)) as doc:
+            ink=[a for a in doc[0].annots() if a.type[1]=="Ink"][0]
+            self.assertEqual(ink.colors.get("stroke"),[0.0,1.0,0.0])
+        self._save_annotations(path,[{"action":"delete","name":handles["ar1"]}])
+        with fitz.open(str(path)) as doc:
+            self.assertNotIn("ar1",{a.info.get("name") for a in doc[0].annots()})
+            self.assertEqual(len([a for p in doc for a in (p.annots() or [])]),4)
+
+    def test_encrypted_ink_shape_save_preserves_encryption(self):
+        password="user-secret"
+        path=self._annotation_path("annot-ink-encrypted.pdf",encrypted=True,password=password)
+        # 一进程一请求：加密就地保存经真实 CLI 子进程（PyMuPDF 1.28.2 进程级 AES 状态缺陷）。
+        request={"operation":"save_annotations","files":[str(path)],
+                 "options":{"password":password,"annotations":[
+                     {"action":"add","id":"i","kind":"ink","page":0,"color":"#0000FF",
+                      "strokes":[[[60,120],[160,180]]],"width":3},
+                     {"action":"add","id":"s","kind":"shape","shape":"square","page":0,
+                      "color":"#00FF00","rect":[60,300,220,360],"width":2}]}}
+        done=subprocess.run([sys.executable,str(ROOT/"backend"/"engine.py")],input=json.dumps(request),
+                            capture_output=True,text=True,env={**os.environ},timeout=120)
+        self.assertEqual(done.returncode,0,done.stderr[-500:])
+        result=engine_result_from_stdout(done.stdout)
+        self.assertTrue(result["ok"])
+        with fitz.open(str(path)) as d:
+            self.assertTrue(d.needs_pass or d.is_encrypted)   # AC-13.2：保存后仍加密
+            self.assertEqual(d.authenticate(password),2)      # 原用户密码可解
+            types=sorted(a.type[1] for a in d[0].annots())
+            self.assertEqual(types,["Ink","Square"])
+        out=PdfReader(str(path))
+        self.assertTrue(out.is_encrypted);self.assertEqual(out.decrypt(password),1)
+        subtypes=sorted(a.get_object().get("/Subtype") for a in (out.pages[0].get("/Annots") or []))
+        self.assertEqual(subtypes,["/Ink","/Square"])
+
+    def test_annotation_operations_stay_out_of_catalog(self):
+        # 批注 handler 不得进 BY_ID（32 工具目录不变）
+        self.assertEqual(len(engine.BY_ID),32)
+        for op in engine.ANNOTATION_OPERATIONS:
+            self.assertNotIn(op,engine.BY_ID)
+        self.assertIn("add_ink_annot",engine.ANNOTATION_OPERATIONS)
+        self.assertIn("add_shape_annot",engine.ANNOTATION_OPERATIONS)
+        # 别名 operation 亦可用（不进 catalog）
+        alias=self._annotation_path("annot-alias-ink.pdf")
+        result=engine.dispatch({"operation":"add_ink_annot","files":[str(alias)],
+                                "options":{"id":"a","page":0,"color":"#0000FF",
+                                           "strokes":[[[10,10],[60,60]]],"width":2}})
+        self.assertTrue(result["ok"])
+
+    def test_edit_tools_retain_ink_and_shape(self):
+        source=self._annotation_path("annot-ink-retention.pdf")
+        self._save_annotations(source,[
+            {"action":"add","id":"i","kind":"ink","page":0,"color":"#0000FF",
+             "strokes":[[[60,120],[160,180]]],"width":3},
+            {"action":"add","id":"s","kind":"shape","shape":"square","page":0,"color":"#00FF00",
+             "rect":[60,300,220,360],"width":2},
+            {"action":"add","id":"ci","kind":"shape","shape":"circle","page":1,"color":"#FF00FF",
+             "rect":[60,300,220,360],"width":2},
+        ])
+        for operation,options in [("compress",{"quality":"balanced"}),
+                                  ("rotate",{"angle":"90","pages":"1"})]:
+            result=self.run_tool(operation,options,files=[source])
+            types=sorted(self._annot_types(result["outputs"][0]))
+            self.assertEqual(types,["Circle","Ink","Square"],f"{operation} 改变注释类型/数量：{types}")
+
     # --- V2 T10 FR-23：编辑类工具注释保留（Q2 修订：compress/crop/rotate 保留，redact 删除全部） ---
 
     def _annotated_retention_pdf(self,name="annot-retention.pdf"):

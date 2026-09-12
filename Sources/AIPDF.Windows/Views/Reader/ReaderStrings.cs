@@ -51,4 +51,20 @@ public static class ReaderStrings
     public const string HighlightApplied = "已高亮";
     public const string AnnotationDeleted = "已删除批注";
     public const string ToolUnavailable = "不可用";
+
+    // ---- V3 T11（C3）手写/形状绘制工具栏 ----
+    public const string DrawToolbarToolTip = "开启后在页面上拖拽绘制手写或形状；关闭后恢复文字选中";
+    public const string DrawModeLabel = "批注";
+    public const string DrawInkLabel = "手写";
+    public const string DrawSquareLabel = "矩形";
+    public const string DrawCircleLabel = "圆";
+    public const string DrawLineLabel = "线";
+    public const string DrawArrowLabel = "箭头";
+    public const string DrawColorTitle = "颜色";
+    public const string DrawWidthTitle = "粗细";
+    public const string DrawThinLabel = "细";
+    public const string DrawMidLabel = "中";
+    public const string DrawThickLabel = "粗";
+    public const string InkApplied = "已添加手写";
+    public const string ShapeApplied = "已添加形状";
 }

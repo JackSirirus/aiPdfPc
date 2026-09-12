@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 AIPDF contributors
 // V2 批注叠加层投影（T1）：批注记录（PDF 点）→ 页内 DIP 叠加条目（供 ReaderView 的独立 Canvas 层消费）。
+// V3 T11（C3）扩展：手写（Ink，多段折线）与形状（矩形/圆/线/箭头）。
 //
 // 换算复用 Views/Reader/PageLayoutCalculator.ToPageDip（与搜索高亮同一函数），不新增坐标换算层（PRD 4.2.2）。
-// 生成的 Brush 已 Freeze，可跨线程/缓存复用；半透明填充保证下方文字可见（对照 Brush.SearchHighlight 的 0x66 alpha 口径）。
+// 生成的 Brush 与 Geometry 已 Freeze，可跨线程/缓存复用；半透明填充保证下方文字可见
+// （对照 Brush.SearchHighlight 的 0x66 alpha 口径）。手写/形状为不透明描边，避免线条发虚。
+using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Windows;
 using System.Windows.Media;
 using AIPDF.Windows.Views.Reader;
 
@@ -12,6 +17,9 @@ namespace AIPDF.Windows.Annotations;
 
 /// <summary>
 /// 单条批注的页内显示叠加（DIP，相对页左上角）。XAML 以 Canvas 绝对定位消费，独立 IsHitTestVisible=False 层。
+/// 高亮/笔记用 <see cref="X"/>/<see cref="Y"/>/<see cref="Width"/>/<see cref="Height"/> + Fill/Border 画矩形；
+/// 手写/形状以 <see cref="Geometry"/>（页局部 DIP，已冻结）配合 <see cref="Border"/> 描边渲染，
+/// 矩形外接框仍写 X/Y/Width/Height 供命中测试与弹层锚定。
 /// </summary>
 public readonly record struct AnnotationOverlay(
     string Id,
@@ -22,7 +30,10 @@ public readonly record struct AnnotationOverlay(
     double Width,
     double Height,
     Brush Fill,
-    Brush Border)
+    Brush Border,
+    ShapeKind? Shape = null,
+    Geometry? Geometry = null,
+    double StrokeThickness = 0)
 {
     /// <summary>高亮填充 alpha（40%），叠加在渲染页上仍清晰可辨且不遮字符。</summary>
     private const byte FillAlpha = 0x66;
@@ -30,8 +41,17 @@ public readonly record struct AnnotationOverlay(
     /// <summary>高亮边框 alpha（80%）。</summary>
     private const byte BorderAlpha = 0xCC;
 
+    /// <summary>手写/形状描边与箭头的 alpha（完全不透明）。</summary>
+    private const byte StrokeAlpha = 0xFF;
+
+    /// <summary>形状填充 alpha（0 = 仅描边；与高亮区分，不遮挡页面内容）。</summary>
+    private const byte ShapeFillAlpha = 0x00;
+
     /// <summary>边框相对填充色的压暗系数（在浅色页上可辨）。</summary>
     private const double BorderDarken = 0.72;
+
+    /// <summary>箭头开口张角（弧度，约为 28.6°；与引擎 OPEN_ARROW 语义一致）。</summary>
+    private const double ArrowSpread = 0.5;
 
     /// <summary>
     /// 记录（PDF 点）→ 叠加条目（DIP）。缩放变更时需按新显示宽重算（调用方在 RebuildAnnotations）。
@@ -42,10 +62,128 @@ public readonly record struct AnnotationOverlay(
         ArgumentNullException.ThrowIfNull(record);
         var dip = PageLayoutCalculator.ToPageDip(record.Rect, pageWidthPt, displayWidthDip);
         var (r, g, b) = ParseRgb(record.Color);
-        var fill = Freeze(Color.FromArgb(FillAlpha, r, g, b));
-        var border = Freeze(Color.FromArgb(BorderAlpha, Darken(r), Darken(g), Darken(b)));
-        return new AnnotationOverlay(record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height, fill, border);
+        var scale = pageWidthPt > 0 && displayWidthDip > 0 ? displayWidthDip / pageWidthPt : 0;
+        var thickness = Math.Max(0.5, record.LineWidth * scale);
+
+        switch (record.Kind)
+        {
+            case AnnotationKind.Ink:
+            {
+                // 手写：不透明描边 + 多段折线 Geometry；Fill 透明（仅 Stroke 生效）。
+                // 几何相对本条目左上角（条目由 Canvas.Left/Top 定位到 X/Y），避免二次偏移。
+                var stroke = Freeze(Color.FromArgb(StrokeAlpha, r, g, b));
+                var fill = Freeze(Color.FromArgb(ShapeFillAlpha, r, g, b));
+                var bounds = AnnotationGeometry.NormalizeRect(record.Rect);
+                return new AnnotationOverlay(
+                    record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
+                    fill, stroke, null, BuildInkGeometry(record.Strokes, scale, bounds.Left, bounds.Top), thickness);
+            }
+
+            case AnnotationKind.Shape:
+            {
+                var stroke = Freeze(Color.FromArgb(StrokeAlpha, r, g, b));
+                var fill = Freeze(Color.FromArgb(ShapeFillAlpha, r, g, b));
+                return new AnnotationOverlay(
+                    record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
+                    fill, stroke, record.Shape, BuildShapeGeometry(record, scale, thickness), thickness);
+            }
+
+            default:
+            {
+                // Highlight / Note：投影语义保持不变（半透明填充 + 压暗边框）。
+                var fill = Freeze(Color.FromArgb(FillAlpha, r, g, b));
+                var border = Freeze(Color.FromArgb(BorderAlpha, Darken(r), Darken(g), Darken(b)));
+                return new AnnotationOverlay(
+                    record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height, fill, border);
+            }
+        }
     }
+
+    private static Geometry? BuildInkGeometry(
+        IReadOnlyList<IReadOnlyList<PdfPoint>>? strokes, double scale, double originX, double originY)
+    {
+        if (strokes is null || strokes.Count == 0 || scale <= 0) return null;
+
+        var group = new GeometryGroup { FillRule = FillRule.Nonzero };
+        foreach (var stroke in strokes)
+        {
+            if (stroke is null || stroke.Count < 2) continue;
+            var figure = new PathFigure
+            {
+                StartPoint = ToDip(stroke[0], scale, originX, originY),
+                IsClosed = false,
+                IsFilled = false,
+            };
+            for (var i = 1; i < stroke.Count; i++)
+            {
+                figure.Segments.Add(new LineSegment(ToDip(stroke[i], scale, originX, originY), true));
+            }
+            group.Children.Add(new PathGeometry([figure]));
+        }
+
+        if (group.Children.Count == 0) return null;
+        group.Freeze();
+        return group;
+    }
+
+    private static Geometry? BuildShapeGeometry(AnnotationRecord record, double scale, double thickness)
+    {
+        if (scale <= 0) return null;
+
+        var rect = AnnotationGeometry.NormalizeRect(record.Rect);
+        // 几何相对条目左上角（条目由 Canvas.Left/Top 定位），避免与 X/Y 二次偏移。
+        var width = Math.Max(0, rect.Width * scale);
+        var height = Math.Max(0, rect.Height * scale);
+
+        switch (record.Shape)
+        {
+            case ShapeKind.Square:
+            {
+                var geometry = new RectangleGeometry(new Rect(0, 0, width, height));
+                geometry.Freeze();
+                return geometry;
+            }
+
+            case ShapeKind.Circle:
+            {
+                var geometry = new EllipseGeometry(new Rect(0, 0, width, height));
+                geometry.Freeze();
+                return geometry;
+            }
+
+            case ShapeKind.Line:
+            case ShapeKind.Arrow:
+            {
+                if (record.LinePoints is not { Count: 2 } points) return null;
+                var start = ToDip(points[0], scale, rect.Left, rect.Top);
+                var end = ToDip(points[1], scale, rect.Left, rect.Top);
+                var figure = new PathFigure { StartPoint = start, IsClosed = false, IsFilled = false };
+                figure.Segments.Add(new LineSegment(end, true));
+                if (record.Shape == ShapeKind.Arrow)
+                {
+                    // 开口箭头：以终点为顶点、回指起点方向的两段短线（方向无二义：起点→终点）。
+                    var head = Math.Max(8.0, thickness * 3.0);
+                    var angle = Math.Atan2(start.Y - end.Y, start.X - end.X);
+                    figure.Segments.Add(new LineSegment(
+                        new Point(end.X + head * Math.Cos(angle - ArrowSpread),
+                                  end.Y + head * Math.Sin(angle - ArrowSpread)), true));
+                    figure.Segments.Add(new LineSegment(end, true));
+                    figure.Segments.Add(new LineSegment(
+                        new Point(end.X + head * Math.Cos(angle + ArrowSpread),
+                                  end.Y + head * Math.Sin(angle + ArrowSpread)), true));
+                }
+
+                var geometry = new PathGeometry([figure]);
+                geometry.Freeze();
+                return geometry;
+            }
+        }
+
+        return null;
+    }
+
+    private static Point ToDip(PdfPoint point, double scale, double originX, double originY)
+        => new((point.X - originX) * scale, (point.Y - originY) * scale);
 
     private static byte Darken(byte channel) => (byte)Math.Round(channel * BorderDarken, MidpointRounding.AwayFromZero);
 

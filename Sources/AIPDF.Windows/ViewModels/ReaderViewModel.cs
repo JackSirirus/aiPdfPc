@@ -140,6 +140,25 @@ public partial class ReaderPageItemViewModel : ObservableObject
     /// 释放/清除后为空；与持久批注层分离，避免交互态污染批注记录。</summary>
     public ObservableCollection<SearchHighlight> SelectionRects { get; } = [];
 
+    /// <summary>
+    /// V3 T11（C3）绘制中的临时预览几何（页局部 DIP；手写/形状拖拽期）。null = 无预览。
+    /// 与持久批注层分离：仅在拖拽期间由 ReaderView 写入，完成后清空。
+    /// </summary>
+    [ObservableProperty]
+    private Geometry? _drawPreview;
+
+    /// <summary>绘制预览的描边宽（DIP，随缩放换算）；无预览为 0。</summary>
+    [ObservableProperty]
+    private double _drawPreviewThickness;
+
+    /// <summary>绘制预览包围盒原点 X（页局部 DIP；预览几何相对该原点）。</summary>
+    [ObservableProperty]
+    private double _drawPreviewX;
+
+    /// <summary>绘制预览包围盒原点 Y（页局部 DIP）。</summary>
+    [ObservableProperty]
+    private double _drawPreviewY;
+
     /// <summary>设置本页临时选区矩形（DIP）。传空即清除。</summary>
     internal void SetSelectionRects(IReadOnlyList<SearchHighlight> rects)
     {
@@ -1094,6 +1113,24 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>新增笔记批注（T2 浮菜单「笔记」消费）。旋转页/越界返回 null（不创建）。</summary>
     public AnnotationRecord? AddNote(int pageIndex, PdfRect rect, string note, string? color = null)
         => AddAnnotation(AnnotationRecord.CreateNote(pageIndex, Normalize(rect), note, color));
+
+    /// <summary>新增手写批注（V3 T11 工具栏消费）。旋转页/越界返回 null（不创建）。</summary>
+    public AnnotationRecord? AddInk(
+        int pageIndex, IReadOnlyList<IReadOnlyList<PdfPoint>> strokes,
+        string? color = null, double lineWidth = AnnotationRecord.DefaultLineWidth)
+        => AddAnnotation(AnnotationRecord.CreateInk(pageIndex, strokes, color, lineWidth));
+
+    /// <summary>新增矩形/圆形状批注（V3 T11 工具栏消费）。旋转页/越界返回 null（不创建）。</summary>
+    public AnnotationRecord? AddShape(
+        int pageIndex, ShapeKind shape, PdfRect rect,
+        string? color = null, double lineWidth = AnnotationRecord.DefaultLineWidth)
+        => AddAnnotation(AnnotationRecord.CreateShape(pageIndex, shape, Normalize(rect), color, lineWidth));
+
+    /// <summary>新增线/箭头形状批注（V3 T11）：方向 = 起点→终点。旋转页/越界返回 null（不创建）。</summary>
+    public AnnotationRecord? AddShape(
+        int pageIndex, ShapeKind shape, PdfPoint start, PdfPoint end,
+        string? color = null, double lineWidth = AnnotationRecord.DefaultLineWidth)
+        => AddAnnotation(AnnotationRecord.CreateShape(pageIndex, shape, start, end, color, lineWidth));
 
     /// <summary>新增批注记录（幂等：同 Id 不重复）。越界/旋转页返回 null。</summary>
     public AnnotationRecord? AddAnnotation(AnnotationRecord record)

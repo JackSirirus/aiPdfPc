@@ -120,6 +120,109 @@
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
+
+        <!-- ============ V3 T11（C3）绘制工具栏样式 ============ -->
+
+        <!-- 绘制工具/粗细切换钮（RadioButton 呈现为方形切换钮；选中用 AccentSoft） -->
+        <Style x:Key="DrawChoiceButton" TargetType="RadioButton">
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Margin" Value="2,0,0,0" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bg"
+                                Background="Transparent"
+                                BorderBrush="{DynamicResource Brush.Border}"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="8,0" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                                <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 颜色色块（RadioButton）：Background 即所选颜色，选中加粗 Accent 边框 -->
+        <Style x:Key="DrawColorSwatch" TargetType="RadioButton">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Margin" Value="3,0,0,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="BorderThickness" Value="2" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 绘制总开关（ToggleButton；开启时高亮） -->
+        <Style x:Key="DrawModeToggle" TargetType="ToggleButton">
+            <Setter Property="Height" Value="26" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bg"
+                                Background="{DynamicResource Brush.Surface}"
+                                BorderBrush="{DynamicResource Brush.Border}"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="10,0" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.Accent}" />
+                                <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 工具栏外框：仅在已打开文档时出现 -->
+        <Style x:Key="DrawToolbarPanel" TargetType="Border" BasedOn="{StaticResource FlyoutPanel}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasDocument}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -319,33 +422,70 @@
                                             <Grid Width="{Binding Width}"
                                                   Height="{Binding Height}"
                                                   IsHitTestVisible="False">
-                                                <Border Background="{Binding Fill}"
-                                                        BorderBrush="{Binding Border}"
-                                                        BorderThickness="1"
-                                                        CornerRadius="1" />
-                                                <Ellipse Width="10"
-                                                         Height="10"
-                                                         HorizontalAlignment="Right"
-                                                         VerticalAlignment="Top"
-                                                         Margin="0,-5,-5,0"
-                                                         Fill="{DynamicResource Brush.Accent}"
-                                                         Stroke="White"
-                                                         StrokeThickness="1">
-                                                    <Ellipse.Style>
-                                                        <Style TargetType="Ellipse">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding Kind}" Value="Note">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Ellipse.Style>
-                                                </Ellipse>
+                                                <!-- 高亮/笔记：矩形填充 + 边框 + 笔记圆点（V2 语义不变） -->
+                                                <Grid x:Name="BoxLayer">
+                                                    <Border Background="{Binding Fill}"
+                                                            BorderBrush="{Binding Border}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="1" />
+                                                    <Ellipse Width="10"
+                                                             Height="10"
+                                                             HorizontalAlignment="Right"
+                                                             VerticalAlignment="Top"
+                                                             Margin="0,-5,-5,0"
+                                                             Fill="{DynamicResource Brush.Accent}"
+                                                             Stroke="White"
+                                                             StrokeThickness="1">
+                                                        <Ellipse.Style>
+                                                            <Style TargetType="Ellipse">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Kind}" Value="Note">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Ellipse.Style>
+                                                    </Ellipse>
+                                                </Grid>
+                                                <!-- V3 T11（C3）：手写/形状几何（Path 描边）。
+                                                     Geometry 由 AnnotationOverlay 构建并冻结，坐标相对条目左上角
+                                                     （条目经 Canvas.Left/Top 定位到 X/Y），随缩放由 VM 重算。 -->
+                                                <Path x:Name="ShapeLayer"
+                                                      Data="{Binding Geometry}"
+                                                      Stroke="{Binding Border}"
+                                                      StrokeThickness="{Binding StrokeThickness}"
+                                                      Fill="{Binding Fill}"
+                                                      StrokeStartLineCap="Round"
+                                                      StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"
+                                                      Visibility="Collapsed" />
                                             </Grid>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding Kind}" Value="Ink">
+                                                    <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
+                                                    <Setter TargetName="ShapeLayer" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Kind}" Value="Shape">
+                                                    <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
+                                                    <Setter TargetName="ShapeLayer" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- V3 T11（C3）：绘制中的临时预览几何（页局部 DIP；仅拖拽期非空）。
+                                     独立于持久批注层，完成后由 code-behind 清空；Canvas 定位到预览包围盒原点。 -->
+                                <Canvas IsHitTestVisible="False">
+                                    <Path Canvas.Left="{Binding DrawPreviewX}"
+                                          Canvas.Top="{Binding DrawPreviewY}"
+                                          Data="{Binding DrawPreview}"
+                                          Stroke="{DynamicResource Brush.Accent}"
+                                          StrokeThickness="{Binding DrawPreviewThickness}"
+                                          StrokeStartLineCap="Round"
+                                          StrokeEndLineCap="Round"
+                                          Fill="Transparent" />
+                                </Canvas>
                                 <!-- T2 选区叠加层：拖选中的临时矩形（DIP）。用全局 Accent 半透明填充，
                                      与搜索高亮的琥珀色/批注黄色区分；IsHitTestVisible=False 不阻塞拖选。 -->
                                 <ItemsControl ItemsSource="{Binding SelectionRects}"
@@ -386,6 +526,75 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
+
+            <!-- ============ V3 T11（C3）手写/形状绘制工具栏 ============
+                 默认关闭（DrawModeToggle 未选），不影响既有「选中文字 → 高亮/笔记」浮菜单；
+                 开启后在页面上拖拽绘制，可删除/改色（复用悬停操作条）。 -->
+            <Border x:Name="DrawToolbar"
+                    Style="{StaticResource DrawToolbarPanel}"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,12,12,0"
+                    Padding="8,6"
+                    Panel.ZIndex="6"
+                    ToolTip="{x:Static reader:ReaderStrings.DrawToolbarToolTip}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ToggleButton x:Name="DrawModeToggle"
+                                  Style="{StaticResource DrawModeToggle}"
+                                  Content="{x:Static reader:ReaderStrings.DrawModeLabel}"
+                                  Checked="OnDrawModeChanged"
+                                  Unchecked="OnDrawModeChanged" />
+                    <Border Width="1" Margin="6,4" Background="{DynamicResource Brush.Border}" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawInkLabel}"
+                                 Tag="ink" GroupName="DrawTool" IsChecked="True"
+                                 Checked="OnDrawToolChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawSquareLabel}"
+                                 Tag="square" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawCircleLabel}"
+                                 Tag="circle" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawLineLabel}"
+                                 Tag="line" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawArrowLabel}"
+                                 Tag="arrow" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <Border Width="1" Margin="6,4" Background="{DynamicResource Brush.Border}" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.DrawColorTitle}"
+                               Style="{StaticResource FieldHint}"
+                               VerticalAlignment="Center" />
+                    <RadioButton Style="{StaticResource DrawColorSwatch}"
+                                 Background="#000000" Tag="#000000" GroupName="DrawColor"
+                                 IsChecked="True" Checked="OnDrawColorChecked" ToolTip="黑色" />
+                    <RadioButton Style="{StaticResource DrawColorSwatch}"
+                                 Background="#FFFF00" Tag="#FFFF00" GroupName="DrawColor"
+                                 Checked="OnDrawColorChecked" ToolTip="黄色" />
+                    <RadioButton Style="{StaticResource DrawColorSwatch}"
+                                 Background="#A6E22E" Tag="#A6E22E" GroupName="DrawColor"
+                                 Checked="OnDrawColorChecked" ToolTip="绿色" />
+                    <RadioButton Style="{StaticResource DrawColorSwatch}"
+                                 Background="#5AC8FA" Tag="#5AC8FA" GroupName="DrawColor"
+                                 Checked="OnDrawColorChecked" ToolTip="蓝色" />
+                    <RadioButton Style="{StaticResource DrawColorSwatch}"
+                                 Background="#FF9EC4" Tag="#FF9EC4" GroupName="DrawColor"
+                                 Checked="OnDrawColorChecked" ToolTip="粉色" />
+                    <Border Width="1" Margin="6,4" Background="{DynamicResource Brush.Border}" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.DrawWidthTitle}"
+                               Style="{StaticResource FieldHint}"
+                               VerticalAlignment="Center" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawThinLabel}"
+                                 Tag="1" GroupName="DrawWidth" Checked="OnDrawWidthChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawMidLabel}"
+                                 Tag="2" GroupName="DrawWidth" IsChecked="True" Checked="OnDrawWidthChecked" />
+                    <RadioButton Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawThickLabel}"
+                                 Tag="4" GroupName="DrawWidth" Checked="OnDrawWidthChecked" />
+                </StackPanel>
+            </Border>
 
             <!-- ============ T2 选中浮菜单（复制/高亮/笔记/用工具处理▾；含工具子菜单）============ -->
             <Popup x:Name="SelectionPopup"

@@ -312,7 +312,8 @@ def insert_text(page, rect, text, size=18, color=(0, 0, 0), opacity=1, align=0):
 # 并且是唯一允许在保存时保留源文件加密的路径（用已知用户密码显式 AES-256 重加密）。
 # 普通工具的 save_pdf 契约（输出到任务目录 + PDF_ENCRYPT_NONE）保持不变。
 TEMP_PREFIX = ".aipdf_tmp_"
-ANNOTATION_OPERATIONS = ("save_annotations", "add_highlight_annot", "add_freetext_annot")
+ANNOTATION_OPERATIONS = ("save_annotations", "add_highlight_annot", "add_freetext_annot",
+                        "add_ink_annot", "add_shape_annot")
 # 比这个更年轻的 temp 可能是并发的另一引擎进程（同目录不同文件）正在写，勿删。
 _TEMP_STALE_SECONDS = 600
 
@@ -579,6 +580,81 @@ def add_freetext_annot(page, rect, text, color=(1, 1, 0.7), fontsize=11):
     return annot
 
 
+def add_ink_annot(page, strokes, color=(0, 0, 0), width=2):
+    """添加 Ink 手写注释（V3 T11）。strokes 为多段折线（每段点序列），坐标为可见页左上原点 pt。
+
+    坐标经 page.derotation_matrix 转换后再写入（与高亮/area() 同一口径，非旋转页为恒等）。
+    """
+    if not strokes:
+        raise UserError("手写批注缺少笔迹。")
+    matrix = page.derotation_matrix
+    paths = []
+    for stroke in strokes or []:
+        points = []
+        for point in stroke or []:
+            try:
+                points.append((float(point[0]), float(point[1])))
+            except (TypeError, ValueError, IndexError):
+                raise UserError("手写批注坐标格式不正确。")
+        # 转换到未旋转页面空间；退化段（<2 点）丢弃。
+        if len(points) >= 2:
+            moved = []
+            for x, y in points:
+                p = fitz.Point(x, y) * matrix
+                moved.append((p.x, p.y))
+            paths.append(moved)
+    if not paths:
+        raise UserError("手写批注至少需要一个有效笔迹。")
+    if isinstance(color, str):
+        color = rgb(color)
+    annot = page.add_ink_annot(paths)
+    annot.set_colors(stroke=tuple(color))
+    annot.set_border(width=max(0.1, float(width)))
+    annot.update()
+    return annot
+
+
+def _shape_endpoints(raw):
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise UserError("线/箭头批注需要两个端点。")
+    try:
+        start, end = raw
+        return (float(start[0]), float(start[1])), (float(end[0]), float(end[1]))
+    except (TypeError, ValueError, IndexError):
+        raise UserError("线/箭头批注端点格式不正确。")
+
+
+def add_shape_annot(page, shape, rect=None, points=None, color=(0, 0, 0), width=2):
+    """添加形状注释（V3 T11）：square/circle 用外接矩形，line/arrow 用两点（起点→终点）。
+
+    坐标经 page.derotation_matrix（与高亮/area() 同一口径）。箭头 = Line 注释 +
+    set_line_ends(NONE, OPEN_ARROW)（尖刺 #4 定稿；方向恒为起点→终点，无二义）。
+    """
+    if isinstance(color, str):
+        color = rgb(color)
+    matrix = page.derotation_matrix
+    kind = str(shape or "").strip().lower()
+    if kind in ("square", "rect", "rectangle"):
+        if rect is None:
+            raise UserError("矩形批注缺少坐标。")
+        annot = page.add_rect_annot(fitz.Rect(rect) * matrix)
+    elif kind in ("circle", "ellipse", "oval"):
+        if rect is None:
+            raise UserError("圆形批注缺少坐标。")
+        annot = page.add_circle_annot(fitz.Rect(rect) * matrix)
+    elif kind in ("line", "arrow"):
+        start, end = _shape_endpoints(points)
+        annot = page.add_line_annot(fitz.Point(*start) * matrix, fitz.Point(*end) * matrix)
+        if kind == "arrow":
+            annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
+    else:
+        raise UserError("不支持的形状类型。")
+    annot.set_colors(stroke=tuple(color))
+    annot.set_border(width=max(0.1, float(width)))
+    annot.update()
+    return annot
+
+
 def _find_annots(doc, action):
     """按稳定 /NM 名（name/handle）或同会话 xref 定位注释；跨保存 xref 会被 garbage
     重编号，故名字才是 T4 应持久化的句柄。"""
@@ -619,6 +695,11 @@ def apply_annotation_actions(doc, actions):
                 highlight.set_name(handle)
                 highlight.update()
                 annot = add_freetext_annot(page, action.get("noteRect") or action.get("rect"), action.get("text", ""))
+            elif kind == "ink":
+                annot = add_ink_annot(page, action.get("strokes"), color=color, width=action.get("width", 2))
+            elif kind == "shape":
+                annot = add_shape_annot(page, action.get("shape"), rect=action.get("rect"),
+                                        points=action.get("points"), color=color, width=action.get("width", 2))
             else:
                 raise UserError("不支持的批注类型。")
             # 注释 /NM 名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
@@ -632,7 +713,10 @@ def apply_annotation_actions(doc, actions):
             for page, annot in targets:
                 page.delete_annot(annot)
         elif what in ("setcolor", "recolor", "color"):
-            targets = [item for item in _find_annots(doc, action) if item[1].type[1] == "Highlight"]
+            # V3 T11：改色覆盖所有带描边的注释类型（高亮/手写/矩形/圆/线/多边形）；
+            # FreeText 不参与（与 V2 笔记语义一致：笔记改色只改关联高亮的 stroke）。
+            stroke_types = ("Highlight", "Ink", "Square", "Circle", "Line", "Polygon")
+            targets = [item for item in _find_annots(doc, action) if item[1].type[1] in stroke_types]
             if not targets:
                 raise UserError("找不到要改色的批注。")
             for _, annot in targets:
@@ -652,13 +736,14 @@ def _normalize_annotation_actions(request, operation):
         single = request.get("annotation", options.get("annotation"))
         if isinstance(single, dict):
             raw = [single]
-        elif operation in ("add_highlight_annot", "add_freetext_annot"):
+        elif operation in ("add_highlight_annot", "add_freetext_annot", "add_ink_annot", "add_shape_annot"):
             raw = [options]
     if raw is None:
         return []
     if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
         raise UserError("批注数据格式不正确。")
-    default_kind = {"add_highlight_annot": "highlight", "add_freetext_annot": "note"}.get(operation)
+    default_kind = {"add_highlight_annot": "highlight", "add_freetext_annot": "note",
+                    "add_ink_annot": "ink", "add_shape_annot": "shape"}.get(operation)
     if default_kind:
         for item in raw:
             item.setdefault("action", "add")

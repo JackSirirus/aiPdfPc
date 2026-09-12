@@ -843,15 +843,68 @@ public sealed class AnnotationSaveService : IDisposable
             ["page"] = record.PageIndex,
             ["color"] = record.Color,
             ["rect"] = rect,
-            ["kind"] = record.Kind == AnnotationKind.Note ? "note" : "highlight",
         };
-        if (record.Kind == AnnotationKind.Note)
+
+        // V3 T11（C3）：按类型携带几何。highlight/note 的键与顺序保持不变（V2 契约）。
+        switch (record.Kind)
         {
-            action["text"] = record.Note ?? string.Empty;
-            action["noteRect"] = rect;
+            case AnnotationKind.Note:
+                action["kind"] = "note";
+                action["text"] = record.Note ?? string.Empty;
+                action["noteRect"] = rect;
+                break;
+
+            case AnnotationKind.Ink:
+                action["kind"] = "ink";
+                action["strokes"] = BuildStrokes(record.Strokes);
+                action["width"] = record.LineWidth;
+                break;
+
+            case AnnotationKind.Shape:
+                action["kind"] = "shape";
+                action["shape"] = ShapeToken(record.Shape);
+                action["width"] = record.LineWidth;
+                if (record.LinePoints is { Count: 2 } points)
+                {
+                    // 线/箭头：两点、起点→终点（引擎据此走 add_line_annot + set_line_ends）。
+                    action["points"] = new[]
+                    {
+                        new[] { points[0].X, points[0].Y },
+                        new[] { points[1].X, points[1].Y },
+                    };
+                }
+                break;
+
+            default:
+                action["kind"] = "highlight";
+                break;
         }
+
         return action;
     }
+
+    /// <summary>手写笔迹 → 引擎 JSON：[[[x,y], ...], ...]（PDF 点、左上原点）。</summary>
+    private static List<object> BuildStrokes(IReadOnlyList<IReadOnlyList<PdfPoint>>? strokes)
+    {
+        var result = new List<object>();
+        if (strokes is null) return result;
+        foreach (var stroke in strokes)
+        {
+            var points = new List<object>(stroke.Count);
+            foreach (var point in stroke) points.Add(new[] { point.X, point.Y });
+            result.Add(points);
+        }
+        return result;
+    }
+
+    private static string ShapeToken(ShapeKind? shape) => shape switch
+    {
+        ShapeKind.Square => "square",
+        ShapeKind.Circle => "circle",
+        ShapeKind.Line => "line",
+        ShapeKind.Arrow => "arrow",
+        _ => "square",
+    };
 
     // ------------------------------------------------------------------ 只读 / 路径
 

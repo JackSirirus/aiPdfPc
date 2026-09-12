@@ -9,11 +9,12 @@
 //   PdfCoordinateMapper 无 /Rotate 变换，PdfiumTextService.GetTextRects 输出未旋转页面空间矩形，
 //   新增 derotation 需 X/Y 交换与引擎 derotation_matrix 对齐，超出 T1 范围且有坐标漂移风险。
 //   V2 决定【禁止旋转页选区/批注】；本模型不承载旋转信息，旋转判定在 ReaderViewModel（由渲染服务取 /Rotate）。
+using System.Collections.Generic;
 using AIPDF.Windows.Rendering;
 
 namespace AIPDF.Windows.Annotations;
 
-/// <summary>批注类型。V2 仅高亮与文字笔记；手写/形状为 PRD 排除项。</summary>
+/// <summary>批注类型。V2 为高亮/文字笔记；V3 T11（C3）新增手写与几何形状。</summary>
 public enum AnnotationKind
 {
     /// <summary>文字高亮（选区矩形，默认黄）。</summary>
@@ -21,7 +22,40 @@ public enum AnnotationKind
 
     /// <summary>文字笔记（高亮 + 文本标记）。</summary>
     Note,
+
+    /// <summary>手写笔迹（多点折线，可多段；几何承载见 <see cref="AnnotationRecord.Strokes"/>）。</summary>
+    Ink,
+
+    /// <summary>几何形状（矩形/圆/线/箭头；具体见 <see cref="ShapeKind"/>）。</summary>
+    Shape,
 }
+
+/// <summary>
+/// 几何形状类型（PRD 6.3 「形状」）。几何承载模型（显式）：
+/// <list type="bullet">
+///   <item><see cref="Square"/>/<see cref="Circle"/>：一个 <see cref="PdfRect"/>（外接矩形）。</item>
+///   <item><see cref="Line"/>/<see cref="Arrow"/>：恰好两点（起点/终点，<see cref="AnnotationRecord.LinePoints"/>），
+///         方向恒为起点→终点，无二义（尖刺 #4 定稿：PyMuPDF Line 注释 + OPEN_ARROW 线端）。</item>
+/// </list>
+/// 坐标口径与 <see cref="AnnotationRecord.Rect"/> 一致：可见旋转页、左上原点、PDF 点。
+/// </summary>
+public enum ShapeKind
+{
+    /// <summary>矩形（外接矩形描边）。</summary>
+    Square,
+
+    /// <summary>圆/椭圆（外接矩形内切）。</summary>
+    Circle,
+
+    /// <summary>线段（起点→终点）。</summary>
+    Line,
+
+    /// <summary>箭头（起点→终点，终点带 OPEN_ARROW 箭头）。</summary>
+    Arrow,
+}
+
+/// <summary>PDF 点（可见旋转页、左上原点、pt 单位）。与 <see cref="PdfRect"/> 同坐标口径，供手写/线几何承载。</summary>
+public readonly record struct PdfPoint(double X, double Y);
 
 /// <summary>批注保存状态。T1 仅建模；T4 防抖保存链路驱动的状态迁移在客户端。</summary>
 public enum AnnotationState
@@ -48,23 +82,47 @@ public sealed record AnnotationRecord
     /// <summary>高亮默认填充色（FR-13：默认黄 #FFFF00）。</summary>
     public const string DefaultHighlightColor = "#FFFF00";
 
+    /// <summary>手写/形状默认描边色（黑色；UI 会按所选色板显式传入）。</summary>
+    public const string DefaultInkColor = "#000000";
+
+    /// <summary>默认线宽（pt，坐标口径与形状一致）。</summary>
+    public const double DefaultLineWidth = 2.0;
+
+    /// <summary>允许的最小线宽（避免 0 宽导致注释不可见）。</summary>
+    public const double MinLineWidth = 0.5;
+
+    /// <summary>允许的最大线宽。</summary>
+    public const double MaxLineWidth = 24.0;
+
     /// <summary>批注唯一标识（客户端生成，T3/T4 写回时映射到 PDF 注释 xref）。</summary>
     public required string Id { get; init; }
 
     /// <summary>页索引（0 起）。</summary>
     public required int PageIndex { get; init; }
 
-    /// <summary>页内矩形（PDF 点，左上原点）。</summary>
+    /// <summary>页内矩形（PDF 点，左上原点）。手写/线/箭头为其几何的包围盒；矩形/圆即本身。</summary>
     public required PdfRect Rect { get; init; }
 
     /// <summary>批注类型。</summary>
     public AnnotationKind Kind { get; init; } = AnnotationKind.Highlight;
 
-    /// <summary>填充色（#RRGGBB，高亮默认见 <see cref="DefaultHighlightColor"/>）。</summary>
+    /// <summary>填充色/描边色（#RRGGBB，高亮默认见 <see cref="DefaultHighlightColor"/>）。</summary>
     public string Color { get; init; } = DefaultHighlightColor;
 
     /// <summary>笔记文本（<see cref="AnnotationKind.Highlight"/> 为 null）。</summary>
     public string? Note { get; init; }
+
+    /// <summary>形状类型（仅 <see cref="AnnotationKind.Shape"/> 有值）。</summary>
+    public ShapeKind? Shape { get; init; }
+
+    /// <summary>线/箭头几何：恰好两点（起点、终点）。其他类型为 null。</summary>
+    public IReadOnlyList<PdfPoint>? LinePoints { get; init; }
+
+    /// <summary>手写几何：多段折线（每段为点序列）。仅 <see cref="AnnotationKind.Ink"/> 有值。</summary>
+    public IReadOnlyList<IReadOnlyList<PdfPoint>>? Strokes { get; init; }
+
+    /// <summary>描边线宽（pt；手写与形状使用）。</summary>
+    public double LineWidth { get; init; } = DefaultLineWidth;
 
     /// <summary>创建时间（UTC）。</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
@@ -98,6 +156,75 @@ public sealed record AnnotationRecord
         };
     }
 
+    /// <summary>新建手写批注记录（V3 T11）。空/退化笔迹抛 <see cref="ArgumentException"/>。</summary>
+    public static AnnotationRecord CreateInk(
+        int pageIndex, IReadOnlyList<IReadOnlyList<PdfPoint>> strokes, string? color = null,
+        double lineWidth = DefaultLineWidth)
+    {
+        var normalized = AnnotationGeometry.NormalizeStrokes(strokes);
+        if (normalized.Count == 0)
+        {
+            throw new ArgumentException("手写批注至少需要一个笔迹点。", nameof(strokes));
+        }
+
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = AnnotationGeometry.BoundingBox(normalized),
+            Kind = AnnotationKind.Ink,
+            Color = color ?? DefaultInkColor,
+            Strokes = normalized,
+            LineWidth = ClampLineWidth(lineWidth),
+        };
+    }
+
+    /// <summary>新建矩形/圆形状记录（V3 T11）。线/箭头请用两点重载。</summary>
+    public static AnnotationRecord CreateShape(
+        int pageIndex, ShapeKind shape, PdfRect rect, string? color = null,
+        double lineWidth = DefaultLineWidth)
+    {
+        if (shape is ShapeKind.Line or ShapeKind.Arrow)
+        {
+            throw new ArgumentException("线/箭头形状需使用两点重载。", nameof(shape));
+        }
+
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = AnnotationGeometry.NormalizeRect(rect),
+            Kind = AnnotationKind.Shape,
+            Shape = shape,
+            Color = color ?? DefaultInkColor,
+            LineWidth = ClampLineWidth(lineWidth),
+        };
+    }
+
+    /// <summary>新建线/箭头形状记录（V3 T11）：恰好两点，方向 = 起点→终点（无二义）。</summary>
+    public static AnnotationRecord CreateShape(
+        int pageIndex, ShapeKind shape, PdfPoint start, PdfPoint end, string? color = null,
+        double lineWidth = DefaultLineWidth)
+    {
+        if (shape is not (ShapeKind.Line or ShapeKind.Arrow))
+        {
+            throw new ArgumentException("矩形/圆形状需使用 PdfRect 重载。", nameof(shape));
+        }
+
+        var points = new[] { start, end };
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = AnnotationGeometry.BoundingBox(points),
+            Kind = AnnotationKind.Shape,
+            Shape = shape,
+            Color = color ?? DefaultInkColor,
+            LinePoints = points,
+            LineWidth = ClampLineWidth(lineWidth),
+        };
+    }
+
     /// <summary>返回状态迁移后的副本（T4 保存链路用；只读记录不可变）。</summary>
     public AnnotationRecord WithState(AnnotationState state) => this with { State = state };
 
@@ -112,7 +239,11 @@ public sealed record AnnotationRecord
            && Rect == other.Rect
            && Kind == other.Kind
            && string.Equals(Color, other.Color, StringComparison.Ordinal)
-           && string.Equals(Note, other.Note, StringComparison.Ordinal);
+           && string.Equals(Note, other.Note, StringComparison.Ordinal)
+           && Shape == other.Shape
+           && LineWidth.Equals(other.LineWidth)
+           && AnnotationGeometry.PointsEqual(LinePoints, other.LinePoints)
+           && AnnotationGeometry.StrokesEqual(Strokes, other.Strokes);
 
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };
@@ -125,4 +256,10 @@ public sealed record AnnotationRecord
     }
 
     private static string NewId() => Guid.NewGuid().ToString("N");
+
+    /// <summary>线宽归一化：越界钳制到 [<see cref="MinLineWidth"/>, <see cref="MaxLineWidth"/>]，NaN → 默认。</summary>
+    private static double ClampLineWidth(double lineWidth)
+        => double.IsNaN(lineWidth)
+            ? DefaultLineWidth
+            : Math.Clamp(lineWidth, MinLineWidth, MaxLineWidth);
 }

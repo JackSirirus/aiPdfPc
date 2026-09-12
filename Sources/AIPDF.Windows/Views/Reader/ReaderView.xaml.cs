@@ -8,6 +8,7 @@
 // V3 T9（C1）：鼠标/选择/命中 handler 从「页元素」迁移到「对页组元素」；组内取点(组坐标)经
 //              ReaderViewModel.TryMapGroupPoint / HitTestAnnotationAt 的 page↔group 映射换算到页局部。
 using System.ComponentModel;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -63,6 +64,27 @@ public partial class ReaderView : UserControl
     // ---- Toast ----
     private readonly DispatcherTimer _toastTimer;
 
+    // ---- V3 T11（C3）手写/形状绘制 ----
+    /// <summary>绘制模式开关（关闭时完全保持 V2 文字选中/浮菜单行为）。</summary>
+    private bool _drawMode;
+
+    /// <summary>当前绘制工具：ink/square/circle/line/arrow（与工具栏 RadioButton.Tag 对应）。</summary>
+    private string _drawTool = "ink";
+
+    /// <summary>当前描边色（#RRGGBB）。</summary>
+    private string _drawColor = "#000000";
+
+    /// <summary>当前线宽（pt）。</summary>
+    private double _drawWidth = 2;
+
+    private bool _drawing;
+    private int _drawPageIndex = -1;
+    private ReaderPageItemViewModel? _drawPage;
+    private PdfPoint _drawStart;
+    private double _drawLastX;
+    private double _drawLastY;
+    private readonly List<PdfPoint> _inkPoints = [];
+
     /// <summary>程序化开关弹层时抑制 Closed 回调（避免把自身关闭误判为用户点击外部）。</summary>
     private bool _suppressClosed;
 
@@ -102,7 +124,8 @@ public partial class ReaderView : UserControl
 
     private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        // 浮菜单不阻塞滚动：滚动即关闭所有弹层与选区（Q12/WPF 陷阱）
+        // 浮菜单不阻塞滚动：滚动即关闭所有弹层与选区（Q12/WPF 陷阱）；绘制中滚动则取消本次绘制。
+        if (_drawing) CancelDrawing();
         if (_menu.IsOpen || _hoverAnnotationId is not null)
         {
             CloseAllAndClear();
@@ -151,6 +174,15 @@ public partial class ReaderView : UserControl
             return;
         }
 
+        // V3 T11（C3）：绘制模式优先——不进入文字选区，直接开始拖拽绘制。
+        if (_drawMode)
+        {
+            if (!_viewModel.CanAnnotate(pageIndex)) return;
+            BeginDrawing(element, pageIndex, localX, localY);
+            e.Handled = true;
+            return;
+        }
+
         _activeGroupElement = element;
         _activeAnchorPage = _viewModel.Pages[pageIndex];
         var hasText = _viewModel.PageHasTextLayer(pageIndex);
@@ -174,6 +206,13 @@ public partial class ReaderView : UserControl
 
         var pos = e.GetPosition(element);
         var mapped = _viewModel.TryMapGroupPoint(group.Index, pos.X, pos.Y, out var pageIndex, out var localX, out var localY);
+
+        // V3 T11（C3）：绘制拖拽优先（mouse 已捕获，不触发选区/悬停）。
+        if (_drawing)
+        {
+            ContinueDrawing(mapped ? pageIndex : -1, localX, localY);
+            return;
+        }
 
         if (_selection.IsDragging)
         {
@@ -210,6 +249,14 @@ public partial class ReaderView : UserControl
 
     private void OnGroupMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        // V3 T11（C3）：结束绘制并落批注。
+        if (_drawing)
+        {
+            if (sender is FrameworkElement drawElement) drawElement.ReleaseMouseCapture();
+            CompleteDrawing();
+            return;
+        }
+
         if (!_selection.IsDragging) return;
         if (sender is FrameworkElement element) element.ReleaseMouseCapture();
         if (_activeAnchorPage is null) { _selection.Cancel(); return; }
@@ -248,6 +295,7 @@ public partial class ReaderView : UserControl
 
     private void OnGroupMouseLeave(object sender, MouseEventArgs e)
     {
+        if (_drawing) return; // 绘制中鼠标已捕获，越过组边界不算离开
         if (_selection.IsDragging) return;
         if (_hoverAnnotationId is not null) ScheduleHideHover();
     }
@@ -670,6 +718,197 @@ public partial class ReaderView : UserControl
         Toast.Visibility = Visibility.Collapsed;
     }
 
+    // ------------------------------------------------------------ V3 T11（C3）手写/形状绘制
+
+    /// <summary>绘制总开关切换：开启时收起既有浮层/选区，关闭时取消在途绘制。</summary>
+    private void OnDrawModeChanged(object sender, RoutedEventArgs e)
+    {
+        _drawMode = DrawModeToggle.IsChecked == true;
+        CancelDrawing();
+        if (_drawMode) CloseAllAndClear();
+    }
+
+    private void OnDrawToolChecked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string tool })
+        {
+            _drawTool = tool;
+            CancelDrawing();
+        }
+    }
+
+    private void OnDrawColorChecked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string color }) _drawColor = color;
+    }
+
+    private void OnDrawWidthChecked(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string raw }
+            && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var width))
+        {
+            _drawWidth = width;
+        }
+    }
+
+    private void BeginDrawing(FrameworkElement element, int pageIndex, double localX, double localY)
+    {
+        _drawing = true;
+        _drawPageIndex = pageIndex;
+        _drawPage = _viewModel.Pages[pageIndex];
+        _drawStart = new PdfPoint(localX, localY);
+        _drawLastX = localX;
+        _drawLastY = localY;
+        _inkPoints.Clear();
+        _inkPoints.Add(_drawStart);
+        _activeGroupElement = element;
+        element.CaptureMouse();
+        UpdateDrawPreview(localX, localY);
+    }
+
+    private void ContinueDrawing(int pageIndex, double localX, double localY)
+    {
+        if (!_drawing || _drawPage is null) return;
+        if (pageIndex >= 0 && pageIndex != _drawPageIndex) return; // 单页内绘制（跨页忽略）
+
+        if (_drawTool == "ink")
+        {
+            var dx = localX - _drawLastX;
+            var dy = localY - _drawLastY;
+            if (dx * dx + dy * dy >= 1.0) // 距上一点 ≥1DIP 才采样，避免海量重复点
+            {
+                _inkPoints.Add(new PdfPoint(localX, localY));
+                _drawLastX = localX;
+                _drawLastY = localY;
+            }
+        }
+        else
+        {
+            _drawLastX = localX;
+            _drawLastY = localY;
+        }
+
+        UpdateDrawPreview(localX, localY);
+    }
+
+    /// <summary>拖拽预览：借 <see cref="AnnotationOverlay.FromRecord"/> 的几何投影，保证预览与落笔一致。</summary>
+    private void UpdateDrawPreview(double currentX, double currentY)
+    {
+        if (_drawPage is null) return;
+        var overlay = BuildPreviewOverlay(currentX, currentY);
+        _drawPage.DrawPreview = overlay?.Geometry;
+        _drawPage.DrawPreviewThickness = overlay?.StrokeThickness ?? 0;
+        _drawPage.DrawPreviewX = overlay?.X ?? 0;
+        _drawPage.DrawPreviewY = overlay?.Y ?? 0;
+    }
+
+    private AnnotationOverlay? BuildPreviewOverlay(double currentX, double currentY)
+    {
+        var page = _drawPage;
+        if (page is null || page.WidthPt <= 0 || page.DisplayWidth <= 0) return null;
+
+        var end = new PdfPoint(currentX, currentY);
+        AnnotationRecord? temp = null;
+        switch (_drawTool)
+        {
+            case "ink":
+                if (_inkPoints.Count < 2) return null;
+                temp = AnnotationRecord.CreateInk(_drawPageIndex, new IReadOnlyList<PdfPoint>[] { _inkPoints }, _drawColor, _drawWidth);
+                break;
+            case "square":
+            case "circle":
+                temp = AnnotationRecord.CreateShape(
+                    _drawPageIndex,
+                    _drawTool == "square" ? ShapeKind.Square : ShapeKind.Circle,
+                    AnnotationGeometry.BoundingBox([_drawStart, end]), _drawColor, _drawWidth);
+                break;
+            case "line":
+            case "arrow":
+                temp = AnnotationRecord.CreateShape(
+                    _drawPageIndex,
+                    _drawTool == "line" ? ShapeKind.Line : ShapeKind.Arrow,
+                    _drawStart, end, _drawColor, _drawWidth);
+                break;
+        }
+
+        return temp is null ? null : AnnotationOverlay.FromRecord(temp, page.WidthPt, page.DisplayWidth);
+    }
+
+    /// <summary>释放时落批注：过小/退化拖拽不创建（与文字选区「微小拖拽视为点击」一致）。</summary>
+    private void CompleteDrawing()
+    {
+        var pageIndex = _drawPageIndex;
+        var end = new PdfPoint(_drawLastX, _drawLastY);
+        AnnotationRecord? record = null;
+
+        try
+        {
+            switch (_drawTool)
+            {
+                case "ink":
+                    if (_inkPoints.Count >= 2)
+                    {
+                        record = _viewModel.AddInk(
+                            pageIndex, new IReadOnlyList<PdfPoint>[] { _inkPoints.ToArray() }, _drawColor, _drawWidth);
+                    }
+                    break;
+
+                case "square":
+                case "circle":
+                {
+                    var rect = AnnotationGeometry.BoundingBox([_drawStart, end]);
+                    if (rect.Width >= 1 && rect.Height >= 1)
+                    {
+                        record = _viewModel.AddShape(
+                            pageIndex,
+                            _drawTool == "square" ? ShapeKind.Square : ShapeKind.Circle,
+                            rect, _drawColor, _drawWidth);
+                    }
+                    break;
+                }
+
+                case "line":
+                case "arrow":
+                {
+                    var dx = end.X - _drawStart.X;
+                    var dy = end.Y - _drawStart.Y;
+                    if (dx * dx + dy * dy >= 4.0)
+                    {
+                        record = _viewModel.AddShape(
+                            pageIndex,
+                            _drawTool == "line" ? ShapeKind.Line : ShapeKind.Arrow,
+                            _drawStart, end, _drawColor, _drawWidth);
+                    }
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            CancelDrawing();
+        }
+
+        if (record is not null)
+        {
+            ShowToast(_drawTool == "ink" ? ReaderStrings.InkApplied : ReaderStrings.ShapeApplied);
+        }
+    }
+
+    private void CancelDrawing()
+    {
+        _drawing = false;
+        _drawPageIndex = -1;
+        if (_drawPage is not null)
+        {
+            _drawPage.DrawPreview = null;
+            _drawPage.DrawPreviewThickness = 0;
+            _drawPage.DrawPreviewX = 0;
+            _drawPage.DrawPreviewY = 0;
+        }
+        _drawPage = null;
+        _inkPoints.Clear();
+    }
+
     // ------------------------------------------------------------ 页码跳转（FR-05）
 
     private void OnJumpBoxKeyDown(object sender, KeyEventArgs e)
@@ -689,6 +928,15 @@ public partial class ReaderView : UserControl
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // V3 T11（C3）：Esc 先结束绘制/退出绘制模式，再处理既有弹层逐层收起。
+        if (e.Key == Key.Escape && (_drawing || _drawMode))
+        {
+            e.Handled = true;
+            CancelDrawing();
+            if (_drawMode) DrawModeToggle.IsChecked = false; // 触发 OnDrawModeChanged → CancelDrawing
+            return;
+        }
+
         // T2：Esc 逐层收起弹层（子菜单→主菜单→关闭）
         if (e.Key == Key.Escape && _menu.IsOpen)
         {
@@ -713,6 +961,7 @@ public partial class ReaderView : UserControl
         if (e.PropertyName == nameof(ReaderViewModel.SpreadEnabled))
         {
             // V3 T9：单页/双页切换会整体重建组容器，先收起弹层与选区，避免锚点指向已回收元素。
+            CancelDrawing();
             CloseAllAndClear();
             return;
         }
