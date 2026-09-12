@@ -951,21 +951,38 @@ public sealed class AnnotationSaveService : IDisposable
         }
 
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is not null && !dispatcher.CheckAccess())
+        // 仅在 Dispatcher 确实存活且未关闭时才走 BeginInvoke：若其归属线程已退出/正在关闭
+        // （如测试中在短命 STA 线程上创建过的全局 Application），BeginInvoke 的委托永不执行，
+        // completion 永不完成 → 调用方 await 永久挂起。此时直接内联执行，保证有界完成。
+        if (dispatcher is not null
+            && !dispatcher.CheckAccess()
+            && dispatcher.Thread.IsAlive
+            && !dispatcher.HasShutdownStarted
+            && !dispatcher.HasShutdownFinished)
         {
             var completion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _ = dispatcher.BeginInvoke(new Action(async () =>
+            try
             {
-                try
+                _ = dispatcher.BeginInvoke(new Action(async () =>
                 {
-                    await body().ConfigureAwait(true);
-                    completion.TrySetResult(null);
-                }
-                catch (Exception error)
-                {
-                    completion.TrySetException(error);
-                }
-            }));
+                    try
+                    {
+                        await body().ConfigureAwait(true);
+                        completion.TrySetResult(null);
+                    }
+                    catch (Exception error)
+                    {
+                        completion.TrySetException(error);
+                    }
+                }));
+            }
+            catch (InvalidOperationException)
+            {
+                // 检查与 BeginInvoke 之间 Dispatcher 关闭：内联，避免永不完成的 await。
+                await body().ConfigureAwait(false);
+                return;
+            }
+
             await completion.Task.ConfigureAwait(false);
             return;
         }
