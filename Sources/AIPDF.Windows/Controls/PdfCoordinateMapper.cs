@@ -39,7 +39,7 @@ public sealed record PdfCoordinateMapper
     /// <summary>页面在 view 中的高（DIP）。</summary>
     public double ViewHeight => PageHeightPt * ViewScale;
 
-    /// <summary>渲染位图像素尺寸 = round(pt × zoom × DpiScale)（至少 1px）。与 PdfPreviewDocument.RenderPage 一致。</summary>
+    /// <summary>渲染位图像素尺寸 = round(pt × zoom × DpiScale)（至少 1px）。与 PdfiumPreviewDocument.RenderPageAsync 一致。</summary>
     public (int PixelWidth, int PixelHeight) PixelSize =>
         (PixelDimension(PageWidthPt * Zoom), PixelDimension(PageHeightPt * Zoom));
 

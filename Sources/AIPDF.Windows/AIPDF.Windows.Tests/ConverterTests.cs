@@ -643,7 +643,7 @@ public sealed class ConverterTests
             Assert.StartsWith(outParent, output, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("AIPDF-", output);
 
-            using var document = PdfPreviewDocument.OpenFile(output);
+            using var document = PdfiumPreviewDocument.OpenFile(output);
             Assert.Equal(2, document.PageCount);
         }
         finally

@@ -17,8 +17,8 @@ using AIPDF.Windows.Rendering;
 namespace AIPDF.Windows.Controls;
 
 /// <summary>
-/// PDFium 后端预览文档。消费契约与旧 <see cref="PdfPreviewDocument"/> 一致：
-/// 页数、可见页 pt 尺寸、<see cref="CreateMapper(int,double)"/>、按 zoom 渲染；
+/// PDFium 后端预览文档（V3 T7 单栈收敛后唯一的预览文档实现，旧 PDFtoImage 栈已移除）。
+/// 消费契约与历史实现一致：页数、可见页 pt 尺寸、<see cref="CreateMapper(int,double)"/>、按 zoom 渲染；
 /// 渲染改为后台线程 + 冻结 <see cref="BitmapSource"/>（控件负责封送回 UI 线程绑定，F3-BLK-1）。
 /// 【线程边界】构造/打开为一次性同步原生步骤（与阅读器 LoadDocument 一致，便于同步抛错给工具页），
 /// 重复且耗时的页渲染一律在后台线程执行；绝不在后台线程改 UI 绑定状态。
@@ -57,7 +57,7 @@ public sealed class PdfiumPreviewDocument : IDisposable
     }
 
     /// <summary>
-    /// 打开磁盘 PDF。以 FileShare.ReadWrite 共享读打开（等价旧 <see cref="PdfPreviewDocument.OpenFile"/>），
+    /// 打开磁盘 PDF。以 FileShare.ReadWrite 共享读打开（沿用历史预览打开语义），
     /// 允许预览刚被引擎写入/被其他进程占用的文件。格式非法或密码错误时抛异常，由调用方处理。
     /// </summary>
     public static PdfiumPreviewDocument OpenFile(string filePath, string? password = null)

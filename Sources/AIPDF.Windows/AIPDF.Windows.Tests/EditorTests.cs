@@ -452,7 +452,7 @@ public sealed class EditorEngineIntegrationTests
 
         Assert.True(result.Ok, result.Error ?? "旋转失败");
         var output = Assert.Single(result.Outputs);
-        using var document = PdfPreviewDocument.OpenFile(output);
+        using var document = PdfiumPreviewDocument.OpenFile(output);
         var (width, height) = document.GetPageSize(0);
         // PDFium 报告可见页（旋转后）尺寸：612×792 顺时针 90° → 792×612
         Assert.True(Math.Abs(width - 792) < 0.5, $"宽 {width} 应为 792±0.5");
@@ -481,7 +481,7 @@ public sealed class EditorEngineIntegrationTests
 
         Assert.True(result.Ok, result.Error ?? "裁剪失败");
         var output = Assert.Single(result.Outputs);
-        using var document = PdfPreviewDocument.OpenFile(output);
+        using var document = PdfiumPreviewDocument.OpenFile(output);
         var (width, height) = document.GetPageSize(0);
         Assert.True(Math.Abs(width - 200) <= 1.0, $"宽 {width} 应为框选宽 200±1pt");
         Assert.True(Math.Abs(height - 150) <= 1.0, $"高 {height} 应为框选高 150±1pt");

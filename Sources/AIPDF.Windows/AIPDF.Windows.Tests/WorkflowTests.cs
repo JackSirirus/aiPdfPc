@@ -665,7 +665,7 @@ public sealed class WorkflowTests
             Assert.StartsWith(outDir, taskDir, StringComparison.Ordinal);
             Assert.Contains("AIPDF-", taskDir);
             var merged = Directory.GetFiles(taskDir!, "*.pdf").Single();
-            using var document = new PdfPreviewDocument(File.ReadAllBytes(merged));
+            using var document = new PdfiumPreviewDocument(File.ReadAllBytes(merged));
             Assert.Equal(9, document.PageCount); // 2 + 3 + 4
             // 源文件保持只读不动
             Assert.True(File.Exists(a));
@@ -710,7 +710,7 @@ public sealed class WorkflowTests
             foreach (var item in vm.Queue)
             {
                 var output = Directory.GetFiles(item.OutputDir!, "*.pdf").Single();
-                using var document = new PdfPreviewDocument(File.ReadAllBytes(output));
+                using var document = new PdfiumPreviewDocument(File.ReadAllBytes(output));
                 Assert.Equal(1, document.PageCount);
             }
         }
@@ -752,7 +752,7 @@ public sealed class WorkflowTests
             var allPdfs = Directory.GetFiles(record.Outputs!, "*.pdf", SearchOption.AllDirectories);
             Assert.Equal(2, allPdfs.Length);
             var final = allPdfs.Single(path => path.Contains("02-rotate", StringComparison.Ordinal));
-            using var document = new PdfPreviewDocument(File.ReadAllBytes(final));
+            using var document = new PdfiumPreviewDocument(File.ReadAllBytes(final));
             Assert.Equal(2, document.PageCount);
         }
         finally

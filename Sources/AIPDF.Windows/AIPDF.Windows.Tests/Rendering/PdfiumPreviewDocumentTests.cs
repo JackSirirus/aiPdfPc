@@ -69,7 +69,7 @@ public sealed class PdfiumPreviewDocumentTests : IDisposable
 
     /// <summary>
     /// 尖刺 #1 结论固化：PDFium GetPageSize 已旋转感知，0/90/180/270 返回可见尺寸，
-    /// 与旧栈 PDFtoImage Conversion.GetPageSizes 一致 → 不做 derotation（防双重旋转）。
+    /// 与尖刺记录的可见尺寸一致 → 不做 derotation（防双重旋转）。
     /// </summary>
     [Fact]
     public void Rotation_PageSize_IsVisible_NoDerotationNeeded()
@@ -91,19 +91,22 @@ public sealed class PdfiumPreviewDocumentTests : IDisposable
     }
 
     [Fact]
-    public void Rotation_PageSize_MatchesOldStack_VisibleSize()
+    public void Rotation_PageSize_MatchesSpikeValues_NoOldStack()
     {
-        // 交叉验证：与旧栈 PDFtoImage 可见尺寸数值一致（尖刺 #1 的四角度对照固化）
+        // 旧栈 PdfPreviewDocument 已随单栈收敛删除（T7），不再做旧/新栈交叉验证；
+        // 此处固化尖刺 #1 记录的四角度可见尺寸（.omo/evidence/v3-task2-rotation-spike.txt），
+        // 并验证 mapper 采用可见尺寸（不做 derotation）。
         var bytes = TestPdfFactory.CreateRotated(400, 300, 0, 90, 180, 270);
         using var document = new PdfiumPreviewDocument(bytes);
-        using var oldStack = new PdfPreviewDocument(bytes);
 
+        var expected = new[] { (400.0, 300.0), (300.0, 400.0), (400.0, 300.0), (300.0, 400.0) };
         for (var i = 0; i < 4; i++)
         {
-            var (w, h) = document.GetPageSize(i);
-            var (ow, oh) = oldStack.GetPageSize(i);
-            Assert.Equal(ow, w, 0.5);
-            Assert.Equal(oh, h, 0.5);
+            Assert.Equal(expected[i], document.GetPageSize(i));
+
+            var mapper = document.CreateMapper(i, 1.0);
+            Assert.Equal(expected[i].Item1, mapper.PageWidthPt, 0.5);
+            Assert.Equal(expected[i].Item2, mapper.PageHeightPt, 0.5);
         }
     }
 
