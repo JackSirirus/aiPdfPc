@@ -404,7 +404,7 @@
                 Visibility="Collapsed">
             <TextBlock x:Name="ToastText"
                        FontSize="12"
-                       Foreground="White" />
+                       Foreground="{DynamicResource Brush.OnAccent}" />
         </Border>
     </Grid>
 </UserControl>

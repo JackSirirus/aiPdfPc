@@ -18,9 +18,6 @@ namespace AIPDF.Windows.Views.Wizard;
 /// </summary>
 public sealed class WizardDialog : Window
 {
-    // 全窗遮罩：主题无关的半透明叠层（亮/暗通用），显式保留（已在 ThemeManagerTests.DialogCodeColorWhitelist 登记）。
-    private static readonly Brush ScrimBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x10, 0x14, 0x1C));
-
     private readonly WizardViewModel _viewModel;
     private readonly StackPanel _stepStrip = new() { Orientation = Orientation.Horizontal };
     private readonly StackPanel _stagingRows = new();
@@ -88,7 +85,10 @@ public sealed class WizardDialog : Window
 
     private FrameworkElement BuildRoot()
     {
-        var scrim = new Border { Background = ScrimBrush };
+        // A+C Phase 4：全窗遮罩走主题 token（亮/暗由 ThemeManager 注入，运行时可跟随），
+        // 不再硬编码 Color.FromArgb，故 ThemeManagerTests 的 DialogCodeColorWhitelist 已无需该例外。
+        var scrim = new Border();
+        scrim.SetResourceReference(Border.BackgroundProperty, "Brush.OverlayMask");
         scrim.MouseLeftButtonDown += OnScrimMouseLeftButtonDown;
 
         var card = new Border

@@ -45,6 +45,8 @@ public static class ThemeTokens
         "ConverterWarnBackground", "ConverterWarnText",
         "PreviewBg", "Toolbar",
         "DropZoneBackground", "DropZoneHoverBackground",
+        // A+C Phase 4：模态/锁定遮罩叠层 + 强调底上的前景色（亮/暗成对，见设计说明 §6）
+        "OverlayMask", "OnAccent",
     ];
 
     /// <summary>亮色键前缀。</summary>

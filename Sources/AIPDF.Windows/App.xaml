@@ -46,6 +46,10 @@
         <!-- 拖拽槽常态 / 悬停底色（PageOrganizer、Security 组） -->
         <SolidColorBrush x:Key="Brush.DropZoneBackground" Color="#FCFAF4" />
         <SolidColorBrush x:Key="Brush.DropZoneHoverBackground" Color="#EEF1FA" />
+        <!-- A+C Phase 4：模态/锁定遮罩叠层（暖半透明，替代 WizardDialog 硬编码 scrim 与 LockOverlay 的 Brush.Sidebar） -->
+        <SolidColorBrush x:Key="Brush.OverlayMask" Color="#732B251C" />
+        <!-- A+C Phase 4：强调色底上的前景文字/描边（主色按钮、当前文档徽标、Toast 等） -->
+        <SolidColorBrush x:Key="Brush.OnAccent" Color="#FFFFFF" />
 
         <!-- ============================================================
              暗色 token 集（与上方亮色 token 一一对应）。
@@ -82,6 +86,8 @@
         <SolidColorBrush x:Key="Brush.Dark.Toolbar" Color="#23201A" />
         <SolidColorBrush x:Key="Brush.Dark.DropZoneBackground" Color="#23201A" />
         <SolidColorBrush x:Key="Brush.Dark.DropZoneHoverBackground" Color="#2C3346" />
+        <SolidColorBrush x:Key="Brush.Dark.OverlayMask" Color="#8F0A0805" />
+        <SolidColorBrush x:Key="Brush.Dark.OnAccent" Color="#FFFFFF" />
 
         <!-- 衬线展示字体（A+C Phase 1）：只用于展示/标题（PageTitle、SectionTitle、工具页标题、
              hero 标题与模态标题）。正文、表单、按钮、状态栏、图标字形（Segoe MDL2 Assets）保持 sans。
@@ -175,7 +181,7 @@
         <Style x:Key="PrimaryButton" TargetType="Button">
             <Setter Property="Padding" Value="18,7" />
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.OnAccent}" />
             <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Cursor" Value="Hand" />

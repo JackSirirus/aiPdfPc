@@ -203,7 +203,7 @@
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.Accent}" />
                                 <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
-                                <Setter Property="Foreground" Value="White" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.OnAccent}" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Brush.Hover}" />
@@ -434,7 +434,7 @@
                                                              VerticalAlignment="Top"
                                                              Margin="0,-5,-5,0"
                                                              Fill="{DynamicResource Brush.Accent}"
-                                                             Stroke="White"
+                                                             Stroke="{DynamicResource Brush.OnAccent}"
                                                              StrokeThickness="1">
                                                         <Ellipse.Style>
                                                             <Style TargetType="Ellipse">
@@ -748,7 +748,7 @@
                     Visibility="Collapsed"
                     IsHitTestVisible="False">
                 <TextBlock x:Name="ToastText"
-                           Foreground="White"
+                           Foreground="{DynamicResource Brush.OnAccent}"
                            FontSize="12" />
             </Border>
 
@@ -757,7 +757,7 @@
                  「解锁」仅发事件，密码流程（复用 ST-04 对话框）与凭据驻留由宿主负责。 -->
             <Border x:Name="LockOverlay"
                     Panel.ZIndex="10"
-                    Background="{DynamicResource Brush.Sidebar}">
+                    Background="{DynamicResource Brush.OverlayMask}">
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Collapsed" />

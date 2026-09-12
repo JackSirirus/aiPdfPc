@@ -73,7 +73,7 @@
     <!-- 执行按钮：主色圆角（PrimaryButton 的圆角模板化版本，仅本组使用） -->
     <Style x:Key="ConverterPrimaryButton" TargetType="Button">
         <Setter Property="Background" Value="{DynamicResource Brush.Accent}" />
-        <Setter Property="Foreground" Value="White" />
+        <Setter Property="Foreground" Value="{DynamicResource Brush.OnAccent}" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Padding" Value="20,8" />
         <Setter Property="BorderThickness" Value="0" />

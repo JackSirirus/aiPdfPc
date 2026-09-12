@@ -176,8 +176,9 @@ public class ThemeManagerTests
     /// </summary>
     private static readonly HashSet<(string File, string Call)> DialogCodeColorWhitelist = new()
     {
-        // 向导全窗遮罩：主题无关的半透明叠层（亮/暗通用），不是主题色。
-        ("Views/Wizard/WizardDialog.cs", "Color.FromArgb(0x66,0x10,0x14,0x1C)"),
+        // A+C Phase 4：向导全窗遮罩已改走 `Brush.OverlayMask` 主题 token，
+        // 原先 `Color.FromArgb(0x66,0x10,0x14,0x1C)` 的硬编码例外随之移除。
+        // 当前无代码构建对话框需要颜色例外（保持严格：新增必须显式登记）。
     };
 
     private static readonly Regex ColorCallRegex = new(
