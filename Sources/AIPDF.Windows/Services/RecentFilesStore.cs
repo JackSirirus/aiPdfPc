@@ -45,7 +45,7 @@ public sealed class RecentFilesDocument
 
     public int Schema { get; set; } = CurrentSchema;
 
-    /// <summary>按最近打开时间倒序（头部最新）。上限由 RecentFilesStore.MaxEntries 保证。</summary>
+    /// <summary>按最近打开时间倒序（头部最新）。上限由 <see cref="RecentFilesStore.MaxEntries"/> 保证（可由设置注入）。</summary>
     public List<RecentFileEntry> Items { get; set; } = [];
 }
 
@@ -57,8 +57,20 @@ public sealed class RecentFilesDocument
 /// </summary>
 public sealed class RecentFilesStore
 {
-    /// <summary>最近列表上限【D15】；超出淘汰最旧。</summary>
-    public const int MaxEntries = 20;
+    /// <summary>最近列表默认上限【D15】；超出淘汰最旧。</summary>
+    public const int DefaultMaxEntries = 20;
+
+    private int _maxEntries = DefaultMaxEntries;
+
+    /// <summary>
+    /// 最近列表上限【D15】（V3 T5：可由设置 <c>RecentFilesLimit</c> 注入，钳制为正数）。
+    /// 超出淘汰最旧；清空二次确认与去重语义不变。
+    /// </summary>
+    public int MaxEntries
+    {
+        get => _maxEntries;
+        set => _maxEntries = Math.Max(1, value);
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -67,10 +79,13 @@ public sealed class RecentFilesStore
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    /// <summary>测试注入临时目录；生产使用 %APPDATA%\AIPDF\。</summary>
-    public RecentFilesStore(string? directory = null)
-        => StoreDirectory = directory
+    /// <summary>测试注入临时目录；生产使用 %APPDATA%\AIPDF\。maxEntries 为空取 <see cref="DefaultMaxEntries"/>（=20）。</summary>
+    public RecentFilesStore(string? directory = null, int maxEntries = DefaultMaxEntries)
+    {
+        StoreDirectory = directory
            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AIPDF");
+        MaxEntries = maxEntries;
+    }
 
     public string StoreDirectory { get; }
 

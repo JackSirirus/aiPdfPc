@@ -382,11 +382,21 @@
                                 <TextBlock Text="搜索" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
-                        <!-- ⚙ 设置占位：V3 实现设置面板（FR-38），当前禁用 -->
+                        <!-- ⚙ 设置入口（V3 T5）：点击弹出下拉菜单「设置 | 关于·许可」（AC-38.1，无「检查更新」） -->
                         <Button Style="{StaticResource TopBarIconButton}"
-                                IsEnabled="False"
-                                ToolTip="设置（后续版本提供）"
+                                Click="OnSettingsMenuClick"
+                                ToolTip="设置与关于"
                                 AutomationProperties.Name="设置">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="设置"
+                                              Click="OnSettingsMenuItemClick"
+                                              AutomationProperties.Name="设置" />
+                                    <MenuItem Header="关于·许可"
+                                              Click="OnAboutMenuItemClick"
+                                              AutomationProperties.Name="关于·许可" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
                             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="13" />
                         </Button>
                     </StackPanel>

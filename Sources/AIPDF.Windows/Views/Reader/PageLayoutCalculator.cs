@@ -59,9 +59,18 @@ public static class PageLayoutCalculator
 
     // ------------------------------------------------------------------ 缩放
 
-    /// <summary>当前 zoom 对应的渲染 DPI：zoom ≥ 150% 用 150dpi，否则 96dpi 基准。</summary>
-    public static double DpiForZoom(double zoomPercent)
-        => zoomPercent >= HighDpiThresholdPercent ? HighDpi : BaseDpi;
+    /// <summary>
+    /// 当前 zoom 对应的渲染 DPI：zoom ≥ 150% 用高 DPI（<see cref="HighDpi"/>，但不低于注入基准），
+    /// 否则用渲染基准 DPI。默认 <paramref name="baseDpi"/> = <see cref="BaseDpi"/>（96），
+    /// 既有纯函数调用与测试语义不变【T1 SettingsStore 不变量】。
+    /// <para>
+    /// V3 T5：设置 <c>DefaultRenderDpi</c> 仅覆盖 <paramref name="baseDpi"/>（渲染基准），
+    /// 不改「zoom ≥150% → HighDpi=150」阈值阶梯——阈值档返回 <c>Math.Max(baseDpi, HighDpi)</c>，
+    /// 保证注入更大基准时高倍率仍更清晰、注入更小基准时不越过 HighDpi。不参与打印（打印用 PrintDpi）。
+    /// </para>
+    /// </summary>
+    public static double DpiForZoom(double zoomPercent, double baseDpi = BaseDpi)
+        => zoomPercent >= HighDpiThresholdPercent ? Math.Max(baseDpi, HighDpi) : baseDpi;
 
     /// <summary>距 zoom 最近的阶梯档索引；距离并列取更低档。</summary>
     public static int NearestLadderIndex(double zoomPercent)

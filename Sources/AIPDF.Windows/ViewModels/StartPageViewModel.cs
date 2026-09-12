@@ -321,9 +321,24 @@ public partial class StartPageViewModel : ObservableObject
 
     private void TrimToCap()
     {
-        while (RecentFiles.Count > RecentFilesStore.MaxEntries)
+        while (RecentFiles.Count > _store.MaxEntries)
         {
             RecentFiles.RemoveAt(RecentFiles.Count - 1); // 淘汰最旧
+        }
+    }
+
+    /// <summary>
+    /// 应用「最近文件上限」设置（V3 T5）：更新存储上限并裁掉超出的最旧条目后持久化。
+    /// 由宿主在设置保存后调用，使新上限对当前会话也即时生效（清空二次确认/去重语义不变）。
+    /// </summary>
+    public void ApplyRecentFilesLimit(int limit)
+    {
+        _store.MaxEntries = limit;
+        var before = RecentFiles.Count;
+        TrimToCap();
+        if (RecentFiles.Count != before)
+        {
+            _store.Save(ToDocument());
         }
     }
 

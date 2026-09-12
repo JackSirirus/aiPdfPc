@@ -137,7 +137,7 @@ public sealed class StartPageTests
                 vm.RegisterOpened(TempPdf(dir, $"f{i:00}.pdf")); // AC-34.1：25 个 → 保留最新 20
             }
 
-            Assert.Equal(RecentFilesStore.MaxEntries, vm.RecentFiles.Count);
+            Assert.Equal(RecentFilesStore.DefaultMaxEntries, vm.RecentFiles.Count);
             Assert.Equal(TempPdf(dir, "f25.pdf"), vm.RecentFiles[0].Path);
             Assert.Equal(TempPdf(dir, "f06.pdf"), vm.RecentFiles[^1].Path); // 最旧 5 条被淘汰
             Assert.DoesNotContain(vm.RecentFiles, item => item.Name == "f01.pdf");

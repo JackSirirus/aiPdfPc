@@ -271,6 +271,30 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>可视区两侧缓冲页数。</summary>
     public int BufferPages { get; }
 
+    /// <summary>
+    /// 渲染基准 DPI（V3 T5）：由宿主在打开文档前用设置 <c>DefaultRenderDpi</c> 注入；
+    /// 默认 <see cref="PageLayoutCalculator.BaseDpi"/>（96，等价既有行为）。仅覆盖渲染基准，
+    /// 不改变「zoom ≥150% → HighDpi=150」阈值阶梯（见 <see cref="PageLayoutCalculator.DpiForZoom"/>），
+    /// 也不参与打印（打印 DPI 由 <c>PrintService</c> 读 <c>PrintDpi</c>）。
+    /// </summary>
+    public double RenderBaseDpi { get; set; } = PageLayoutCalculator.BaseDpi;
+
+    /// <summary>待应用的初始适配档（V3 T5）：设置默认缩放为 fit-width/fit-page 时排队，视口测量后套用一次。</summary>
+    private bool _pendingFitWidth;
+    private bool _pendingFitPage;
+
+    /// <summary>
+    /// 排队初始适配模式（设置 DefaultZoom 为适配档时由宿主注入）。打开瞬间视口宽高常为 0，
+    /// <see cref="FitWidthCommand"/>/<see cref="FitPageCommand"/> 会空转；此处于首个有效视口到达时补套用一次。
+    /// 数值档不经此处（宿主直接设置 <see cref="ZoomPercent"/>）。
+    /// </summary>
+    public void QueueInitialFit(bool fitWidth, bool fitPage)
+    {
+        _pendingFitWidth = fitWidth;
+        _pendingFitPage = fitPage;
+        TryApplyPendingFit();
+    }
+
     /// <summary>页面集合（虚拟化 ItemsControl 的 ItemsSource；仅持有尺寸元数据，位图按需）。</summary>
     public ObservableCollection<ReaderPageItemViewModel> Pages { get; } = [];
 
@@ -555,6 +579,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     {
         _viewportHeight = viewportHeight;
         _viewportWidth = viewportWidth;
+        TryApplyPendingFit(); // V3 T5：初始适配档等首个有效视口到达后套用一次
         UpdateViewportCore(scrollTop);
     }
 
@@ -661,7 +686,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     private (int Dpi, int ZoomPct) CurrentRenderKey()
-        => ((int)PageLayoutCalculator.DpiForZoom(ZoomPercent), (int)Math.Round(ZoomPercent));
+        => ((int)PageLayoutCalculator.DpiForZoom(ZoomPercent, RenderBaseDpi), (int)Math.Round(ZoomPercent));
 
     /// <summary>渲染结果回传 UI 线程（构造时捕获同步上下文；测试环境无上下文时内联）。</summary>
     private void Marshal(Action action)
@@ -760,6 +785,34 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     {
         IsFitWidthActive = false;
         IsFitPageActive = false;
+    }
+
+    /// <summary>
+    /// 套用排队的初始适配档（若存在）：在首个有效视口到达后执行一次，随即清除排队标记（只影响本次打开的初始态）。
+    /// 适配宽度仅需视口宽；适配页面需宽高。套用后走既有 <see cref="FitWidthCommand"/>/<see cref="FitPageCommand"/> 语义。
+    /// </summary>
+    private void TryApplyPendingFit()
+    {
+        if (!_pendingFitWidth && !_pendingFitPage) return;
+        if (!_hasLayout || _viewportWidth <= 0) return;
+
+        var fitWidth = _pendingFitWidth;
+        var fitPage = _pendingFitPage;
+        _pendingFitWidth = false;
+        _pendingFitPage = false;
+
+        if (fitWidth)
+        {
+            FitWidth();
+        }
+        else if (fitPage && _viewportHeight > 0)
+        {
+            FitPage();
+        }
+        else if (fitPage)
+        {
+            _pendingFitPage = true; // 视口高尚未测量：保留排队，下一拍再试
+        }
     }
 
     // ------------------------------------------------------------------ 页码跳转（FR-05）

@@ -15,6 +15,7 @@ using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
 using AIPDF.Windows.Views.Reader.Panels;
+using AIPDF.Windows.Views.Settings;
 using AIPDF.Windows.Views.Wizard;
 
 namespace AIPDF.Windows.Views;
@@ -76,6 +77,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         DataContextChanged += (_, _) => HookViewModel();
         HookViewModel();
         UpdateTabAreaState();
+
+        // V3 T5：设置默认左栏面板作为「无标签/起始页初始态」（FR-38 项 2；文件标签仍以 reading-state 为准，BA-6）。
+        // 下方会话恢复若带全局激活面板，会覆盖本初始值（会话仍是启动恢复的既有真相源）。
+        ApplyPanelSelection(SettingsInjection.ResolveDefaultPanelKey(_settingsStore.Load().DefaultPanelKey));
 
         // T6：启动恢复会话（window 几何 → 左栏 → 标签异步；CLI/损坏 session 走默认状态）
         RestoreSession();
@@ -149,7 +154,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return; // DataContext 重复变更不重建（最近列表状态保留）
         }
 
-        _startPage = new StartPageViewModel(main.Tools);
+        _startPage = new StartPageViewModel(
+            main.Tools,
+            // V3 T5：最近文件上限来自设置（DefaultMaxEntries = 20 为旧行为）；保存设置后经 ApplyRecentFilesLimit 即时更新。
+            new RecentFilesStore(maxEntries: SettingsInjection.ResolveRecentFilesLimit(_settingsStore.Load().RecentFilesLimit)));
         StartPage.DataContext = _startPage;
         _startPage.DocumentOpenRequested += OnStartPageDocumentOpenRequested;
         _startPage.ToolRequested += OnStartPageToolRequested;
@@ -381,6 +389,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             gated.StartGate = FlushAnnotationsBeforeToolAsync;
         }
 
+        // V3 T5（FR-38 项 DefaultOutputDir）：仅作工具 VM 的 OutputDir 初始种子，空 = 沿用页面选择（现状）；
+        // 仅当 VM 的 OutputDir 尚为空时写入，不覆盖用户/页面已选目录，不改变引擎输出目录语义。
+        SettingsInjection.SeedOutputDir(element.DataContext, _settingsStore.Load().DefaultOutputDir);
+
         if (element.DataContext is IToolDocumentReceiver receiver && documentPath is { } path)
         {
             receiver.AddFiles([path]);
@@ -546,6 +558,48 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         ShowToolPage(tool, (DataContext as ViewModels.MainViewModel)?.Bridge);
     }
 
+    // ---- V3 T5 设置 / 关于·许可（FR-38 / AC-38.1 / AC-38.3） ----
+
+    /// <summary>⚙ 按钮：在按钮下方展开「设置 | 关于·许可」下拉菜单（无「检查更新」，AC-38.1）。</summary>
+    private void OnSettingsMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.ContextMenu is not { } menu)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    /// <summary>
+    /// 菜单「设置」：打开设置模态（7 项）。保存即时写盘；缩放/面板/DPI/输出目录等注入仅对
+    /// 「随后新打开的文档」生效（FR-38 边界，已打开文档不变）；最近文件上限对当前会话即时生效。
+    /// </summary>
+    private void OnSettingsMenuItemClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsDialog(_settingsStore);
+        if (IsLoaded)
+        {
+            dialog.Owner = this;
+        }
+
+        dialog.ShowDialog();
+        if (dialog.SavedSettings is { } saved)
+        {
+            _startPage?.ApplyRecentFilesLimit(SettingsInjection.ResolveRecentFilesLimit(saved.RecentFilesLimit));
+            if (DataContext is ViewModels.MainViewModel main)
+            {
+                main.StatusText = "设置已保存（对随后新打开的文档生效）。";
+            }
+        }
+    }
+
+    /// <summary>菜单「关于·许可」：打开关于模态（版本 / AGPL-3.0-only / LICENSE·NOTICE·第三方声明入口）。</summary>
+    private void OnAboutMenuItemClick(object sender, RoutedEventArgs e)
+        => AboutDialog.Show(IsLoaded ? this : null);
+
     // ---- 顶栏事件（FR-07/FR-08） ----
 
     /// <summary>＋ 新建标签：打开 .pdf 文件对话框；取消不产生空标签。经起始页 VM 记录最近列表（FR-34）。</summary>
@@ -594,7 +648,13 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return;
         }
 
-        var vm = new ReaderViewModel();
+        // V3 T5：打开前读取设置——仅对本次新打开的文档生效（FR-38 边界）。
+        // DefaultRenderDpi 覆盖渲染基准（不参与打印），须在 LoadDocument 前注入以便首次渲染即按新基准。
+        var settings = _settingsStore.Load();
+        var vm = new ReaderViewModel
+        {
+            RenderBaseDpi = SettingsInjection.ResolveRenderBaseDpi(settings.DefaultRenderDpi),
+        };
 
         // T9：优先用会话驻留密码免密打开（同路径解锁过一次即命中）。
         vm.LoadDocument(fullPath, _credentials.Get(fullPath));
@@ -609,7 +669,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         var view = new ReaderView(vm);
 
         // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
-        RestoreReadingState(fullPath, vm);
+        // V3 T5：reading-state 未命中时以设置 DefaultZoom / DefaultPanelKey 作为新打开文档的初始值。
+        RestoreReadingState(fullPath, vm, settings);
 
         // T2：浮菜单「用工具处理」接线（可用性探测 + 置顶/页范围预填交回宿主）
         view.ToolAvailabilityProvider = ToolAvailabilityProbe.Check;
@@ -1279,6 +1340,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private readonly RecentFilesStore _recentFiles = new();
 
     /// <summary>
+    /// 应用设置存储（V3 T5）：打开文档 / 打印时读取，设置保存后仅对「随后新打开的文档」生效
+    /// （FR-38 边界；已打开文档不受影响）。</summary>
+    private readonly SettingsStore _settingsStore = new();
+
+    /// <summary>
     /// T9 会话密码驻留（PRD 4.4.3）：内存路径→密码，解锁一次标签内免密，进程退出清除。
     /// 绝不落盘 / 写日志 / 进异常消息；渲染 / 文本 / 保存 / 就地重载均经此取密码。
     /// </summary>
@@ -1386,6 +1452,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             }
 
             _pendingRestore.Remove(docId);
+        }
+        else if (_panelKeys.TryGetValue(docId, out var key) && !string.IsNullOrEmpty(key))
+        {
+            // V3 T5：无 reading-state 的新打开文档用设置默认面板（ApplyDefaultOpenSettings 已写入 _panelKeys）；
+            // 状态命中时走上一分支，reading-state 仍为 SoT。
+            ApplyPanelSelection(key);
         }
 
         _bookmarks.SetCurrentPage(_lastKnownPage.GetValueOrDefault(docId, 0));
@@ -1623,7 +1695,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// 打开文件时恢复（M-6/BA-6）：reading-state 命中（size/mtime 键匹配）则为页码/缩放/面板/书签的单一真相源，
     /// 并显示 ST-12 提示条；未命中回退最近记录镜像（仅当其 Bytes 与当前 size 一致）；否则从第 1 页（AC-24.1/25.1）。
     /// </summary>
-    private void RestoreReadingState(string path, ReaderViewModel vm)
+    private void RestoreReadingState(string path, ReaderViewModel vm, AppSettings settings)
     {
         if (!vm.HasDocument) return;
         try
@@ -1631,15 +1703,48 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             var entry = _recentFiles.Load().Items.FirstOrDefault(
                 i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase));
             var restore = _readingStates.ResolveRestore(path, entry);
-            if (restore is null) return;
+            if (restore is not null)
+            {
+                ApplyReadingState(path, vm, restore);
+                _pendingRestore[path] = restore; // 面板挂接时消费书签/面板选择
+                return;
+            }
 
-            ApplyReadingState(path, vm, restore);
-            _pendingRestore[path] = restore; // 面板挂接时消费书签/面板选择
+            // V3 T5：reading-state 未命中 → 用设置默认作为新打开文档的初始值（有状态时上面已 return，状态为 SoT）。
+            ApplyDefaultOpenSettings(path, vm, settings);
         }
         catch (Exception ex)
         {
             Trace.WriteLine($"[MainWindow] 恢复阅读状态失败: {path} ({ex.Message})");
         }
+    }
+
+    /// <summary>
+    /// 应用设置默认的初始缩放/面板（FR-38 项 1/2；仅无 reading-state 的新打开文档走此路）。
+    /// 缩放：数值档直接套用；适配档由 <see cref="ReaderViewModel.QueueInitialFit"/> 排队到视口测量后套用。
+    /// 面板：写入 <c>_panelKeys</c>，由 <see cref="AttachPanelsToDocument"/> 挂接时应用
+    /// （文件标签的 reading-state 面板仍优先——此路只在状态未命中时走）。
+    /// </summary>
+    private void ApplyDefaultOpenSettings(string path, ReaderViewModel vm, AppSettings settings)
+    {
+        var zoom = SettingsInjection.ResolveInitialZoom(hasReadingState: false, 0, settings.DefaultZoom);
+        switch (zoom.Mode)
+        {
+            case InitialZoomMode.FitWidth:
+                vm.QueueInitialFit(fitWidth: true, fitPage: false);
+                break;
+            case InitialZoomMode.FitPage:
+                vm.QueueInitialFit(fitWidth: false, fitPage: true);
+                break;
+            default:
+                if (Math.Abs(zoom.Percent - vm.ZoomPercent) > PageLayoutCalculator.Epsilon)
+                {
+                    vm.ZoomPercent = zoom.Percent;
+                }
+                break;
+        }
+
+        _panelKeys[path] = SettingsInjection.ResolveDefaultPanelKey(settings.DefaultPanelKey);
     }
 
     private void ApplyReadingState(string path, ReaderViewModel vm, ReadingStateRestore restore)
