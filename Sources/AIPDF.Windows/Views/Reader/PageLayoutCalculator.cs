@@ -13,6 +13,14 @@ namespace AIPDF.Windows.Views.Reader;
 public readonly record struct SearchHighlight(double X, double Y, double Width, double Height);
 
 /// <summary>
+/// 对页组内命中结果（V3 T9）：<paramref name="PageOffset"/> 为组内页序号（0 起，-1 = 空组），
+/// <paramref name="LocalX"/>/<paramref name="LocalY"/> 为钳制后的页局部坐标（DIP，页左上原点）。
+/// <paramref name="Inside"/> 表示点确落在该页显示矩形内；落在组内页间距/页外时为 false，但
+/// <paramref name="PageOffset"/> 仍给出按 X 最近的页，供拖选跨页判定消费。
+/// </summary>
+public readonly record struct GroupHit(bool Inside, int PageOffset, double LocalX, double LocalY);
+
+/// <summary>
 /// 阅读区布局计算（纯函数，无状态）。
 /// 坐标口径：滚动偏移与页高均为 WPF 设备无关像素（DIP）；页尺寸输入为 PDF 点（1pt = 1/72 inch）。
 /// </summary>
@@ -111,20 +119,32 @@ public static class PageLayoutCalculator
         return LadderPercent[Math.Max(lower + steps + 1, 0)];
     }
 
-    /// <summary>适配宽度 zoom（%）：视口宽度容纳最大页宽；结果钳制在 [25, 400]。</summary>
-    public static double FitWidthZoomPercent(double viewportWidth, double pageWidthPt)
+    /// <summary>
+    /// 适配宽度 zoom（%）：视口宽度容纳最大页宽；结果钳制在 [25, 400]。
+    /// <paramref name="extraDip"/>（V3 T9）为对开模式下组内页间距等固定占用：可用宽 = 视口宽 − extraDip；
+    /// 默认 0 保持既有单页语义与既有调用不变。
+    /// </summary>
+    public static double FitWidthZoomPercent(double viewportWidth, double pageWidthPt, double extraDip = 0)
     {
         if (viewportWidth <= 0 || pageWidthPt <= 0) return 100;
-        var zoom = viewportWidth / (pageWidthPt * DpiScale) * 100.0;
+        var available = Math.Max(Epsilon, viewportWidth - Math.Max(0, extraDip));
+        var zoom = available / (pageWidthPt * DpiScale) * 100.0;
         return Math.Clamp(zoom, LadderPercent[0], LadderPercent[^1]);
     }
 
-    /// <summary>适配页面 zoom（%）：宽与高取更紧约束；结果钳制在 [25, 400]。</summary>
-    public static double FitPageZoomPercent(double viewportWidth, double viewportHeight, double pageWidthPt, double pageHeightPt)
+    /// <summary>
+    /// 适配页面 zoom（%）：宽与高取更紧约束；结果钳制在 [25, 400]。
+    /// <paramref name="extraWidthDip"/> / <paramref name="extraHeightDip"/>（V3 T9）为对开模式下组尺寸的固定占用；
+    /// 默认 0 保持既有单页语义与既有调用不变。
+    /// </summary>
+    public static double FitPageZoomPercent(double viewportWidth, double viewportHeight, double pageWidthPt, double pageHeightPt,
+        double extraWidthDip = 0, double extraHeightDip = 0)
     {
         if (viewportWidth <= 0 || viewportHeight <= 0 || pageWidthPt <= 0 || pageHeightPt <= 0) return 100;
-        var byWidth = viewportWidth / (pageWidthPt * DpiScale) * 100.0;
-        var byHeight = viewportHeight / (pageHeightPt * DpiScale) * 100.0;
+        var availableWidth = Math.Max(Epsilon, viewportWidth - Math.Max(0, extraWidthDip));
+        var availableHeight = Math.Max(Epsilon, viewportHeight - Math.Max(0, extraHeightDip));
+        var byWidth = availableWidth / (pageWidthPt * DpiScale) * 100.0;
+        var byHeight = availableHeight / (pageHeightPt * DpiScale) * 100.0;
         return Math.Clamp(Math.Min(byWidth, byHeight), LadderPercent[0], LadderPercent[^1]);
     }
 
@@ -229,8 +249,191 @@ public static class PageLayoutCalculator
         return best;
     }
 
+    // ------------------------------------------------------------------ 对开（spread）布局（V3 T9 / M8）
+
+    /// <summary>对开拓扑薄封装：页索引所在组（等价 <see cref="PageGroupMap.PageToGroup"/>，保留计划命名）。</summary>
+    public static int GroupForPage(int pageIndex, bool spread, bool coverPageAlone, int pageCount)
+        => (spread ? PageGroupMap.Spread(pageCount, coverPageAlone) : PageGroupMap.Single(pageCount)).PageToGroup(pageIndex);
+
+    /// <summary>对开拓扑薄封装：组内含页范围（等价 <see cref="PageGroupMap.GroupToPages"/>）。</summary>
+    public static (int First, int Last) PagesInGroup(int groupIndex, bool spread, bool coverPageAlone, int pageCount)
+        => (spread ? PageGroupMap.Spread(pageCount, coverPageAlone) : PageGroupMap.Single(pageCount)).GroupToPages(groupIndex);
+
+    /// <summary>每组显示高（DIP）：组内页高最大值（单页模式即页高）。空文档返回空数组。</summary>
+    public static double[] ComputeGroupHeights(IReadOnlyList<PageSize> sizesPt, double zoomPercent, PageGroupMap map)
+    {
+        var heights = new double[map.GroupCount];
+        if (map.GroupCount == 0) return heights;
+        var scale = zoomPercent / 100.0 * DpiScale;
+        for (var g = 0; g < map.GroupCount; g++)
+        {
+            var (first, last) = map.GroupToPages(g);
+            var h = 0.0;
+            for (var p = first; p <= last && p < sizesPt.Count; p++) h = Math.Max(h, sizesPt[p].Height * scale);
+            heights[g] = h;
+        }
+        return heights;
+    }
+
+    /// <summary>每组顶部偏移（DIP，含组间距）；混合页尺寸/对开逐组累加。</summary>
+    public static double[] ComputeGroupOffsets(IReadOnlyList<PageSize> sizesPt, double zoomPercent, PageGroupMap map)
+    {
+        var heights = ComputeGroupHeights(sizesPt, zoomPercent, map);
+        var offsets = new double[heights.Length];
+        var acc = 0.0;
+        for (var g = 0; g < heights.Length; g++)
+        {
+            offsets[g] = acc;
+            acc += heights[g] + PageGap;
+        }
+        return offsets;
+    }
+
+    /// <summary>每组显示宽（DIP）：组内页宽之和 + 组内页间距（页数 > 1 时）。</summary>
+    public static double[] ComputeGroupWidths(IReadOnlyList<PageSize> sizesPt, double zoomPercent, PageGroupMap map)
+    {
+        var widths = new double[map.GroupCount];
+        if (map.GroupCount == 0) return widths;
+        var scale = zoomPercent / 100.0 * DpiScale;
+        for (var g = 0; g < map.GroupCount; g++)
+        {
+            var (first, last) = map.GroupToPages(g);
+            var w = 0.0;
+            var count = 0;
+            for (var p = first; p <= last && p < sizesPt.Count; p++)
+            {
+                if (count > 0) w += PageGap;
+                w += sizesPt[p].Width * scale;
+                count++;
+            }
+            widths[g] = w;
+        }
+        return widths;
+    }
+
+    /// <summary>对开内容总高（DIP）= 末组底部 + 尾部组间距；空文档为 0。</summary>
+    public static double ComputeGroupsContentHeight(IReadOnlyList<PageSize> sizesPt, double zoomPercent, PageGroupMap map)
+    {
+        if (map.GroupCount == 0) return 0;
+        var offsets = ComputeGroupOffsets(sizesPt, zoomPercent, map);
+        var heights = ComputeGroupHeights(sizesPt, zoomPercent, map);
+        return offsets[^1] + heights[^1] + PageGap;
+    }
+
+    /// <summary>页在组内的水平偏移（DIP）：组内左侧页为 0，右侧页为左页显示宽 + 页间距；单页为 0。</summary>
+    public static double PageXWithinGroup(int pageIndex, IReadOnlyList<PageSize> sizesPt, double zoomPercent, PageGroupMap map)
+    {
+        var group = map.PageToGroup(pageIndex);
+        if (group < 0) return 0;
+        var (first, _) = map.GroupToPages(group);
+        var scale = zoomPercent / 100.0 * DpiScale;
+        var x = 0.0;
+        for (var p = first; p < pageIndex && p < sizesPt.Count; p++) x += sizesPt[p].Width * scale + PageGap;
+        return x;
+    }
+
+    /// <summary>组内最大内容宽（PDF 点）：组内页宽之和（不含 DIP 间距），供适配宽度换算。</summary>
+    public static double MaxGroupContentWidthPt(IReadOnlyList<PageSize> sizesPt, PageGroupMap map)
+    {
+        var max = 0.0;
+        for (var g = 0; g < map.GroupCount; g++)
+        {
+            var (first, last) = map.GroupToPages(g);
+            var w = 0.0;
+            for (var p = first; p <= last && p < sizesPt.Count; p++) w += sizesPt[p].Width;
+            max = Math.Max(max, w);
+        }
+        return max;
+    }
+
+    /// <summary>组内最大页高（PDF 点），供适配页面换算。</summary>
+    public static double MaxGroupContentHeightPt(IReadOnlyList<PageSize> sizesPt, PageGroupMap map)
+    {
+        var max = 0.0;
+        for (var g = 0; g < map.GroupCount; g++)
+        {
+            var (first, last) = map.GroupToPages(g);
+            for (var p = first; p <= last && p < sizesPt.Count; p++) max = Math.Max(max, sizesPt[p].Height);
+        }
+        return max;
+    }
+
+    /// <summary>是否存在含 2 页的组（决定适配宽度/页面是否扣减一个页间距）。</summary>
+    public static bool HasMultiPageGroup(PageGroupMap map)
+    {
+        for (var g = 0; g < map.GroupCount; g++)
+        {
+            var (first, last) = map.GroupToPages(g);
+            if (last > first) return true;
+        }
+        return false;
+    }
+
+    /// <summary>按 y（DIP）取对页组索引：语义同 <see cref="PageAtPoint"/>，偏移数组改为组偏移。</summary>
+    public static int GroupAtPoint(double[] groupOffsets, double y) => PageAtPoint(groupOffsets, y);
+
+    /// <summary>可视组范围（含缓冲组）；语义同 <see cref="VisibleRange"/>，输入改为组偏移/组高。</summary>
+    public static (int First, int Last) VisibleGroupRange(double[] groupOffsets, double[] groupHeights,
+        double scrollTop, double viewportHeight, int bufferGroups)
+        => VisibleRange(groupOffsets, groupHeights, scrollTop, viewportHeight, bufferGroups);
+
+    /// <summary>当前对页组判定（交叠最大，并列取靠前）；语义同 <see cref="CurrentPageByMaxOverlap"/>。</summary>
+    public static int CurrentGroupByMaxOverlap(double[] groupOffsets, double[] groupHeights, double scrollTop, double viewportHeight)
+        => CurrentPageByMaxOverlap(groupOffsets, groupHeights, scrollTop, viewportHeight);
+
     /// <summary>
-    /// 缩放后保持视口中心锚点：换算缩放前视口中心所在页与页内比例，映射到新布局后取对应滚动位置。
+    /// 组内点命中（纯函数）：给定组内各页显示宽/高（DIP）与组内坐标，返回页序号与钳制后的页局部坐标。
+    /// 点在页间距/页外时 <see cref="GroupHit.Inside"/> 为 false，但按 X 距离最近的页仍返回，供拖选跨页判定。
+    /// </summary>
+    public static GroupHit HitPageInGroup(IReadOnlyList<double> pageWidthsDip, IReadOnlyList<double> pageHeightsDip,
+        double groupX, double groupY, double gap = PageGap)
+    {
+        if (pageWidthsDip is null || pageWidthsDip.Count == 0) return new GroupHit(false, -1, 0, 0);
+
+        // 1) 精确包含：按 X 落在某页水平区间
+        var cursor = 0.0;
+        var contained = -1;
+        for (var i = 0; i < pageWidthsDip.Count; i++)
+        {
+            var w = pageWidthsDip[i];
+            if (groupX >= cursor - Epsilon && groupX <= cursor + w + Epsilon) { contained = i; break; }
+            cursor += w + gap;
+        }
+
+        // 2) 未精确包含（页间距/页外）：取 X 距离最近的页，保证拖选仍能给出页序号
+        var index = contained;
+        var start = 0.0;
+        if (index < 0)
+        {
+            var bestDist = double.MaxValue;
+            cursor = 0.0;
+            for (var i = 0; i < pageWidthsDip.Count; i++)
+            {
+                var w = pageWidthsDip[i];
+                var dist = groupX < cursor ? cursor - groupX : (groupX > cursor + w ? groupX - (cursor + w) : 0);
+                if (dist < bestDist - Epsilon) { bestDist = dist; index = i; start = cursor; }
+                cursor += w + gap;
+            }
+        }
+        else
+        {
+            cursor = 0.0;
+            for (var i = 0; i < index; i++) cursor += pageWidthsDip[i] + gap;
+            start = cursor;
+        }
+
+        if (index < 0) index = 0;
+        if (index >= pageWidthsDip.Count) index = pageWidthsDip.Count - 1;
+
+        var pageW = pageWidthsDip[index];
+        var pageH = index < pageHeightsDip.Count ? pageHeightsDip[index] : 0;
+        var localX = Math.Clamp(groupX - start, 0, Math.Max(0, pageW));
+        var localY = Math.Clamp(groupY, 0, Math.Max(0, pageH));
+        var inside = groupX >= start - Epsilon && groupX <= start + pageW + Epsilon
+                     && groupY >= -Epsilon && groupY <= pageH + Epsilon;
+        return new GroupHit(inside, index, localX, localY);
+    }
+
     /// 结果钳制在 [0, 新内容高 - 视口高]。
     /// </summary>
     public static double ZoomAnchorScroll(double[] oldOffsets, double[] oldHeights, double oldScrollTop, double viewportHeight,

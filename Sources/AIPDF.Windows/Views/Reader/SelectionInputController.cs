@@ -124,7 +124,7 @@ public sealed class SelectionInputController
 
     /// <summary>
     /// 由视图显式标记跨页（鼠标捕获下所有 MouseMove 都路由到锚点元素、pageIndex 不变，
-    /// 故视图按指针是否越出锚点页纵向边界判定，见 ReaderView.OnPageMouseMove）。
+    /// 故视图按指针是否越出锚点页纵向边界判定，见 ReaderView.OnGroupMouseMove）。
     /// </summary>
     public void MarkCrossPage()
     {

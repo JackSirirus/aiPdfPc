@@ -5,6 +5,8 @@
 //           悬停编辑/删除/改色（FR-13/H-9）、笔记输入弹层、Toast 反馈。
 // 纯判定/几何逻辑全部在 SelectionInputController / FloatingMenuLayout / SelectionMenuState /
 // AnnotationHitTester（可 xunit 直测）；本文件只做 WPF 事件接线与弹层生命周期。
+// V3 T9（C1）：鼠标/选择/命中 handler 从「页元素」迁移到「对页组元素」；组内取点(组坐标)经
+//              ReaderViewModel.TryMapGroupPoint / HitTestAnnotationAt 的 page↔group 映射换算到页局部。
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -35,8 +37,11 @@ public partial class ReaderView : UserControl
     private readonly SelectionInputController _selection = new();
     private readonly SelectionMenuState _menu = new();
 
-    /// <summary>拖选起点所在页容器（坐标换算的锚点）。</summary>
-    private FrameworkElement? _activePageElement;
+    /// <summary>拖选起点所在对页组容器（M8：组坐标 → 页局部坐标换算的锚点）。</summary>
+    private FrameworkElement? _activeGroupElement;
+
+    /// <summary>拖选起点所在页（页局部坐标与选区绘制的锚点）。</summary>
+    private ReaderPageItemViewModel? _activeAnchorPage;
 
     private int _selectionPageIndex = -1;
     private int _selectionAnchorChar = -1;
@@ -131,23 +136,31 @@ public partial class ReaderView : UserControl
 
     // ------------------------------------------------------------ T2 拖选
 
-    private void OnPageMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void OnGroupMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not ReaderPageItemViewModel page) return;
+        if (sender is not FrameworkElement element || element.DataContext is not ReaderSpreadGroupViewModel group) return;
 
         // 新交互：先收起旧弹层与旧选区
         HideMenus();
         ClearSelectionVisuals();
 
-        _activePageElement = element;
+        // M8：组内取点 → page↔group 映射（组内页偏移 + 页局部坐标）；点落在组间隙/页外不拉选区
         var pos = e.GetPosition(element);
-        var hasText = _viewModel.PageHasTextLayer(page.Index);
-        var canAnnotate = _viewModel.CanAnnotate(page.Index);
+        if (!_viewModel.TryMapGroupPoint(group.Index, pos.X, pos.Y, out var pageIndex, out var localX, out var localY))
+        {
+            return;
+        }
 
-        if (!_selection.Begin(page.Index, pos.X, pos.Y, _viewModel.HasDocument, canAnnotate, hasText))
+        _activeGroupElement = element;
+        _activeAnchorPage = _viewModel.Pages[pageIndex];
+        var hasText = _viewModel.PageHasTextLayer(pageIndex);
+        var canAnnotate = _viewModel.CanAnnotate(pageIndex);
+
+        if (!_selection.Begin(pageIndex, localX, localY, _viewModel.HasDocument, canAnnotate, hasText))
         {
             // 无文档 / 旋转页禁选（M-11）：不拉选区
-            _activePageElement = null;
+            _activeGroupElement = null;
+            _activeAnchorPage = null;
             return;
         }
 
@@ -155,22 +168,19 @@ public partial class ReaderView : UserControl
         e.Handled = true;
     }
 
-    private void OnPageMouseMove(object sender, MouseEventArgs e)
+    private void OnGroupMouseMove(object sender, MouseEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not ReaderPageItemViewModel page) return;
+        if (sender is not FrameworkElement element || element.DataContext is not ReaderSpreadGroupViewModel group) return;
+
+        var pos = e.GetPosition(element);
+        var mapped = _viewModel.TryMapGroupPoint(group.Index, pos.X, pos.Y, out var pageIndex, out var localX, out var localY);
 
         if (_selection.IsDragging)
         {
-            var pos = e.GetPosition(element);
-            // 鼠标捕获下所有移动都路由到锚点元素，pageIndex 不变：按指针越出锚点页纵向边界判定跨页
-            var anchor = element.DataContext as ReaderPageItemViewModel;
-            if (anchor is not null && (pos.Y < -0.5 || pos.Y > anchor.DisplayHeight + 0.5))
-            {
-                _selection.MarkCrossPage();
-            }
-
-            _selection.Update(page.Index, pos.X, pos.Y);
-            UpdateDragVisual(page);
+            // M8：组坐标映射到页局部后更新拖选；指针进入组间隙/页外标记跨页（释放不弹菜单）
+            if (mapped) _selection.Update(pageIndex, localX, localY);
+            else _selection.MarkCrossPage();
+            UpdateDragVisual(mapped ? pageIndex : -1);
             return;
         }
 
@@ -180,23 +190,29 @@ public partial class ReaderView : UserControl
             return;
         }
 
-        var hover = e.GetPosition(element);
-        var hitId = AnnotationHitTester.HitTest(page.Annotations, hover.X, hover.Y);
+        if (!mapped)
+        {
+            if (_hoverAnnotationId is not null) ScheduleHideHover();
+            return;
+        }
+
+        // M8：批注命中经组→页映射（组内页偏移 + 页局部坐标）后走 AnnotationHitTester
+        var hitId = _viewModel.HitTestAnnotationAt(group.Index, pos.X, pos.Y, out var hitPage);
         if (hitId is null)
         {
             if (_hoverAnnotationId is not null) ScheduleHideHover();
             return;
         }
 
-        if (_hoverAnnotationId == hitId && _hoverPageIndex == page.Index) return;
-        ShowHover(element, page, hitId);
+        if (_hoverAnnotationId == hitId && _hoverPageIndex == hitPage) return;
+        ShowHover(element, hitPage, hitId);
     }
 
-    private void OnPageMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    private void OnGroupMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_selection.IsDragging) return;
         if (sender is FrameworkElement element) element.ReleaseMouseCapture();
-        if (_activePageElement is null) { _selection.Cancel(); return; }
+        if (_activeAnchorPage is null) { _selection.Cancel(); return; }
 
         var result = _selection.Complete();
 
@@ -212,9 +228,9 @@ public partial class ReaderView : UserControl
             return;
         }
 
-        if (result.CanShowMenu && ComputeSelectionGeometry(result, _activePageElement))
+        if (result.CanShowMenu && ComputeSelectionGeometry(result))
         {
-            _anchorElement = _activePageElement;
+            _anchorElement = _activeGroupElement;
             _anchorPageRectDip = ComputeSelectionDipUnion(_selectionPtRects);
             _menu.Open();
             // StaysOpen=False 的弹层必须等本次鼠标抬起事件结束后再开，
@@ -230,19 +246,19 @@ public partial class ReaderView : UserControl
         }
     }
 
-    private void OnPageMouseLeave(object sender, MouseEventArgs e)
+    private void OnGroupMouseLeave(object sender, MouseEventArgs e)
     {
         if (_selection.IsDragging) return;
         if (_hoverAnnotationId is not null) ScheduleHideHover();
     }
 
-    /// <summary>拖拽中显示矩形选框（跨页则清除锚点页选框）。</summary>
-    private void UpdateDragVisual(ReaderPageItemViewModel page)
+    /// <summary>拖拽中显示矩形选框（跨页则清除锚点页选框）。坐标均为锚点页页局部 DIP。</summary>
+    private void UpdateDragVisual(int pageIndex)
     {
-        var anchor = _activePageElement?.DataContext as ReaderPageItemViewModel;
+        var anchor = _activeAnchorPage;
         if (anchor is null) return;
 
-        if (_selection.IsCrossPage || !ReferenceEquals(page, anchor))
+        if (_selection.IsCrossPage || pageIndex != anchor.Index)
         {
             // 跨页选区不弹菜单：清除锚点页选框
             anchor.SetSelectionRects([]);
@@ -256,8 +272,8 @@ public partial class ReaderView : UserControl
         anchor.SetSelectionRects([new SearchHighlight(left, top, width, height)]);
     }
 
-    /// <summary>释放后按起止字符下标算文本选区矩形；失败返回 false（不弹菜单）。</summary>
-    private bool ComputeSelectionGeometry(SelectionResult result, FrameworkElement element)
+    /// <summary>释放后按起止字符下标算文本选区矩形；失败返回 false（不弹菜单）。坐标已是页局部（经组映射）。</summary>
+    private bool ComputeSelectionGeometry(SelectionResult result)
     {
         if (!_viewModel.TryHitCharAtPoint(result.PageIndex, result.StartX, result.StartY, out var a)) return false;
         if (!_viewModel.TryHitCharAtPoint(result.PageIndex, result.EndX, result.EndY, out var b)) return false;
@@ -418,12 +434,13 @@ public partial class ReaderView : UserControl
 
     // ------------------------------------------------------------ T2 悬停编辑/删除/改色
 
-    private void ShowHover(FrameworkElement element, ReaderPageItemViewModel page, string annotationId)
+    private void ShowHover(FrameworkElement element, int pageIndex, string annotationId)
     {
         CancelHideHover();
-        _hoverPageIndex = page.Index;
+        _hoverPageIndex = pageIndex;
         _hoverAnnotationId = annotationId;
 
+        var page = _viewModel.Pages[pageIndex];
         AnnotationOverlay? overlay = null;
         foreach (var o in page.Annotations)
         {
@@ -431,11 +448,13 @@ public partial class ReaderView : UserControl
         }
         if (overlay is null) { HideHover(); return; }
 
-        var record = _viewModel.FindAnnotation(page.Index, annotationId);
+        var record = _viewModel.FindAnnotation(pageIndex, annotationId);
         HoverEditButton.IsEnabled = record?.Kind == AnnotationKind.Note;
 
         _anchorElement = element;
-        _anchorPageRectDip = (overlay.Value.X, overlay.Value.Y, overlay.Value.Width, overlay.Value.Height);
+        // M8：批注矩形为页局部 DIP；弹层锚定在组容器上，故加上页在组内偏移。
+        _anchorPageRectDip = (overlay.Value.X + page.OffsetX, overlay.Value.Y + page.OffsetY,
+            overlay.Value.Width, overlay.Value.Height);
 
         _menu.OpenHover();
         SyncPopups();
@@ -605,11 +624,12 @@ public partial class ReaderView : UserControl
 
     private void ClearSelectionVisuals()
     {
-        if (_activePageElement?.DataContext is ReaderPageItemViewModel page)
+        if (_activeAnchorPage is not null)
         {
-            page.SetSelectionRects([]);
+            _activeAnchorPage.SetSelectionRects([]);
         }
-        _activePageElement = null;
+        _activeGroupElement = null;
+        _activeAnchorPage = null;
         _selectionPageIndex = -1;
         _selectionAnchorChar = -1;
         _selectionEndChar = -1;
@@ -617,6 +637,7 @@ public partial class ReaderView : UserControl
         _selection.Cancel();
     }
 
+    /// <summary>选区矩形并集（页局部 DIP）+ 页在组内偏移 → 组局部 DIP（弹层锚定在组容器上）。</summary>
     private (double L, double T, double W, double H) ComputeSelectionDipUnion(IReadOnlyList<PdfRect> rects)
     {
         if (rects.Count == 0 || _selectionPageIndex < 0 || _selectionPageIndex >= _viewModel.Pages.Count) return (0, 0, 0, 0);
@@ -630,7 +651,7 @@ public partial class ReaderView : UserControl
             right = Math.Max(right, d.X + d.Width);
             bottom = Math.Max(bottom, d.Y + d.Height);
         }
-        return (left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+        return (left + page.OffsetX, top + page.OffsetY, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }
 
     // ------------------------------------------------------------ Toast
@@ -686,9 +707,16 @@ public partial class ReaderView : UserControl
         }
     }
 
-    /// <summary>非法页码红边抖动（FR-05 AC-05.2）。</summary>
+    /// <summary>非法页码红边抖动（FR-05 AC-05.2）；对开切换时收起浮层（组容器会重建，锚点失效）。</summary>
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(ReaderViewModel.SpreadEnabled))
+        {
+            // V3 T9：单页/双页切换会整体重建组容器，先收起弹层与选区，避免锚点指向已回收元素。
+            CloseAllAndClear();
+            return;
+        }
+
         if (e.PropertyName == nameof(ReaderViewModel.IsJumpInvalid) && _viewModel.IsJumpInvalid)
         {
             PlayInvalidJumpAnimation();

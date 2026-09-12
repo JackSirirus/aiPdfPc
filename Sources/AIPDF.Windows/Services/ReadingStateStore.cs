@@ -50,6 +50,12 @@ public sealed class ReadingState
     /// <summary>左栏面板选择（thumbs / outline / bookmarks / search）。</summary>
     public string PanelKey { get; set; } = PanelThumbs;
 
+    /// <summary>
+    /// V3 T9：双页对开阅读模式开关（true = 对开，false/缺省 = 单页）。
+    /// 加法式 schema 扩展：旧状态文件无此字段时反序列化为 false，兼容既有状态（不升版本）。
+    /// </summary>
+    public bool SpreadEnabled { get; set; }
+
     /// <summary>用户自建书签列表。</summary>
     public List<ReadingStateBookmark> Bookmarks { get; set; } = [];
 

@@ -19,6 +19,9 @@ public static class ReaderStrings
     public const string FitPageLabel = "适配页面";
     public const string FitWidthToolTip = "按窗口宽度重算缩放";
     public const string FitPageToolTip = "按窗口大小完整显示一页";
+    public const string SpreadSinglePageLabel = "单页";
+    public const string SpreadTwoPageLabel = "双页";
+    public const string SpreadToggleToolTip = "切换单页 / 双页对开阅读（对开按封面单列分组）";
     public const string LoadErrorPrefix = "无法打开文档：";
     public const string RenderErrorPrefix = "页面渲染失败：";
 

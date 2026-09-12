@@ -21,6 +21,7 @@ using System.Windows.Media.Imaging;
 using AIPDF.Windows.Annotations;
 using AIPDF.Windows.Controls;
 using AIPDF.Windows.Rendering;
+using AIPDF.Windows.Services;
 using AIPDF.Windows.Views.Reader;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -66,6 +67,14 @@ public partial class ReaderPageItemViewModel : ObservableObject
     /// <summary>显示高（DIP）。</summary>
     [ObservableProperty]
     private double _displayHeight;
+
+    /// <summary>页在所属对页组内的水平偏移（DIP）；单页模式恒为 0（V3 T9 / M8）。</summary>
+    [ObservableProperty]
+    private double _offsetX;
+
+    /// <summary>页在所属对页组内的垂直偏移（DIP）；当前与组顶对齐，恒为 0。</summary>
+    [ObservableProperty]
+    private double _offsetY;
 
     /// <summary>渲染完成的位图（冻结，可跨线程）。为 null 时显示骨架占位。</summary>
     [ObservableProperty]
@@ -213,6 +222,34 @@ public partial class ReaderPageItemViewModel : ObservableObject
 }
 
 /// <summary>
+/// 对页组视图模型（V3 T9 / M8）：对开模式下一个阅读项（虚拟化单元）含 1–2 页；单页模式恒含 1 页。
+/// 组显示宽/高由 <see cref="ReaderViewModel.RebuildLayout"/> 按组内页尺寸重算；组内各页经
+/// <see cref="ReaderPageItemViewModel.OffsetX"/> 水平排布（左侧/右侧或单页）。
+/// </summary>
+public partial class ReaderSpreadGroupViewModel : ObservableObject
+{
+    public ReaderSpreadGroupViewModel(int index, IReadOnlyList<ReaderPageItemViewModel> pages)
+    {
+        Index = index;
+        Pages = pages;
+    }
+
+    /// <summary>组索引（0 起）。</summary>
+    public int Index { get; }
+
+    /// <summary>组内页（1–2 页，阅读顺序左→右）。</summary>
+    public IReadOnlyList<ReaderPageItemViewModel> Pages { get; }
+
+    /// <summary>组显示宽（DIP）：组内页宽之和 + 组内页间距。</summary>
+    [ObservableProperty]
+    private double _displayWidth;
+
+    /// <summary>组显示高（DIP）：组内页高最大值（ST-10 骨架占位不跳动）。</summary>
+    [ObservableProperty]
+    private double _displayHeight;
+}
+
+/// <summary>
 /// 阅读视图模型：虚拟化连续滚动（可见页 ± 缓冲页渲染请求，其余占位）+ 九档缩放阶梯 + 适配宽度/页面 + 页码跳转。
 /// 必须在 UI 线程构造（捕获 SynchronizationContext 用于渲染结果回传；测试环境无同步上下文时内联执行）。
 /// </summary>
@@ -246,8 +283,17 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private string? _docId;
     private List<PageSize> _pageSizes = [];
     private int[] _pageRotations = [];
-    private double[] _offsets = [];
-    private double[] _heights = [];
+
+    // ---- V3 T9（M8）group-index 布局层：渲染窗口/当前页/命中/选区一律以「对页组」为作用域，
+    //      组坐标经 PageGroupMap + 组内偏移换算到页局部；单页模式映射恒等（group == page）。 ----
+    private PageGroupMap _groups = PageGroupMap.Single(0);
+    private double[] _groupOffsets = [];
+    private double[] _groupHeights = [];
+    private bool _spreadEnabled;
+
+    /// <summary>阅读状态存储（V3 T9：对开开关随文件持久化）。宿主/测试注入；未注入时惰性自建（生产默认目录）。</summary>
+    private ReadingStateStore? _readingStates;
+
     private double _scrollTop;
     private double _viewportHeight;
     private double _viewportWidth;
@@ -258,13 +304,15 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private int _searchHighlightPage = -1;
 
     /// <summary>构造。renderService 为空时首次打开文档自建并持有（随 Dispose 释放）；测试/宿主可注入。
-    /// textService 同样为空时惰性自建（仅首次选区命中）；测试可注入独立实例。</summary>
+    /// textService 同样为空时惰性自建（仅首次选区命中）；测试可注入独立实例。
+    /// readingStates 为空时惰性自建（V3 T9 对开开关持久化，生产默认目录）；测试注入临时目录。</summary>
     public ReaderViewModel(PdfiumRenderService? renderService = null, int bufferPages = DefaultBufferPages,
-        PdfiumTextService? textService = null)
+        PdfiumTextService? textService = null, ReadingStateStore? readingStates = null)
     {
         _injectedService = renderService;
         _ownsService = renderService is null;
         _injectedTextService = textService;
+        _readingStates = readingStates;
         BufferPages = Math.Max(0, bufferPages);
     }
 
@@ -297,6 +345,66 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
     /// <summary>页面集合（虚拟化 ItemsControl 的 ItemsSource；仅持有尺寸元数据，位图按需）。</summary>
     public ObservableCollection<ReaderPageItemViewModel> Pages { get; } = [];
+
+    /// <summary>对页组集合（虚拟化 ItemsControl 的实际 ItemsSource）：对开模式 1–2 页/组；单页模式 group=page。</summary>
+    public ObservableCollection<ReaderSpreadGroupViewModel> Groups { get; } = [];
+
+    /// <summary>对开分组：第 1 页是否单独成组（封面单列）。</summary>
+    public const bool CoverPageAlone = true;
+
+    /// <summary>当前 page↔group 映射（M8）：单页恒等；对开按封面单列分组。</summary>
+    public PageGroupMap GroupMap => _groups;
+
+    /// <summary>
+    /// 双页对开开关（V3 T9）：setter 即切换布局（重建组 + 重算偏移 + 保持当前页），并持久化到阅读状态。
+    /// 单页（false，默认）/双页（true）切换不改变 PageGap / 缩放阶梯 / ZoomAnchorScroll 语义。
+    /// </summary>
+    public bool SpreadEnabled
+    {
+        get => _spreadEnabled;
+        set => SetSpread(value, persist: true);
+    }
+
+    /// <summary>状态栏切换按钮文案：显示当前模式（单页/双页）。</summary>
+    public string SpreadToggleText => _spreadEnabled ? ReaderStrings.SpreadTwoPageLabel : ReaderStrings.SpreadSinglePageLabel;
+
+    /// <summary>切换对开（供状态栏按钮命令与测试调用）。</summary>
+    [RelayCommand]
+    private void ToggleSpread() => SetSpread(!_spreadEnabled, persist: true);
+
+    private void SetSpread(bool enabled, bool persist)
+    {
+        if (enabled == _spreadEnabled)
+        {
+            if (persist) PersistSpread(enabled);
+            return;
+        }
+
+        var currentPage = CurrentPageNumber > 0 ? CurrentPageNumber : 1;
+        SetProperty(ref _spreadEnabled, enabled, nameof(SpreadEnabled));
+        OnPropertyChanged(nameof(SpreadToggleText));
+
+        if (_hasLayout)
+        {
+            BuildGroups();
+            RebuildLayout(ZoomPercent);
+            var group = _groups.PageToGroup(currentPage - 1);
+            var offset = group >= 0 ? Math.Max(0, _groupOffsets[group]) : 0;
+            UpdateViewportCore(offset);
+            ScrollRequested?.Invoke(this, new ReaderScrollRequestEventArgs(offset));
+        }
+
+        if (persist) PersistSpread(enabled);
+    }
+
+    /// <summary>恢复/初始化对开开关：只置位与通知，不重建布局、不写盘（调用方随后 BuildGroups/RebuildLayout）。</summary>
+    private void SetSpreadBacking(bool enabled)
+    {
+        if (_spreadEnabled == enabled) return;
+        _spreadEnabled = enabled;
+        OnPropertyChanged(nameof(SpreadEnabled));
+        OnPropertyChanged(nameof(SpreadToggleText));
+    }
 
     /// <summary>视口外页释放通知：参数为 (页索引, 估算字节数)。
     /// T1 无显式释放 API（缺口②），LRU 按字节预算自淘汰；宿主可订阅此事件做观测，未来接到 T1 ReleasePage。</summary>
@@ -452,6 +560,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             CurrentPageNumber = count > 0 ? 1 : 0;
             _hasLayout = count > 0;
 
+            // V3 T9：新打开文档按 reading-state 恢复对开开关；无状态默认单页（单页恒等映射）。
+            SetSpreadBacking(ReadPersistedSpread());
+            BuildGroups();
             RebuildLayout(ZoomPercent);
 
             if (_hasLayout)
@@ -468,6 +579,11 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             PageCount = 0;
             _pageRotations = [];
             Pages.Clear();
+            Groups.Clear();
+            _groups = PageGroupMap.Single(0);
+            _groupOffsets = [];
+            _groupHeights = [];
+            SetSpreadBacking(false);
             _documentPassword = null;
             LoadRequiresPassword = ex.ErrorCode == PdfiumRenderService.PdfiumErrorPassword;
             ErrorMessage = ReaderStrings.LoadErrorPrefix + ex.Message;
@@ -475,6 +591,47 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     private static PdfiumRenderService CreateService() => new();
+
+    // ------------------------------------------------------------------ 对开开关持久化（V3 T9：reading-state，按文件键 size/mtime）
+
+    /// <summary>读取本文件持久化的对开开关（只读，不刷新 lastAccess——那是宿主的职责）；无状态默认 false。</summary>
+    private bool ReadPersistedSpread()
+    {
+        if (_documentPath is null) return false;
+        try
+        {
+            var store = _readingStates ??= new ReadingStateStore();
+            var stamp = ReadingStateKey.TryCapture(_documentPath);
+            return stamp is { } s && store.Load(s.Key)?.SpreadEnabled == true;
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 读取对开状态失败: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>把对开开关写回本文件 reading-state（读改写，保留页码/缩放/书签等既有字段）。</summary>
+    private void PersistSpread(bool enabled)
+    {
+        if (_documentPath is null || !_hasLayout) return;
+        try
+        {
+            var store = _readingStates ??= new ReadingStateStore();
+            var stamp = ReadingStateKey.TryCapture(_documentPath);
+            if (stamp is not { } s) return;
+
+            var state = store.Load(s.Key) ?? new ReadingState { Path = _documentPath };
+            state.Path = _documentPath;
+            state.SpreadEnabled = enabled;
+            state.LastAccessUtc = DateTime.UtcNow;
+            store.Save(s.Key, state);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[ReaderViewModel] 保存对开状态失败: {ex.Message}");
+        }
+    }
 
     /// <summary>
     /// Close-first 重载（T4 唯一真相源，BLK-2/BLK-3）：就地保存后旧句柄对应的渲染位图不再包含
@@ -552,6 +709,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             _hasLayout = count > 0;
 
             // 4) 重建布局（含未保存批注按坐标重投影），恢复缩放与视口
+            BuildGroups();
             RebuildLayout(savedZoom);
             if (!_hasLayout) return;
 
@@ -588,25 +746,35 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         _scrollTop = scrollTop;
         if (!_hasLayout) return;
 
-        var (first, last) = PageLayoutCalculator.VisibleRange(_offsets, _heights, scrollTop, _viewportHeight, BufferPages);
-        if (last >= first)
+        // 对页组作用域渲染窗口（M8）：仅可视 ± 缓冲「组」内的页持位图；单页模式 group == page，行为不变。
+        var (firstGroup, lastGroup) = PageLayoutCalculator.VisibleGroupRange(
+            _groupOffsets, _groupHeights, scrollTop, _viewportHeight, BufferPages);
+        var hasWindow = lastGroup >= firstGroup;
+        var firstPage = hasWindow ? _groups.GroupToPages(firstGroup).First : 0;
+        var lastPage = hasWindow ? _groups.GroupToPages(lastGroup).Last : -1;
+
+        if (hasWindow)
         {
-            for (var i = first; i <= last; i++) StartRender(Pages[i]);
+            for (var i = firstPage; i <= lastPage; i++) StartRender(Pages[i]);
         }
 
         // 视口外页释放：丢本侧位图引用 + 取消在途标记（缺口②适配，LRU 挂点见 PageReleased）
-        var wantedCount = last - first + 1;
-        if (wantedCount < Pages.Count)
+        if (lastPage - firstPage + 1 < Pages.Count)
         {
             foreach (var page in Pages)
             {
-                if (page.Index >= first && page.Index <= last) continue;
+                if (page.Index >= firstPage && page.Index <= lastPage) continue;
                 ReleasePage(page);
             }
         }
 
-        var current = PageLayoutCalculator.CurrentPageByMaxOverlap(_offsets, _heights, scrollTop, _viewportHeight);
-        if (current >= 0 && current + 1 != CurrentPageNumber) CurrentPageNumber = current + 1;
+        // 当前页 = 当前对页组首屏页（M8：经 group→page 映射；并列取靠前组）。
+        var currentGroup = PageLayoutCalculator.CurrentGroupByMaxOverlap(_groupOffsets, _groupHeights, scrollTop, _viewportHeight);
+        if (currentGroup >= 0)
+        {
+            var currentPage = _groups.GroupToPages(currentGroup).First;
+            if (currentPage + 1 != CurrentPageNumber) CurrentPageNumber = currentPage + 1;
+        }
     }
 
     private void ReleasePage(ReaderPageItemViewModel page)
@@ -703,11 +871,11 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         if (!_hasLayout || Math.Abs(value - _appliedZoom) < PageLayoutCalculator.Epsilon) return;
 
         // 保留视口中心锚点，重建布局后请求滚动到对应位置
-        var oldOffsets = _offsets;
-        var oldHeights = _heights;
+        var oldOffsets = _groupOffsets;
+        var oldHeights = _groupHeights;
         RebuildLayout(value);
 
-        var target = PageLayoutCalculator.ZoomAnchorScroll(oldOffsets, oldHeights, _scrollTop, _viewportHeight, _offsets, _heights);
+        var target = PageLayoutCalculator.ZoomAnchorScroll(oldOffsets, oldHeights, _scrollTop, _viewportHeight, _groupOffsets, _groupHeights);
         UpdateViewportCore(target); // 立即按新布局发起渲染（不等视图回传）
         ScrollRequested?.Invoke(this, new ReaderScrollRequestEventArgs(target));
     }
@@ -715,16 +883,48 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private void RebuildLayout(double zoomPercent)
     {
         _appliedZoom = zoomPercent;
-        _offsets = PageLayoutCalculator.ComputePageOffsets(_pageSizes, zoomPercent);
-        _heights = PageLayoutCalculator.ComputePageHeights(_pageSizes, zoomPercent);
+        _groupOffsets = PageLayoutCalculator.ComputeGroupOffsets(_pageSizes, zoomPercent, _groups);
+        _groupHeights = PageLayoutCalculator.ComputeGroupHeights(_pageSizes, zoomPercent, _groups);
         var scale = zoomPercent / 100.0 * PageLayoutCalculator.DpiScale;
         for (var i = 0; i < Pages.Count && i < _pageSizes.Count; i++)
         {
             Pages[i].DisplayWidth = _pageSizes[i].Width * scale;
             Pages[i].DisplayHeight = _pageSizes[i].Height * scale;
+            // M8：页在组内水平偏移（单页模式恒 0；对开右侧页 = 左页显示宽 + 页间距）。
+            Pages[i].OffsetX = PageLayoutCalculator.PageXWithinGroup(i, _pageSizes, zoomPercent, _groups);
+            Pages[i].OffsetY = 0;
             // 缩放变更：搜索高亮与批注叠加层按新显示尺寸重算（源矩形为 pt，不随缩放变化）
             if (Pages[i].HasSearchRects) Pages[i].RebuildHighlights();
             if (Pages[i].HasAnnotationRecords) Pages[i].RebuildAnnotations();
+        }
+
+        if (_groups.GroupCount > 0)
+        {
+            var widths = PageLayoutCalculator.ComputeGroupWidths(_pageSizes, zoomPercent, _groups);
+            for (var g = 0; g < Groups.Count && g < widths.Length; g++)
+            {
+                Groups[g].DisplayWidth = widths[g];
+                Groups[g].DisplayHeight = _groupHeights[g];
+            }
+        }
+    }
+
+    /// <summary>
+    /// 按当前对开开关构建对页组（文档打开 / 切换对开时调用）：单页模式 group == page（恒等映射）；
+    /// 对开模式按 <see cref="CoverPageAlone"/> 分组（第 1 页单列，其余每两页一组）。
+    /// </summary>
+    private void BuildGroups()
+    {
+        _groups = _pageSizes.Count > 0 && _spreadEnabled
+            ? PageGroupMap.Spread(_pageSizes.Count, CoverPageAlone)
+            : PageGroupMap.Single(_pageSizes.Count);
+        Groups.Clear();
+        for (var g = 0; g < _groups.GroupCount; g++)
+        {
+            var (first, last) = _groups.GroupToPages(g);
+            var pages = new List<ReaderPageItemViewModel>(Math.Max(0, last - first + 1));
+            for (var p = first; p <= last && p < Pages.Count; p++) pages.Add(Pages[p]);
+            Groups.Add(new ReaderSpreadGroupViewModel(g, pages));
         }
     }
 
@@ -757,28 +957,25 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private void FitWidth()
     {
         if (!_hasLayout || _viewportWidth <= 0) return;
-        var maxPageWidth = 0.0;
-        foreach (var p in _pageSizes) maxPageWidth = Math.Max(maxPageWidth, p.Width);
+        // M8：对开按「对页组宽」适配——扣减组内页间距；单页模式与既有语义一致（extra = 0）。
+        var maxGroupWidthPt = PageLayoutCalculator.MaxGroupContentWidthPt(_pageSizes, _groups);
+        var extra = _spreadEnabled && PageLayoutCalculator.HasMultiPageGroup(_groups) ? PageLayoutCalculator.PageGap : 0;
         IsFitPageActive = false;
         IsFitWidthActive = true;
-        ZoomPercent = PageLayoutCalculator.FitWidthZoomPercent(_viewportWidth, maxPageWidth);
+        ZoomPercent = PageLayoutCalculator.FitWidthZoomPercent(_viewportWidth, maxGroupWidthPt, extra);
     }
 
-    /// <summary>适配页面（FR-06 动态档）：宽高取更紧约束。</summary>
+    /// <summary>适配页面（FR-06 动态档）：宽高取更紧约束；对开按对页组宽高（M8）。</summary>
     [RelayCommand]
     private void FitPage()
     {
         if (!_hasLayout || _viewportWidth <= 0 || _viewportHeight <= 0) return;
-        var maxPageWidth = 0.0;
-        var maxPageHeight = 0.0;
-        foreach (var p in _pageSizes)
-        {
-            maxPageWidth = Math.Max(maxPageWidth, p.Width);
-            maxPageHeight = Math.Max(maxPageHeight, p.Height);
-        }
+        var maxGroupWidthPt = PageLayoutCalculator.MaxGroupContentWidthPt(_pageSizes, _groups);
+        var maxGroupHeightPt = PageLayoutCalculator.MaxGroupContentHeightPt(_pageSizes, _groups);
+        var extra = _spreadEnabled && PageLayoutCalculator.HasMultiPageGroup(_groups) ? PageLayoutCalculator.PageGap : 0;
         IsFitWidthActive = false;
         IsFitPageActive = true;
-        ZoomPercent = PageLayoutCalculator.FitPageZoomPercent(_viewportWidth, _viewportHeight, maxPageWidth, maxPageHeight);
+        ZoomPercent = PageLayoutCalculator.FitPageZoomPercent(_viewportWidth, _viewportHeight, maxGroupWidthPt, maxGroupHeightPt, extra, 0);
     }
 
     private void LeaveFitMode()
@@ -837,7 +1034,10 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     public void GoToPage(int page)
     {
         if (!_hasLayout || page < 1 || page > PageCount) return;
-        var offset = Math.Max(0, _offsets[page - 1]);
+        // M8：经 page→group 映射取目标组顶部偏移（单页恒等）。
+        var group = _groups.PageToGroup(page - 1);
+        if (group < 0) return;
+        var offset = Math.Max(0, _groupOffsets[group]);
         UpdateViewportCore(offset);
         ScrollRequested?.Invoke(this, new ReaderScrollRequestEventArgs(offset));
     }
@@ -1111,6 +1311,51 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         try { _textDoc?.Dispose(); }
         catch (Exception ex) { Trace.WriteLine($"[ReaderViewModel] 关闭文本句柄失败: {ex.Message}"); }
         _textDoc = null;
+    }
+
+    // ------------------------------------------------------------------ group 坐标 ↔ 页局部坐标（V3 T9 / M8）
+
+    /// <summary>
+    /// 组内坐标 → 页索引 + 页局部坐标（纯映射，无副作用）：视图的鼠标/命中/选区在「组元素」上取点后，
+    /// 一律经此换算到页局部（单页模式恒等）。点落在组内页间距/页外返回 false（但 out 仍给出最近页）。
+    /// </summary>
+    public bool TryMapGroupPoint(int groupIndex, double groupX, double groupY,
+        out int pageIndex, out double localX, out double localY)
+    {
+        pageIndex = -1;
+        localX = 0;
+        localY = 0;
+        if (groupIndex < 0 || groupIndex >= Groups.Count) return false;
+
+        var pages = Groups[groupIndex].Pages;
+        if (pages.Count == 0) return false;
+
+        var widths = new double[pages.Count];
+        var heights = new double[pages.Count];
+        for (var i = 0; i < pages.Count; i++)
+        {
+            widths[i] = pages[i].DisplayWidth;
+            heights[i] = pages[i].DisplayHeight;
+        }
+
+        var hit = PageLayoutCalculator.HitPageInGroup(widths, heights, groupX, groupY);
+        if (hit.PageOffset < 0 || hit.PageOffset >= pages.Count) return false;
+
+        pageIndex = pages[hit.PageOffset].Index;
+        localX = hit.LocalX;
+        localY = hit.LocalY;
+        return hit.Inside;
+    }
+
+    /// <summary>
+    /// 批注命中（M8）：在组坐标上做命中测试，内部经 <see cref="TryMapGroupPoint"/> 换算到页局部后
+    /// 走 <see cref="AnnotationHitTester"/>（页内 DIP）。命中返回批注 Id 并 out 页索引；未命中返回 null。
+    /// </summary>
+    public string? HitTestAnnotationAt(int groupIndex, double groupX, double groupY, out int pageIndex)
+    {
+        pageIndex = -1;
+        if (!TryMapGroupPoint(groupIndex, groupX, groupY, out pageIndex, out var localX, out var localY)) return null;
+        return AnnotationHitTester.HitTest(Pages[pageIndex].Annotations, localX, localY);
     }
 
     // ------------------------------------------------------------------ 释放
