@@ -506,7 +506,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var runtime = _configProvider.Get()!;
+        var runtime = _configProvider.Get();
+        if (runtime is null)
+        {
+            StatusMessage = "翻译服务尚未配置或同意已撤销，请重新配置后重试。";
+            return;
+        }
+
         var options = BuildEngineOptions(runtime);
 
         using var cts = new CancellationTokenSource();
@@ -564,7 +570,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var runtime = _configProvider.Get()!;
+        var runtime = _configProvider.Get();
+        if (runtime is null)
+        {
+            StatusMessage = "翻译服务尚未配置或同意已撤销，请重新配置后重试。";
+            return;
+        }
+
         var options = BuildEngineOptions(runtime);
 
         using var cts = new CancellationTokenSource();
