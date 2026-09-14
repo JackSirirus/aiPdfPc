@@ -4,6 +4,8 @@
 //   - 卡片状态机：Loading → Done / Error（选中后点击「译」才进入 Loading，绝不选中即译）；
 //   - 卡片堆叠上限 20（新卡置顶，超限丢弃最旧）；
 //   - 无文本层态（F1b）：本页无可选文字时显式进入该态并隐藏卡片，不会静默无反应。
+using AIPDF.Windows.Rendering;
+
 namespace AIPDF.Windows.ViewModels.Translation;
 
 /// <summary>划词卡片状态。</summary>
@@ -78,7 +80,8 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
         string targetLang,
         string templateCode,
         string engineLabel,
-        int pageIndex = -1)
+        int pageIndex = -1,
+        PdfRect rect = default)
     {
         SourceText = sourceText ?? "";
         SourceLang = sourceLang ?? "";
@@ -86,6 +89,7 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
         TemplateCode = templateCode ?? "";
         EngineLabel = engineLabel ?? "";
         PageIndex = pageIndex;
+        Rect = rect;
         SourceMeta = $"{TranslationLabels.Language(SourceLang)} · {TranslationLabels.CountWords(SourceText)} 字";
         RouteLabel =
             $"{TranslationLabels.Template(TemplateCode)} · " +
@@ -109,6 +113,9 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
 
     /// <summary>选区所在页（0 起；未知为 -1）。用于「替换标注」定位。</summary>
     public int PageIndex { get; }
+
+    /// <summary>选区包围盒（PDF 点、左上原点；未知为 default）。「替换标注」写入 sidecar 时作为坐标。</summary>
+    public PdfRect Rect { get; }
 
     /// <summary>原文标题右侧元信息（语言 · 字数）。</summary>
     public string SourceMeta { get; }
@@ -238,10 +245,10 @@ public sealed class SelectionTranslationPanelViewModel : System.ComponentModel.I
     /// <summary>新增一张卡片（置顶）；超过 <see cref="MaxCards"/> 时丢弃最旧一张。</summary>
     public SelectionTranslationCardViewModel AddCard(
         string sourceText, string sourceLang, string targetLang, string templateCode, string engineLabel,
-        int pageIndex = -1)
+        int pageIndex = -1, PdfRect rect = default)
     {
         var card = new SelectionTranslationCardViewModel(
-            sourceText, sourceLang, targetLang, templateCode, engineLabel, pageIndex);
+            sourceText, sourceLang, targetLang, templateCode, engineLabel, pageIndex, rect);
         Cards.Insert(0, card);
         while (Cards.Count > MaxCards)
         {

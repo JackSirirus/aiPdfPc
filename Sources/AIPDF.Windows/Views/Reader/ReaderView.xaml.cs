@@ -417,8 +417,10 @@ public partial class ReaderView : UserControl
         }
 
         var pageIndex = _selectionPageIndex;
+        // T19：在清空选区前捕获包围盒（PDF 点），供「替换标注」写入 sidecar 后按页叠加显示。
+        var selectionRect = _selectionPtRects.Count > 0 ? AnnotationGeometry.Union(_selectionPtRects) : default;
         CloseAllAndClear();
-        TranslateSelectionRequested?.Invoke(this, new SelectionTranslationEventArgs(trimmed, pageIndex));
+        TranslateSelectionRequested?.Invoke(this, new SelectionTranslationEventArgs(trimmed, pageIndex, selectionRect));
     }
 
     private void OnHighlightClick(object sender, RoutedEventArgs e)

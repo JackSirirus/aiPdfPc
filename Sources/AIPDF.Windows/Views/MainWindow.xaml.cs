@@ -534,6 +534,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         if (e.PropertyName is nameof(TabHostViewModel.HasTabs) or nameof(TabHostViewModel.SelectedTab))
         {
             UpdateTabAreaState();
+            SyncSidecarActiveTab(); // T19：切换标签同步 sidecar 作用域与叠加投影
         }
     }
 
@@ -641,8 +642,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge(),
             _translationConfig);
 
-    /// <summary>替换标注 sidecar 存储（T19 接入前为明确「尚未接入」的占位）。</summary>
-    private ISelectionSidecarStore _selectionSidecar = new NullSelectionSidecarStore();
+    /// <summary>替换标注 sidecar 存储（T19 真实实现：源目录隐藏文件 + %TEMP% 回退；仅会话内有效）。</summary>
+    private ISelectionSidecarStore _selectionSidecar = new SelectionSidecarStore();
 
     // ---- v1.1 T15 整篇翻译 ----
 
@@ -815,11 +816,40 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     // ---- v1.1 T14 划词翻译（浮出「译」→「划词」Tab 卡片；F1b 无文本层态） ----
 
-    /// <summary>替换标注 sidecar 存储的可注入入口（T19 接入真实实现）。</summary>
+    /// <summary>替换标注 sidecar 存储的可注入入口（T19 真实实现；测试可替换桩）。</summary>
     internal ISelectionSidecarStore SelectionSidecarStore
     {
         get => _selectionSidecar;
         set => _selectionSidecar = value ?? new NullSelectionSidecarStore();
+    }
+
+    /// <summary>
+    /// T19：把 sidecar 作用域切到指定文档，并把会话内已有替换标注投影到该阅读视图
+    /// （仅会话内存 + 叠加显示，不自动加载旧文件、不改源 PDF）。
+    /// </summary>
+    private void SyncSidecarForDocument(string documentPath, ReaderViewModel vm)
+    {
+        _selectionSidecar.ActiveDocument = documentPath;
+        if (vm.HasDocument)
+        {
+            vm.SetTranslationAnnotations(_selectionSidecar.GetAll());
+        }
+    }
+
+    /// <summary>
+    /// T19：标签切换时把 sidecar 作用域切到当前活动文档并把会话内标注投影到其阅读视图；
+    /// 切到非文档标签（含零标签）时作用域置空，避免把标注写到上一个文档。
+    /// </summary>
+    private void SyncSidecarActiveTab()
+    {
+        var path = ActiveDocumentPath();
+        _selectionSidecar.ActiveDocument = path;
+
+        var reader = ActiveReaderState()?.ViewModel;
+        if (path is not null && reader is { HasDocument: true })
+        {
+            reader.SetTranslationAnnotations(_selectionSidecar.GetAll());
+        }
     }
 
     /// <summary>确保翻译右栏可见并把「划词」Tab 置为当前（覆盖/折叠态自动唤出）。</summary>
@@ -862,7 +892,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         var config = _translationConfig.Get();
         var engineLabel = config is null ? "未配置" : (IsCloudProvider(config.Provider) ? "云端" : "本地");
-        var card = _selectionTranslation.AddCard(e.Text, "auto", "zh", "generic", engineLabel, e.PageIndex);
+        var card = _selectionTranslation.AddCard(e.Text, "auto", "zh", "generic", engineLabel, e.PageIndex, e.Rect);
         _ = RunSelectionTranslationAsync(card);
         SetStatus($"正在翻译选中文字（{e.Text.Length} 字）");
     }
@@ -913,7 +943,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
                 break;
 
             case SelectionTranslationCardAction.ReplaceAnnotation:
-                await SaveCardSidecarAsync(card);
+                SaveCardSidecar(card);
                 break;
 
             case SelectionTranslationCardAction.AddGlossary:
@@ -941,8 +971,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
     }
 
-    /// <summary>「替换标注」：只经 <see cref="ISelectionSidecarStore"/> 抽象（T19 落地；绝不写回源 PDF）。</summary>
-    private async Task SaveCardSidecarAsync(SelectionTranslationCardViewModel card)
+    /// <summary>
+    /// 「替换标注」：把译文写入会话内 sidecar（T19 真实落盘；绝不写回源 PDF），随后把当前文档的
+    /// sidecar 内容投影到阅读视图叠加层。
+    /// </summary>
+    private void SaveCardSidecar(SelectionTranslationCardViewModel card)
     {
         if (string.IsNullOrEmpty(card.Translation))
         {
@@ -955,9 +988,15 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return;
         }
 
-        var entry = new SelectionSidecarEntry(
-            path, card.PageIndex, card.SourceText, card.Translation, card.SourceLang, card.TargetLang);
-        var result = await _selectionSidecar.SaveAsync(entry);
+        _selectionSidecar.ActiveDocument = path;
+        var langPair = $"{TranslationLabels.Language(card.SourceLang)}→{TranslationLabels.Language(card.TargetLang)}";
+        var result = _selectionSidecar.Add(card.PageIndex, card.Rect, card.Translation, langPair);
+        if (result.Ok)
+        {
+            // 写入成功后按 sidecar 会话内容重投影当前文档叠加层（只读叠加，不改源 PDF）。
+            ActiveReaderState()?.ViewModel.SetTranslationAnnotations(_selectionSidecar.GetAll());
+        }
+
         SetStatus(result.Message);
     }
 
@@ -1346,6 +1385,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         var tab = TabHost.OpenDocument(fullPath, () => view);
         RegisterReaderTab(tab, vm, fullPath);
+        SyncSidecarForDocument(fullPath, vm); // T19：sidecar 作用域切到本文档并投影会话内替换标注
 
         if (DataContext is ViewModels.MainViewModel main)
         {
@@ -1716,6 +1756,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>标签关闭后的清理：反订阅并释放阅读实例、解除搜索索引、注销保存会话、清理面板/书签句柄。</summary>
     private void OnTabClosed(DocumentTabViewModel tab)
     {
+        // T19：关闭文档标签清除该文档的会话内替换标注并删除其落盘 sidecar（仅会话有效，不跨会话）。
+        if (tab.Kind == TabKind.Document && tab.FilePath is { } closedPath)
+        {
+            _selectionSidecar.ClearFor(closedPath);
+        }
+
         if (_readerTabs.Remove(tab.TabId, out var reader))
         {
             // T5：关闭标签时批量写阅读状态（页码/缩放/面板/书签）+ 同步最近卡片镜像（FR-24）
@@ -2584,6 +2630,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         // T9（PRD 4.4.3）：进程退出即清除驻留密码；会话/状态文件从不含密码，此处只清内存。
         _credentials.ClearAll();
+
+        // T19：替换标注仅会话内有效——退出时清空并删除全部落盘 sidecar（下次打开不自动加载）。
+        _selectionSidecar.Clear();
     }
 
     // ------------------------------------------------------------ T6 会话恢复（启动恢复 / 退出保存）

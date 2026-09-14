@@ -4,6 +4,7 @@
 // 引擎失败透传原因 / sidecar 占位不假装成功。
 using System.Text.Json;
 using AIPDF.Windows.Bridge;
+using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Services;
 using Xunit;
 
@@ -110,14 +111,14 @@ public class SelectionTranslationServiceTests
     }
 
     [Fact]
-    public async Task NullSidecarStore_ReportsNotWired_WithoutThrowing()
+    public void NullSidecarStore_ReportsNotWired_WithoutThrowing()
     {
-        var store = new NullSelectionSidecarStore();
+        var store = new NullSelectionSidecarStore { ActiveDocument = "a.pdf" };
 
-        var result = await store.SaveAsync(
-            new SelectionSidecarEntry("a.pdf", 0, "Hello", "你好", "en", "zh"));
+        var result = store.Add(0, new PdfRect(1, 2, 3, 4), "你好", "en→zh");
 
         Assert.False(result.Ok);
         Assert.Contains("尚未接入", result.Message);
+        Assert.Empty(store.GetAll());
     }
 }

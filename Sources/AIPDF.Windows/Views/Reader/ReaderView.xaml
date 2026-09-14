@@ -475,6 +475,45 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <!-- v1.1 T19 替换标注叠加层：划词译文 sidecar 的只读投影，独立于批注层
+                                     （不进批注保存管线、绝不写回源 PDF）。Canvas 绝对定位 DIP 矩形，
+                                     IsHitTestVisible=False 保证滚动/选中/缩放事件穿透；配色走 A+C Brush.* token。 -->
+                                <ItemsControl ItemsSource="{Binding TranslationOverlays}"
+                                              IsHitTestVisible="False"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Width="{Binding DisplayWidth}"
+                                              Height="{Binding DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border MinWidth="{Binding Width}"
+                                                    MaxWidth="280"
+                                                    Background="{DynamicResource Brush.AccentSoft}"
+                                                    BorderBrush="{DynamicResource Brush.Accent}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="3"
+                                                    Padding="4,2"
+                                                    IsHitTestVisible="False"
+                                                    ToolTip="{Binding LangPair}">
+                                                <TextBlock Text="{Binding Text}"
+                                                           FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{DynamicResource Brush.AccentText}" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <!-- V3 T11（C3）：绘制中的临时预览几何（页局部 DIP；仅拖拽期非空）。
                                      独立于持久批注层，完成后由 code-behind 清空；Canvas 定位到预览包围盒原点。 -->
                                 <Canvas IsHitTestVisible="False">

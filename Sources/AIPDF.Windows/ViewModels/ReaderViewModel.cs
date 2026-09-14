@@ -238,6 +238,67 @@ public partial class ReaderPageItemViewModel : ObservableObject
         if (HasAnnotationRecords && Annotations.Count == 0) RebuildAnnotations();
     }
 
+    // ------------------------------------------------------------------ 替换标注（v1.1 T19 划词译文 sidecar）
+
+    /// <summary>
+    /// 页内替换标注叠加条目（DIP，相对页左上角）。独立于批注 <see cref="Annotations"/>：
+    /// 只读消费 sidecar 译文，不进批注保存管线、绝不写回源 PDF。
+    /// </summary>
+    public ObservableCollection<TranslationOverlay> TranslationOverlays { get; } = [];
+
+    /// <summary>替换标注真源（PDF 点，左上原点）。叠加层为其 DIP 投影；滚出视口只释放投影不丢记录。</summary>
+    private readonly List<SelectionSidecarAnnotation> _translationAnnotations = [];
+
+    /// <summary>本页是否存在替换标注记录（缩放重算触发条件）。</summary>
+    internal bool HasTranslationAnnotations => _translationAnnotations.Count > 0;
+
+    /// <summary>整体替换本页替换标注并重建投影（文档打开 / 切换标签时由宿主调用）。</summary>
+    public void SetTranslationAnnotations(IReadOnlyList<SelectionSidecarAnnotation> annotations)
+    {
+        _translationAnnotations.Clear();
+        if (annotations is not null) _translationAnnotations.AddRange(annotations);
+        RebuildTranslationOverlays();
+    }
+
+    /// <summary>追加一条替换标注并重建投影（写入成功后由宿主调用）。</summary>
+    public void AddTranslationAnnotation(SelectionSidecarAnnotation annotation)
+    {
+        ArgumentNullException.ThrowIfNull(annotation);
+        _translationAnnotations.Add(annotation);
+        RebuildTranslationOverlays();
+    }
+
+    /// <summary>清空本页替换标注（关闭文档 / 清除会话）。</summary>
+    internal void ClearTranslationAnnotations()
+    {
+        _translationAnnotations.Clear();
+        if (TranslationOverlays.Count > 0) TranslationOverlays.Clear();
+    }
+
+    /// <summary>按当前 <see cref="DisplayWidth"/> 重算全部替换标注叠加（缩放变更/记录变化）。</summary>
+    internal void RebuildTranslationOverlays()
+    {
+        TranslationOverlays.Clear();
+        if (_translationAnnotations.Count == 0 || WidthPt <= 0) return;
+        foreach (var annotation in _translationAnnotations)
+        {
+            TranslationOverlays.Add(TranslationOverlay.FromAnnotation(annotation, WidthPt, DisplayWidth));
+        }
+    }
+
+    /// <summary>只释放 DIP 投影（页滚出视口）；记录保留，滚回视口经
+    /// <see cref="EnsureTranslationOverlaysProjected"/> 重建，保证虚拟化不丢替换标注。</summary>
+    internal void ReleaseTranslationOverlays()
+    {
+        if (TranslationOverlays.Count > 0) TranslationOverlays.Clear();
+    }
+
+    /// <summary>页重新进入视口时按需重建替换标注投影。</summary>
+    internal void EnsureTranslationOverlaysProjected()
+    {
+        if (HasTranslationAnnotations && TranslationOverlays.Count == 0) RebuildTranslationOverlays();
+    }
+
     partial void OnBitmapChanged(BitmapSource? value) => OnPropertyChanged(nameof(IsRendered));
 }
 
@@ -964,6 +1025,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
         // 页级批注叠加层随页释放（记录保留，滚回视口重建），与搜索高亮层互不影响。
         page.ReleaseAnnotationOverlays();
+        page.ReleaseTranslationOverlays();
 
         if (page.PendingKey is not null)
         {
@@ -985,6 +1047,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
 
         // 页重新进入渲染窗口：若批注投影曾随释放清空，按当前显示尺寸重建（虚拟化不丢批注）
         page.EnsureAnnotationsProjected();
+        page.EnsureTranslationOverlaysProjected();
 
         page.PendingKey = key;
         page.IsRendering = true;
@@ -1071,6 +1134,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             // 缩放变更：搜索高亮与批注叠加层按新显示尺寸重算（源矩形为 pt，不随缩放变化）
             if (Pages[i].HasSearchRects) Pages[i].RebuildHighlights();
             if (Pages[i].HasAnnotationRecords) Pages[i].RebuildAnnotations();
+            if (Pages[i].HasTranslationAnnotations) Pages[i].RebuildTranslationOverlays();
         }
 
         if (_groups.GroupCount > 0)
@@ -1081,6 +1145,43 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
                 Groups[g].DisplayWidth = widths[g];
                 Groups[g].DisplayHeight = _groupHeights[g];
             }
+        }
+    }
+
+    /// <summary>
+    /// 整体替换本阅读实例的替换标注叠加（文档打开 / 切换标签时宿主用 sidecar 会话内容填充）。
+    /// 只填充视图叠加，不改动 source PDF，也不进入批注保存管线。
+    /// </summary>
+    public void SetTranslationAnnotations(IReadOnlyList<SelectionSidecarAnnotation> annotations)
+    {
+        var byPage = new Dictionary<int, List<SelectionSidecarAnnotation>>();
+        if (annotations is not null)
+        {
+            foreach (var annotation in annotations)
+            {
+                if (!byPage.TryGetValue(annotation.PageIndex, out var list))
+                {
+                    list = [];
+                    byPage[annotation.PageIndex] = list;
+                }
+
+                list.Add(annotation);
+            }
+        }
+
+        for (var i = 0; i < Pages.Count; i++)
+        {
+            Pages[i].SetTranslationAnnotations(
+                byPage.TryGetValue(i, out var list) ? list : Array.Empty<SelectionSidecarAnnotation>());
+        }
+    }
+
+    /// <summary>清空全部替换标注叠加（会话结束 / 文档关闭）。</summary>
+    public void ClearTranslationAnnotations()
+    {
+        foreach (var page in Pages)
+        {
+            page.ClearTranslationAnnotations();
         }
     }
 

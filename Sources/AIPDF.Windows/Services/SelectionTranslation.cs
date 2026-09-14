@@ -5,9 +5,10 @@
 //   - 运行时配置（服务商 / 端点 / 模型 / 密钥 / 语言 / 模板）由 ITranslationRuntimeConfigProvider 提供；
 //     本任务不写 AppSettings（归 T13/T17），无配置时返回明确的可读错误，绝不静默或伪造译文；
 //   - 密钥只在本进程内从配置提供者 → EngineBridge options → 子进程 stdin 传递，绝不写入 argv / 环境变量 / 日志 / 文件。
-//   - 「替换标注」只依赖 ISelectionSidecarStore 抽象；真实 sidecar 落盘由 T19 实现。
+//   - 「替换标注」只依赖 ISelectionSidecarStore 抽象；真实 sidecar 落盘由 T19 实现（SelectionSidecarStore.cs）。
 using System.Text.Json;
 using AIPDF.Windows.Bridge;
+using AIPDF.Windows.Rendering;
 
 namespace AIPDF.Windows.Services;
 
@@ -137,32 +138,76 @@ public sealed class EngineSelectionTranslationService : ISelectionTranslationSer
             : null;
 }
 
-/// <summary>一条划词替换标注（写入独立 sidecar，绝不写回源 PDF）。</summary>
-public sealed record SelectionSidecarEntry(
-    string SourcePath,
-    int PageNumber,
-    string SourceText,
+/// <summary>
+/// 一条划词替换标注（仅存在于会话内的独立 sidecar，绝不写回源 PDF）。
+/// 只存 <c>{页码, 坐标, 译文, 语言对, 时间戳}</c>——<b>不存原文全文</b>（设计 §sidecar 标注文件）。
+/// <see cref="PageIndex"/> 为 0 起（与阅读器 / 划词卡片一致）；<see cref="Rect"/> 为 PDF 点、左上原点，与批注同一口径。
+/// </summary>
+public sealed record SelectionSidecarAnnotation(
+    int PageIndex,
+    PdfRect Rect,
     string Translation,
-    string SourceLang,
-    string TargetLang);
+    string LangPair,
+    DateTimeOffset Timestamp);
 
 /// <summary>sidecar 保存结果。</summary>
 public sealed record SelectionSidecarResult(bool Ok, string Message);
 
 /// <summary>
-/// 「替换标注」持久化抽象（T19 实现真实 sidecar：源目录 + FILE_ATTRIBUTE_HIDDEN、只读回退 %TEMP%、
-/// 仅会话内有效）。T14 只把卡片按钮接到本接口，不自行落盘。
+/// 「替换标注」sidecar 抽象。真实实现（T19）：
+/// <list type="bullet">
+///   <item>优先写源目录 <c>.{源文件名}.transl_sidecar.json</c> 并置 <see cref="System.IO.FileAttributes.Hidden"/>；</item>
+///   <item>源目录不可写时回退 <c>%TEMP%\AIPDF-Sidecar\{hash}.json</c>；</item>
+///   <item>仅会话内有效——应用退出 <see cref="Clear"/>，下次打开不自动加载旧 sidecar；</item>
+///   <item>绝不写回源 PDF，绝不缓存原文全文。</item>
+/// </list>
+/// <see cref="ActiveDocument"/> 界定 <see cref="Add"/>/<see cref="Get"/>/<see cref="GetAll"/> 的作用域；
+/// <see cref="ClearFor"/> 按文档路径清理（关闭标签）。
 /// </summary>
 public interface ISelectionSidecarStore
 {
-    /// <summary>保存一条替换标注。实现不得写回源 PDF。</summary>
-    Task<SelectionSidecarResult> SaveAsync(SelectionSidecarEntry entry, CancellationToken cancellationToken = default);
+    /// <summary>当前活动文档（规范化全路径）；无文档为 null。切换标签 / 打开文档时更新。</summary>
+    string? ActiveDocument { get; set; }
+
+    /// <summary>保存一条替换标注（<paramref name="pageNo"/> 0 起）。实现不得写回源 PDF。</summary>
+    SelectionSidecarResult Add(int pageNo, PdfRect rect, string translation, string langPair);
+
+    /// <summary>取当前文档某页的全部替换标注（阅读视图叠加用）。</summary>
+    IReadOnlyList<SelectionSidecarAnnotation> Get(int pageNo);
+
+    /// <summary>取当前文档的全部替换标注（文档打开时投影到阅读视图）。</summary>
+    IReadOnlyList<SelectionSidecarAnnotation> GetAll();
+
+    /// <summary>清空整个会话的所有 sidecar 并删除落盘文件（应用退出）。</summary>
+    void Clear();
+
+    /// <summary>清除指定文档的 sidecar 并删除其落盘文件（关闭标签）。</summary>
+    void ClearFor(string documentPath);
 }
 
-/// <summary>占位实现：T19 接入前明确返回「尚未接入」，不假装成功。</summary>
+/// <summary>占位实现：T19 接入前明确返回「尚未接入」，不假装成功（读操作返回空）。</summary>
 public sealed class NullSelectionSidecarStore : ISelectionSidecarStore
 {
     /// <inheritdoc />
-    public Task<SelectionSidecarResult> SaveAsync(SelectionSidecarEntry entry, CancellationToken cancellationToken = default)
-        => Task.FromResult(new SelectionSidecarResult(false, "替换标注存储尚未接入，稍后版本提供。"));
+    public string? ActiveDocument { get; set; }
+
+    /// <inheritdoc />
+    public SelectionSidecarResult Add(int pageNo, PdfRect rect, string translation, string langPair)
+        => new(false, "替换标注存储尚未接入，稍后版本提供。");
+
+    /// <inheritdoc />
+    public IReadOnlyList<SelectionSidecarAnnotation> Get(int pageNo) => [];
+
+    /// <inheritdoc />
+    public IReadOnlyList<SelectionSidecarAnnotation> GetAll() => [];
+
+    /// <inheritdoc />
+    public void Clear()
+    {
+    }
+
+    /// <inheritdoc />
+    public void ClearFor(string documentPath)
+    {
+    }
 }
