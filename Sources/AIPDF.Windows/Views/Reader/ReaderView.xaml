@@ -609,6 +609,30 @@
                     <Grid>
                         <!-- 主菜单 -->
                         <StackPanel x:Name="SelectionMainPanel" Orientation="Vertical">
+                            <!-- v1.1 T14：划词浮出「译」按钮（仅点击才翻译；≥2 字才可用，见 code-behind） -->
+                            <Button x:Name="TranslateSelectionButton"
+                                    Style="{StaticResource MenuItemButton}"
+                                    Click="OnTranslateSelectionClick"
+                                    ToolTip="{x:Static reader:ReaderStrings.TranslateToolTip}"
+                                    AutomationProperties.Name="{x:Static reader:ReaderStrings.MenuTranslate}">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Border Width="24"
+                                            Height="24"
+                                            CornerRadius="6"
+                                            Background="{DynamicResource Brush.Accent}">
+                                        <TextBlock Text="译"
+                                                   FontSize="13"
+                                                   FontWeight="Bold"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource Brush.OnAccent}" />
+                                    </Border>
+                                    <TextBlock Text="{x:Static reader:ReaderStrings.MenuTranslate}"
+                                               Margin="9,0,0,0"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Separator Margin="4,3" />
                             <Button Style="{StaticResource MenuItemButton}"
                                     Content="{x:Static reader:ReaderStrings.MenuCopy}"
                                     Click="OnCopyClick" />

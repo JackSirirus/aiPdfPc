@@ -13,9 +13,11 @@ using AIPDF.Windows.Search;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
+using AIPDF.Windows.ViewModels.Translation;
 using AIPDF.Windows.Views.Reader;
 using AIPDF.Windows.Views.Reader.Panels;
 using AIPDF.Windows.Views.Settings;
+using AIPDF.Windows.Views.Translation;
 using AIPDF.Windows.Views.Wizard;
 
 namespace AIPDF.Windows.Views;
@@ -79,6 +81,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         // V3 T6：状态栏打印进度区（进度文案 + 取消；DataContext 与窗口主 VM 分离）
         PrintProgressPanel.DataContext = _printProgress;
+
+        // v1.1 T14：划词卡片集合绑定 + 空态/无文本层态可见性随面板模型变化刷新。
+        TranslationCardsList.ItemsSource = _selectionTranslation.Cards;
+        _selectionTranslation.PropertyChanged += (_, _) => UpdateSelectionTranslationVisibility();
+        UpdateSelectionTranslationVisibility();
 
         // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
         QueueToast.MouseLeftButtonDown += OnWizardToastClick;
@@ -594,6 +601,25 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>紧凑模式（覆盖/折叠）下用户是否唤出了右栏；窗口跨越阈值时按模式重置。</summary>
     private bool _translationCompactVisible;
 
+    // ---- v1.1 T14 划词翻译 ----
+
+    /// <summary>「划词」Tab 面板模型：卡片堆叠（≤20）+ 无文本层态；绑定到 TranslationCardsList。</summary>
+    private readonly SelectionTranslationPanelViewModel _selectionTranslation = new();
+
+    /// <summary>划词翻译运行时配置来源（T13/T17 接入设置与凭据前恒为未配置）。</summary>
+    private readonly ITranslationRuntimeConfigProvider _translationConfig = new NullTranslationRuntimeConfigProvider();
+
+    /// <summary>划词翻译执行器（懒建：经 EngineBridge 的 translate_text 轻量 op）。</summary>
+    private ISelectionTranslationService? _selectionTranslationService;
+
+    private ISelectionTranslationService SelectionTranslationService
+        => _selectionTranslationService ??= new EngineSelectionTranslationService(
+            (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge(),
+            _translationConfig);
+
+    /// <summary>替换标注 sidecar 存储（T19 接入前为明确「尚未接入」的占位）。</summary>
+    private ISelectionSidecarStore _selectionSidecar = new NullSelectionSidecarStore();
+
     /// <summary>窗口尺寸变化 → 重算翻译右栏响应式模式（≥680 停靠 / 480–680 覆盖 / &lt;480 折叠）。</summary>
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e) => ApplyTranslationSidebarState();
 
@@ -606,16 +632,16 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
     }
 
-    /// <summary>互换两个占位面板的可见性（T13/T14/T15 将替换为真实内容）。</summary>
+    /// <summary>互换「划词 / 整篇」面板可见性（整篇内容由 T15 填充）。</summary>
     private void ShowTranslationTab(string key)
     {
-        if (TranslationSelectionPlaceholder is null)
+        if (TranslationSelectionHost is null)
         {
             return; // InitializeComponent 期间初始 IsChecked 触发（沿用 ShowReaderPanel 的时序保护）
         }
 
         var selection = string.Equals(key, "selection", StringComparison.Ordinal);
-        TranslationSelectionPlaceholder.Visibility = selection ? Visibility.Visible : Visibility.Collapsed;
+        TranslationSelectionHost.Visibility = selection ? Visibility.Visible : Visibility.Collapsed;
         TranslationFullPlaceholder.Visibility = selection ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -689,6 +715,190 @@ public partial class MainWindow : Window, ISessionRestoreTarget
                 break;
         }
     }
+
+    // ---- v1.1 T14 划词翻译（浮出「译」→「划词」Tab 卡片；F1b 无文本层态） ----
+
+    /// <summary>替换标注 sidecar 存储的可注入入口（T19 接入真实实现）。</summary>
+    internal ISelectionSidecarStore SelectionSidecarStore
+    {
+        get => _selectionSidecar;
+        set => _selectionSidecar = value ?? new NullSelectionSidecarStore();
+    }
+
+    /// <summary>确保翻译右栏可见并把「划词」Tab 置为当前（覆盖/折叠态自动唤出）。</summary>
+    private void EnsureTranslationSidebarVisible()
+    {
+        if (TranslationTabSelection is null)
+        {
+            return;
+        }
+
+        TranslationTabSelection.IsChecked = true; // 触发 OnTranslationTabChecked → ShowTranslationTab
+        if (_translationMode is TranslationSidebarMode.Overlay or TranslationSidebarMode.Collapsed)
+        {
+            _translationCompactVisible = true;
+        }
+
+        ApplyTranslationSidebarState();
+    }
+
+    /// <summary>空态 / 卡片堆叠 / 无文本层态的可见性刷新（随面板模型变化）。</summary>
+    private void UpdateSelectionTranslationVisibility()
+    {
+        if (TranslationSelectionHost is null)
+        {
+            return;
+        }
+
+        var noTextLayer = _selectionTranslation.IsNoTextLayer;
+        var hasCards = _selectionTranslation.HasCards;
+        TranslationNoTextLayerState.Visibility = noTextLayer ? Visibility.Visible : Visibility.Collapsed;
+        TranslationCardsScroll.Visibility = noTextLayer ? Visibility.Collapsed : Visibility.Visible;
+        TranslationEmptyHint.Visibility = !noTextLayer && !hasCards ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>阅读视图点击浮出「译」：唤出右栏「划词」Tab → 建卡片 → 经 translate_text 翻译。</summary>
+    private void OnReaderTranslateSelectionRequested(object? sender, SelectionTranslationEventArgs e)
+    {
+        EnsureTranslationSidebarVisible();
+        ShowTranslationTab("selection");
+
+        var config = _translationConfig.Get();
+        var engineLabel = config is null ? "未配置" : (IsCloudProvider(config.Provider) ? "云端" : "本地");
+        var card = _selectionTranslation.AddCard(e.Text, "auto", "zh", "generic", engineLabel, e.PageIndex);
+        _ = RunSelectionTranslationAsync(card);
+        SetStatus($"正在翻译选中文字（{e.Text.Length} 字）");
+    }
+
+    /// <summary>F1b：无文本层页拖选 → 划词不可用，显式给出替代路径（不做「框选没反应」）。</summary>
+    private void OnReaderNoTextLayerRequested(object? sender, EventArgs e)
+    {
+        EnsureTranslationSidebarVisible();
+        _selectionTranslation.EnterNoTextLayer();
+        ShowTranslationTab("selection");
+        SetStatus("本页无文本层，划词不可用");
+    }
+
+    /// <summary>执行一次划词翻译并回填卡片（失败显示可读原因，绝不静默）。</summary>
+    private async Task RunSelectionTranslationAsync(SelectionTranslationCardViewModel card)
+    {
+        card.BeginLoading();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var request = new SelectionTranslationRequest(
+            card.SourceText, card.SourceLang, card.TargetLang, card.TemplateCode);
+        var result = await SelectionTranslationService.TranslateAsync(request, timeout.Token);
+        if (result.Ok)
+        {
+            card.Complete(result.Translation, result.ElapsedSeconds);
+        }
+        else
+        {
+            card.Fail(result.Error ?? "翻译失败，请稍后重试。");
+        }
+    }
+
+    /// <summary>卡片操作按钮 → 宿主动作（复制 / 替换标注 / 加入术语 / 重译）。</summary>
+    private async void OnTranslationCardActionRequested(object? sender, SelectionTranslationCardAction action)
+    {
+        if (sender is not SelectionTranslationCard { DataContext: SelectionTranslationCardViewModel card })
+        {
+            return;
+        }
+
+        switch (action)
+        {
+            case SelectionTranslationCardAction.Copy:
+                CopyCardTranslation(card);
+                break;
+
+            case SelectionTranslationCardAction.Retranslate:
+                await RunSelectionTranslationAsync(card);
+                break;
+
+            case SelectionTranslationCardAction.ReplaceAnnotation:
+                await SaveCardSidecarAsync(card);
+                break;
+
+            case SelectionTranslationCardAction.AddGlossary:
+                SetStatus("术语表尚未接入，稍后版本提供。");
+                break;
+        }
+    }
+
+    private void CopyCardTranslation(SelectionTranslationCardViewModel card)
+    {
+        if (string.IsNullOrEmpty(card.Translation))
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(card.Translation);
+            SetStatus("已复制译文");
+        }
+        catch (Exception error)
+        {
+            Trace.WriteLine($"[MainWindow] 复制译文失败: {error.Message}");
+            SetStatus("复制失败");
+        }
+    }
+
+    /// <summary>「替换标注」：只经 <see cref="ISelectionSidecarStore"/> 抽象（T19 落地；绝不写回源 PDF）。</summary>
+    private async Task SaveCardSidecarAsync(SelectionTranslationCardViewModel card)
+    {
+        if (string.IsNullOrEmpty(card.Translation))
+        {
+            return;
+        }
+
+        if (ActiveDocumentPath() is not { } path)
+        {
+            SetStatus("未找到当前文档，无法写入替换标注。");
+            return;
+        }
+
+        var entry = new SelectionSidecarEntry(
+            path, card.PageIndex, card.SourceText, card.Translation, card.SourceLang, card.TargetLang);
+        var result = await _selectionSidecar.SaveAsync(entry);
+        SetStatus(result.Message);
+    }
+
+    private void SetStatus(string text)
+    {
+        if (DataContext is MainViewModel main)
+        {
+            main.StatusText = text;
+        }
+    }
+
+    /// <summary>F1b 替代路径一：切到「整篇」Tab（含「先 OCR」说明）。</summary>
+    private void OnNoTextLayerUseFullClick(object sender, RoutedEventArgs e)
+    {
+        if (TranslationTabFull is not null)
+        {
+            TranslationTabFull.IsChecked = true; // 触发 ShowTranslationTab("full")
+        }
+    }
+
+    /// <summary>F1b 替代路径二：打开 OCR 工具页并置顶当前文档（页范围预填当前页）。</summary>
+    private void OnNoTextLayerOcrClick(object sender, RoutedEventArgs e)
+    {
+        var page = ActiveReaderState()?.ViewModel.CurrentPageNumber ?? 1;
+        OnReaderToolLaunchRequested(this, new ToolLaunchRequest
+        {
+            ToolId = "ocr",
+            PinCurrentDocument = true,
+            PrefillPageRange = true,
+            PageStart = page,
+            PageEnd = page,
+        });
+    }
+
+    private static bool IsCloudProvider(string provider)
+        => !string.IsNullOrWhiteSpace(provider)
+           && !provider.Contains("local", StringComparison.OrdinalIgnoreCase)
+           && !provider.Contains("本地", StringComparison.Ordinal);
 
     // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
 
@@ -1021,6 +1231,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // T2：浮菜单「用工具处理」接线（可用性探测 + 置顶/页范围预填交回宿主）
         view.ToolAvailabilityProvider = ToolAvailabilityProbe.Check;
         view.ToolLaunchRequested += OnReaderToolLaunchRequested;
+
+        // v1.1 T14：划词「译」浮出按钮 + F1b 无文本层态接线（仅点击「译」才发起翻译）。
+        view.TranslateSelectionRequested += OnReaderTranslateSelectionRequested;
+        view.SelectionNoTextLayerRequested += OnReaderNoTextLayerRequested;
 
         // V4 Option 3：锁定标签的解锁 / 重锁由宿主统一处理（密码框 + 凭据 + 释放 + 打印门禁刷新）。
         view.UnlockRequested += (_, _) => RequestUnlock(fullPath, vm);

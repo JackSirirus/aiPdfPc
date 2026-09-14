@@ -42,8 +42,7 @@ public static class ReaderStrings
     public const string LockedSearchBlocked = "文档已锁定，请先解锁后再使用搜索。";
 
     // ---- T2 选中浮菜单 / 悬停操作 / 笔记 ----
-    public const string MenuCopy = "复制";
-    public const string MenuHighlight = "高亮";
+    public const string MenuCopy = "复制";    public const string MenuHighlight = "高亮";
     public const string MenuNote = "笔记";
     public const string MenuTools = "用工具处理 ▾";
     public const string MenuMoreTools = "更多工具…";
@@ -60,6 +59,13 @@ public static class ReaderStrings
     public const string HighlightApplied = "已高亮";
     public const string AnnotationDeleted = "已删除批注";
     public const string ToolUnavailable = "不可用";
+
+    // ---- v1.1 T14 划词翻译（浮出「译」按钮 + F1b 无文本层态） ----
+    public const string MenuTranslate = "翻译选中文字";
+    public const string TranslateToolTip = "翻译选中文字（点击才发送，不自动翻译）";
+    public const string TranslateTooShort = "请先选中至少 2 个字";
+    public const string NoTextLayerTitle = "本页无文本层";
+    public const string NoTextLayerHint = "此页是扫描图片，没有可选文字，划词翻译不可用。可改用整篇翻译（先 OCR 该页），或先对本页 OCR。";
 
     // ---- V3 T11（C3）手写/形状绘制工具栏 ----
     public const string DrawToolbarToolTip = "开启后在页面上拖拽绘制手写或形状；关闭后恢复文字选中";

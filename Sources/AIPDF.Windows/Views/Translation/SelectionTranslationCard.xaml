@@ -1,0 +1,158 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<!-- v1.1 T14 划词结果卡片（设计稿 F1）：原文 / 路由（模板·语言对·引擎）/ 译文 / 操作（复制·替换标注·加入术语·重译）。
+     DataContext = SelectionTranslationCardViewModel；操作按钮只发 ActionRequested 事件，由宿主（MainWindow）执行。
+     配色全部走 A+C Brush.* token（DynamicResource），不新增 token、不硬编码颜色。 -->
+<UserControl x:Class="AIPDF.Windows.Views.Translation.SelectionTranslationCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels.Translation"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:SelectionTranslationCardViewModel}"
+             d:DesignWidth="300">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <Style x:Key="CardSectionLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CardMeta" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="CardBody" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="LineHeight" Value="20" />
+        </Style>
+
+        <Style x:Key="CardActionButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="11,5" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="MinWidth" Value="0" />
+        </Style>
+    </UserControl.Resources>
+
+    <Border Background="{DynamicResource Brush.Window}"
+            BorderBrush="{DynamicResource Brush.Border}"
+            BorderThickness="1"
+            CornerRadius="9"
+            Padding="12,11">
+        <StackPanel>
+            <!-- 原文 -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="原文" Style="{StaticResource CardSectionLabel}" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding SourceMeta}"
+                           Style="{StaticResource CardMeta}"
+                           HorizontalAlignment="Right" />
+            </Grid>
+            <TextBlock Margin="0,5,0,0"
+                       Text="{Binding SourceText}"
+                       Style="{StaticResource CardBody}" />
+
+            <!-- 路由行：模板 · 语言对 · 引擎 -->
+            <Grid Margin="0,9">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0"
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource Brush.Border}" />
+                <TextBlock Grid.Column="1"
+                           Margin="7,0"
+                           Text="{Binding RouteLabel}"
+                           Style="{StaticResource CardMeta}" />
+                <Border Grid.Column="2"
+                        Height="1"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource Brush.Border}" />
+            </Grid>
+
+            <!-- 译文 -->
+            <Border BorderBrush="{DynamicResource Brush.Border}"
+                    BorderThickness="0,0,0,1"
+                    Padding="0,0,0,9"
+                    Margin="0,0,0,9">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="译文" Style="{StaticResource CardSectionLabel}" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ElapsedLabel}"
+                                   Style="{StaticResource CardMeta}"
+                                   HorizontalAlignment="Right" />
+                    </Grid>
+
+                    <TextBlock Margin="0,5,0,0"
+                               Text="{Binding Translation}"
+                               Style="{StaticResource CardBody}"
+                               Visibility="{Binding IsDone, Converter={StaticResource BoolToVisibility}}" />
+
+                    <TextBlock Margin="0,5,0,0"
+                               Text="翻译中…"
+                               Style="{StaticResource CardBody}"
+                               Foreground="{DynamicResource Brush.AccentText}"
+                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+
+                    <TextBlock Margin="0,5,0,0"
+                               Text="{Binding ErrorMessage}"
+                               Style="{StaticResource CardBody}"
+                               Foreground="{DynamicResource Brush.Error}"
+                               Visibility="{Binding IsError, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </Border>
+
+            <!-- 操作 -->
+            <TextBlock Text="操作" Style="{StaticResource CardSectionLabel}" />
+            <WrapPanel Margin="0,6,0,0">
+                <Button Style="{StaticResource CardActionButton}"
+                        Content="复制"
+                        Tag="Copy"
+                        IsEnabled="{Binding IsDone}"
+                        Click="OnActionButtonClick" />
+                <Button Style="{StaticResource CardActionButton}"
+                        Content="替换标注"
+                        Tag="ReplaceAnnotation"
+                        IsEnabled="{Binding IsDone}"
+                        Click="OnActionButtonClick" />
+                <Button Style="{StaticResource CardActionButton}"
+                        Content="加入术语"
+                        Tag="AddGlossary"
+                        IsEnabled="{Binding IsDone}"
+                        Click="OnActionButtonClick" />
+                <Button Style="{StaticResource CardActionButton}"
+                        Content="重译"
+                        Tag="Retranslate"
+                        IsEnabled="{Binding IsRetranslatable}"
+                        Click="OnActionButtonClick" />
+            </WrapPanel>
+
+            <TextBlock Text="源文件只读 · 译文写入 sidecar（不写回原 PDF） · 选中文本按需发送，不缓存正文"
+                       Style="{StaticResource CardMeta}"
+                       TextWrapping="Wrap"
+                       Margin="0,2,0,0" />
+        </StackPanel>
+    </Border>
+</UserControl>

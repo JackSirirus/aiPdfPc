@@ -969,6 +969,71 @@ def translate_request(request):
         raise UserError(f"{str(error) if isinstance(error, UserError) else '翻译失败，请检查文件格式、网络与配置。'}\n本次输出目录：{out}") from error
 
 
+# --- V1.1 划词（选中即译）轻量翻译 op -----------------------------------------
+# 与整篇 translate 共用 prompt/llm/verify，但不落任务目录、不产出 PDF：只把一段
+# 选中文本翻回一个字符串。它同样在 BY_ID 之前处理，自校验证（T14 划词卡片）。
+_TRANSLATE_TEXT_LIMIT = 20000  # 单次划词字符上限，远低于桥接单行 1MB
+
+
+def translate_text_request(request):
+    """划词翻译 dispatch：返回 `{ok, translation, degraded?, elapsed}`（不产出文件）。"""
+    from translate import glossary as glossary_module
+    from translate import llm, prompt, verify
+
+    options = request.get("options", {}) or {}
+    text = str(options.get("text", "") or "")
+    if not text.strip():
+        raise UserError("请先选中要翻译的文字。")
+    if len(text) > _TRANSLATE_TEXT_LIMIT:
+        raise UserError(f"选中文字过长（超过 {_TRANSLATE_TEXT_LIMIT} 字符），请改用整篇翻译。")
+    endpoint = str(options.get("endpoint", "") or "").strip()
+    model = str(options.get("model", "") or "").strip()
+    api_key = str(options.get("apiKey", "") or "")
+    if not endpoint:
+        raise UserError("请先配置翻译服务端点。")
+    if not model:
+        raise UserError("请先配置翻译模型。")
+    if not api_key:
+        raise UserError("请先配置翻译服务 API Key。")
+    template_name = str(options.get("template") or "generic")
+    if template_name not in prompt.PRESET_TEMPLATES:
+        raise UserError(f"未知的翻译模板：{template_name}。")
+    source_lang = str(options.get("sourceLang") or "auto")
+    target_lang = str(options.get("targetLang") or "zh")
+    glossary_entries = None
+    glossary_path = str(options.get("glossary", "") or "").strip()
+    if glossary_path:
+        try:
+            glossary_entries = glossary_module.load_glossary(glossary_path)
+        except glossary_module.GlossaryError as error:
+            raise UserError(str(error)) from error
+    cap = str(options.get("maxTokens", "") or "").strip()
+    try:
+        cost_cap = int(cap) if cap else None
+    except ValueError:
+        raise UserError("单任务 token 上限必须是整数。")
+
+    started = time.monotonic()
+    try:
+        client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
+        pair = prompt.build_prompt([text], template_name=template_name,
+                                   glossary=glossary_entries)[0]
+        report = verify.DegradationReport(task_id=uuid.uuid4().hex[:12], total_pages=1)
+        translated = _translate_one_segment(client, pair, text, 1, report,
+                                            source_lang, target_lang)
+    except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
+            llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
+        raise UserError(str(error)) from error
+    except llm.LLMError as error:
+        raise UserError(str(error)) from error
+
+    payload = report.to_dict()
+    return {"ok": True, "translation": translated,
+            "degraded": not bool(translated),
+            "reasons": payload.get("pages", [{}])[0].get("reasons", []) if payload.get("pages") else [],
+            "elapsed": round(time.monotonic() - started, 2)}
+
+
 def _bridge_module():
     """延迟导入 translate.bridge（仅在翻译分支需要，避免普通工具加载翻译栈）。"""
     from translate import bridge
@@ -1600,6 +1665,8 @@ def dispatch(request):
     # 翻译产出新任务目录且密钥只经 stdin 传入；它在 BY_ID 之前处理，自建
     # 文件/扩展名/输出目录/配置等价校验，与批注保存同属专用 dispatch。
     if operation=="translate": return translate_request(request)
+    # 划词（选中即译）轻量 op：无文件、无输出目录，只翻一段文本回一个字符串。
+    if operation=="translate_text": return translate_text_request(request)
     # 批注保存就地写回原文件，无输出目录且非 catalog 工具，必须在 BY_ID/outputDir
     # 校验之前处理；其内部自建 file/扩展名/multiple 等价校验（M-1）。
     if operation in ANNOTATION_OPERATIONS: return save_annotations_request(request,operation)

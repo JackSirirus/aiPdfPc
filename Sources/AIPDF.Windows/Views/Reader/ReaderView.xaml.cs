@@ -49,6 +49,9 @@ public partial class ReaderView : UserControl
     private int _selectionEndChar = -1;
     private IReadOnlyList<PdfRect> _selectionPtRects = [];
 
+    /// <summary>v1.1 T14：选区文本快照（点击浮层「译」/「复制」时使用；关闭选区即清空）。</summary>
+    private string _selectedText = "";
+
     /// <summary>当前弹层定位锚（页容器 + 页内 DIP 矩形）。</summary>
     private FrameworkElement? _anchorElement;
     private (double L, double T, double W, double H) _anchorPageRectDip;
@@ -119,6 +122,18 @@ public partial class ReaderView : UserControl
 
     /// <summary>「用工具处理」发起：宿主经既有 ToolChannels/ShowToolPage 打开并做置顶/页范围预填。</summary>
     public event EventHandler<ToolLaunchRequest>? ToolLaunchRequested;
+
+    /// <summary>
+    /// v1.1 T14：用户点击浮出「译」按钮（仅点击才触发，绝不选中即译）。
+    /// 宿主负责确保右栏可见、切到「划词」Tab 并执行翻译。
+    /// </summary>
+    public event EventHandler<SelectionTranslationEventArgs>? TranslateSelectionRequested;
+
+    /// <summary>
+    /// v1.1 T14（F1b）：在无文本层页拖选 → 划词不可用。宿主让右栏「划词」Tab 显示替代路径
+    /// （用整篇翻译 / 仅本页 OCR），不做「框选没反应」。
+    /// </summary>
+    public event EventHandler? SelectionNoTextLayerRequested;
 
     /// <summary>
     /// V4 Option 3：锁定标签「解锁」请求。宿主负责弹出既有【ST-04】密码框、把密码驻留
@@ -289,7 +304,9 @@ public partial class ReaderView : UserControl
 
         if (result.Gate == SelectionGate.DisabledNoTextLayer)
         {
-            // ST-23：无文本层页保留拖选矩形，但不弹菜单
+            // ST-23：无文本层页保留拖选矩形，但不弹菜单；
+            // v1.1 T14（F1b）：同时通知宿主让「划词」Tab 显示替代路径，不做「框选没反应」。
+            SelectionNoTextLayerRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
 
@@ -297,6 +314,9 @@ public partial class ReaderView : UserControl
         {
             _anchorElement = _activeGroupElement;
             _anchorPageRectDip = ComputeSelectionDipUnion(_selectionPtRects);
+            _selectedText = _viewModel.GetSelectionText(_selectionPageIndex, _selectionAnchorChar, _selectionEndChar);
+            // v1.1 T14：仅 ≥2 字可选文字时「译」可用（选到单个字/标点不提供划词）。
+            TranslateSelectionButton.IsEnabled = _selectedText.Trim().Length >= 2;
             _menu.Open();
             // StaysOpen=False 的弹层必须等本次鼠标抬起事件结束后再开，
             // 否则同一次抬起会被当作「点击外部」立即关掉（WPF 陷阱）。
@@ -375,6 +395,30 @@ public partial class ReaderView : UserControl
 
         CloseAllAndClear();
         ShowToast(ReaderStrings.Copied);
+    }
+
+    /// <summary>
+    /// v1.1 T14：点击浮层「译」→ 把选中文本交给宿主翻译（**仅点击才发请求，不选中即译**）；
+    /// 随后收起浮层与选区。少于 2 字不触发（按钮此时已禁用，此处双保险）。
+    /// </summary>
+    private void OnTranslateSelectionClick(object sender, RoutedEventArgs e)
+    {
+        var text = _selectedText;
+        if (string.IsNullOrWhiteSpace(text) && _selectionPageIndex >= 0)
+        {
+            text = _viewModel.GetSelectionText(_selectionPageIndex, _selectionAnchorChar, _selectionEndChar);
+        }
+
+        var trimmed = (text ?? "").Trim();
+        if (trimmed.Length < 2)
+        {
+            ShowToast(ReaderStrings.TranslateTooShort);
+            return;
+        }
+
+        var pageIndex = _selectionPageIndex;
+        CloseAllAndClear();
+        TranslateSelectionRequested?.Invoke(this, new SelectionTranslationEventArgs(trimmed, pageIndex));
     }
 
     private void OnHighlightClick(object sender, RoutedEventArgs e)
@@ -700,6 +744,7 @@ public partial class ReaderView : UserControl
         _selectionAnchorChar = -1;
         _selectionEndChar = -1;
         _selectionPtRects = [];
+        _selectedText = "";
         _selection.Cancel();
     }
 
