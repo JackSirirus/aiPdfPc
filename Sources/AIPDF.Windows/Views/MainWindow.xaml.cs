@@ -90,6 +90,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         HookViewModel();
         UpdateTabAreaState();
 
+        // v1.1 T12：首次布局完成后按真实窗口宽度落定翻译右栏响应式模式。
+        Loaded += (_, _) => ApplyTranslationSidebarState();
+
         // V3 T5：设置默认左栏面板作为「无标签/起始页初始态」（FR-38 项 2；文件标签仍以 reading-state 为准，BA-6）。
         // 下方会话恢复若带全局激活面板，会覆盖本初始值（会话仍是启动恢复的既有真相源）。
         ApplyPanelSelection(SettingsInjection.ResolveDefaultPanelKey(_settingsStore.Load().DefaultPanelKey));
@@ -573,8 +576,118 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // T4：savepill 随激活文档标签刷新（文档 → 显示该文档状态；工具/零标签 → 隐藏）
         UpdateSavePillForActiveTab();
 
+        // v1.1 T12：翻译右栏随标签类型/窗口宽度联动（仅文档标签显示）
+        ApplyTranslationSidebarState();
+
         // V3 T6：标签切换/文档加载完成会改变打印门禁 → 重新查询 Ctrl+P / 顶栏按钮可用性（AC-30.2）。
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    // ---- v1.1 T12 翻译右栏容器（双 Tab 划词 / 整篇；响应式） ----
+
+    /// <summary>翻译右栏宽度（设计基线 320，区别于 RightDrawer 的 380）。</summary>
+    private const double TranslationSidebarWidth = 320;
+
+    /// <summary>当前响应式模式（用于检测阈值跨越时重置紧凑态默认可见性）。</summary>
+    private TranslationSidebarMode _translationMode = TranslationSidebarMode.Hidden;
+
+    /// <summary>紧凑模式（覆盖/折叠）下用户是否唤出了右栏；窗口跨越阈值时按模式重置。</summary>
+    private bool _translationCompactVisible;
+
+    /// <summary>窗口尺寸变化 → 重算翻译右栏响应式模式（≥680 停靠 / 480–680 覆盖 / &lt;480 折叠）。</summary>
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e) => ApplyTranslationSidebarState();
+
+    /// <summary>切换「划词 / 整篇」Tab（RadioButton Tag = Tab 键）。</summary>
+    private void OnTranslationTabChecked(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { Tag: string key, IsChecked: true })
+        {
+            ShowTranslationTab(key);
+        }
+    }
+
+    /// <summary>互换两个占位面板的可见性（T13/T14/T15 将替换为真实内容）。</summary>
+    private void ShowTranslationTab(string key)
+    {
+        if (TranslationSelectionPlaceholder is null)
+        {
+            return; // InitializeComponent 期间初始 IsChecked 触发（沿用 ShowReaderPanel 的时序保护）
+        }
+
+        var selection = string.Equals(key, "selection", StringComparison.Ordinal);
+        TranslationSelectionPlaceholder.Visibility = selection ? Visibility.Visible : Visibility.Collapsed;
+        TranslationFullPlaceholder.Visibility = selection ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>紧凑态浮动「翻译」开关：唤出/收起覆盖模式的右栏。</summary>
+    private void OnToggleTranslationSidebarClick(object sender, RoutedEventArgs e)
+    {
+        _translationCompactVisible = !_translationCompactVisible;
+        ApplyTranslationSidebarState();
+    }
+
+    /// <summary>覆盖模式关闭 ✕：收起右栏并保留浮动开关。</summary>
+    private void OnCloseTranslationSidebarClick(object sender, RoutedEventArgs e)
+    {
+        _translationCompactVisible = false;
+        ApplyTranslationSidebarState();
+    }
+
+    /// <summary>
+    /// 应用翻译右栏响应式布局：非文档标签隐藏；≥680px 停靠为第 4 列；
+    /// 480–680px（覆盖）与 &lt;480px（折叠）时不占列，作为覆盖层挂在阅读区列右侧，
+    /// 折叠或关闭后由浮动开关唤出。切换模式时按模式重置紧凑默认可见性。
+    /// </summary>
+    private void ApplyTranslationSidebarState()
+    {
+        if (TranslationSidebar is null)
+        {
+            return; // InitializeComponent 完成前不动作
+        }
+
+        // 布局前 ActualWidth 为 0：回退窗口声明宽度，避免误判为「折叠」。
+        var width = ActualWidth > 0 ? ActualWidth : Width;
+        if (double.IsNaN(width))
+        {
+            width = TranslationSidebarLayout.OverlayThreshold; // 尚未设置尺寸：按停靠阈值处理
+        }
+
+        var documentTabActive = TabHost.SelectedTab?.Kind == TabKind.Document;
+        var mode = TranslationSidebarLayout.Resolve(width, documentTabActive);
+        if (mode != _translationMode)
+        {
+            _translationMode = mode;
+            _translationCompactVisible = mode == TranslationSidebarMode.Overlay; // 覆盖默认显示，折叠默认隐藏
+        }
+
+        switch (mode)
+        {
+            case TranslationSidebarMode.Docked:
+                TranslationColumn.Width = new GridLength(TranslationSidebarWidth);
+                Grid.SetColumn(TranslationSidebar, 3);
+                TranslationSidebar.HorizontalAlignment = HorizontalAlignment.Stretch;
+                TranslationSidebar.Visibility = Visibility.Visible;
+                TranslationToggleButton.Visibility = Visibility.Collapsed;
+                TranslationCloseButton.Visibility = Visibility.Collapsed;
+                break;
+
+            case TranslationSidebarMode.Overlay:
+            case TranslationSidebarMode.Collapsed:
+                TranslationColumn.Width = new GridLength(0);
+                Grid.SetColumn(TranslationSidebar, 2); // 挂到阅读区列，右对齐覆盖
+                TranslationSidebar.HorizontalAlignment = HorizontalAlignment.Right;
+                TranslationSidebar.Visibility = _translationCompactVisible ? Visibility.Visible : Visibility.Collapsed;
+                TranslationToggleButton.Visibility = _translationCompactVisible ? Visibility.Collapsed : Visibility.Visible;
+                TranslationCloseButton.Visibility = Visibility.Visible;
+                break;
+
+            default: // Hidden：非文档标签 / 零标签
+                TranslationColumn.Width = new GridLength(0);
+                TranslationSidebar.Visibility = Visibility.Collapsed;
+                TranslationToggleButton.Visibility = Visibility.Collapsed;
+                TranslationCloseButton.Visibility = Visibility.Collapsed;
+                break;
+        }
     }
 
     // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----

@@ -6,11 +6,12 @@
         xmlns:startPage="clr-namespace:AIPDF.Windows.Views.StartPage"
         Title="AIPDF · 本地 PDF 工作台"
         Width="1080" Height="700"
-        MinWidth="860" MinHeight="560"
+        MinWidth="420" MinHeight="560"
         FontFamily="Segoe UI Variable Display, Segoe UI"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal"
         PreviewKeyDown="OnWindowPreviewKeyDown"
+        SizeChanged="OnWindowSizeChanged"
         WindowStartupLocation="CenterScreen"
         Closing="OnWindowClosing">
 
@@ -272,6 +273,38 @@
             </Setter>
         </Style>
 
+        <!-- v1.1 翻译右栏双 Tab（划词 / 整篇）：强调底线标识当前 Tab（A+C 暖纸体系，无新增 token） -->
+        <Style x:Key="TranslationTabToggle" TargetType="RadioButton">
+            <Setter Property="GroupName" Value="TranslationTabs" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd"
+                                Background="Transparent"
+                                CornerRadius="6,6,0,0"
+                                BorderThickness="0,0,0,2"
+                                BorderBrush="Transparent"
+                                Padding="10,5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Hover}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 主区标签宿主（原 ToolPageHost ContentControl 位）：仅承载内容，头部在顶栏标签条 -->
         <Style x:Key="TabHostItem" TargetType="TabItem">
             <Setter Property="Header" Value="{Binding Title}" />
@@ -476,6 +509,8 @@
                     <ColumnDefinition x:Name="LeftPanelColumn" Width="264" MinWidth="220" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <!-- v1.1 翻译右栏停靠列（Width 由代码后置按响应式模式设置：停靠 320 / 其余 0） -->
+                    <ColumnDefinition x:Name="TranslationColumn" Width="0" />
                 </Grid.ColumnDefinitions>
 
                 <!-- 左栏：阅读面板容器（T4 填充）。工具箱已移至顶栏按钮 + 主区左对齐滑出面板（T20），左栏仅保留阅读面板。 -->
@@ -754,6 +789,103 @@
                                    Foreground="{DynamicResource Brush.OnAccent}" />
                     </Border>
                 </Grid>
+
+                <!-- v1.1 T12 翻译右栏容器：文档标签激活时显示，宽 320（区别于 RightDrawer 的 380）。
+                     布局模式由代码后置按窗口宽度切换（见 TranslationSidebarLayout）：
+                       ≥680px 停靠为右侧独立列；480–680px 覆盖在阅读区右侧；<480px 折叠为浮动「翻译」开关。
+                     Tab 内容为占位，T13（配置）/ T14（划词）/ T15（整篇）填充。
+                     配色全部复用 A+C Brush.* token（DynamicResource），不新增 token。 -->
+                <Border x:Name="TranslationSidebar"
+                        Grid.Column="3"
+                        Width="320"
+                        Panel.ZIndex="30"
+                        Background="{DynamicResource Brush.Window}"
+                        BorderBrush="{DynamicResource Brush.Border}"
+                        BorderThickness="1,0,0,0"
+                        Visibility="Collapsed">
+                    <Border.Effect>
+                        <!-- 页影维持 #000000（主题无关；审计脚本对其显式跳过），与 RightDrawer / ToolboxPanel 一致。 -->
+                        <DropShadowEffect BlurRadius="18" ShadowDepth="0" Direction="180" Opacity="0.14" Color="#000000" />
+                    </Border.Effect>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- 头部：双 Tab「划词 / 整篇」+ 紧凑态关闭 ✕ -->
+                        <Border Grid.Row="0"
+                                Background="{DynamicResource Brush.Sidebar}"
+                                BorderBrush="{DynamicResource Brush.Border}"
+                                BorderThickness="0,0,0,1"
+                                Padding="8,6,8,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <RadioButton x:Name="TranslationTabSelection"
+                                                 Content="划词"
+                                                 Tag="selection"
+                                                 IsChecked="True"
+                                                 Style="{StaticResource TranslationTabToggle}"
+                                                 Checked="OnTranslationTabChecked"
+                                                 AutomationProperties.Name="划词翻译" />
+                                    <RadioButton x:Name="TranslationTabFull"
+                                                 Content="整篇"
+                                                 Tag="full"
+                                                 Style="{StaticResource TranslationTabToggle}"
+                                                 Checked="OnTranslationTabChecked"
+                                                 AutomationProperties.Name="整篇翻译" />
+                                </StackPanel>
+                                <Button x:Name="TranslationCloseButton"
+                                        Grid.Column="1"
+                                        Style="{StaticResource TopBarIconButton}"
+                                        Click="OnCloseTranslationSidebarClick"
+                                        ToolTip="收起翻译栏"
+                                        AutomationProperties.Name="收起翻译栏"
+                                        Visibility="Collapsed">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="12" />
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- 内容：两个占位面板，切换 Tab 时互换可见性（T13/T14/T15 填充真实内容） -->
+                        <Grid Grid.Row="1">
+                            <StackPanel x:Name="TranslationSelectionPlaceholder" Margin="14,14,14,12">
+                                <TextBlock Text="划词翻译" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Margin="0,8,0,0"
+                                           Text="在阅读区选中文字，选区附近会浮出「译」按钮；点击后译文显示在这里。"
+                                           Style="{StaticResource FieldHint}" />
+                            </StackPanel>
+                            <StackPanel x:Name="TranslationFullPlaceholder" Margin="14,14,14,12" Visibility="Collapsed">
+                                <TextBlock Text="整篇翻译" Style="{StaticResource SectionTitle}" />
+                                <TextBlock Margin="0,8,0,0"
+                                           Text="在此配置语言、领域模板与引擎，开始后可查看进度与结果。"
+                                           Style="{StaticResource FieldHint}" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 紧凑态开关：<480px 折叠后从右侧唤出翻译栏（覆盖模式） -->
+                <Button x:Name="TranslationToggleButton"
+                        Grid.Column="2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,10,10,0"
+                        Panel.ZIndex="31"
+                        Style="{StaticResource TopBarIconButton}"
+                        Click="OnToggleTranslationSidebarClick"
+                        ToolTip="打开翻译"
+                        AutomationProperties.Name="打开翻译"
+                        Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C1;" FontSize="13" VerticalAlignment="Center" />
+                        <TextBlock Text="翻译" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </Grid>
 
             <!-- V2 T7：执行中任务被取消时的短暂 Toast（排队项取消不触发；由代码后置 2s 自动隐藏） -->
