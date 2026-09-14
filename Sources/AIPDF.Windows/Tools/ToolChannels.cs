@@ -30,7 +30,7 @@ public enum ToolChannel
 /// 例如 <c>pdfa</c> 的 Multiple=true 却属右抽屉，<c>forms</c> 的 Multiple=false 却属临时标签。
 /// </para>
 /// <para>
-/// 分布（01 表）：起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 21 + 临时标签 3（crop / edit / forms）= 32。
+/// 分布（01 表）：起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 22 + 临时标签 3（crop / edit / forms）= 33。
 /// V1 曾把向导降级为临时标签（6/2/24），V3 恢复权威分布并新增模态向导宿主。
 /// </para>
 /// </summary>
@@ -55,9 +55,9 @@ public static class ToolChannels
     };
 
     /// <summary>
-    /// 向导工具 id（01-工具通道映射表.md「向导」21 行；判据 :39 多文件，或 id=workflow 多步）。
+    /// 向导工具 id（01-工具通道映射表.md「向导」22 行；判据 :39 多文件，或 id=workflow 多步）。
     /// 复算：merge/split/remove/extract/compress/repair/ocr/pdf_to_images/pdf_to_word/pdf_to_ppt/
-    /// pdf_to_excel/rotate/numbers/watermark/unlock/protect/sign/redact/compare/markdown/workflow。
+    /// pdf_to_excel/rotate/numbers/watermark/unlock/protect/sign/redact/compare/markdown/translate_batch/workflow。
     /// </summary>
     private static readonly HashSet<string> WizardIds = new(StringComparer.Ordinal)
     {
@@ -81,6 +81,7 @@ public static class ToolChannels
         "redact",
         "compare",
         "markdown",
+        "translate_batch",
         "workflow",
     };
 

@@ -6,18 +6,18 @@ namespace AIPDF.Windows.Tests;
 
 /// <summary>
 /// 工具目录加载与分组测试。基准来自 backend/catalog.json：
-/// 32 个工具、6 个分组（整理页面 6 / 优化文件 3 / 格式转换 11 / 编辑内容 6 / 安全保护 5 / 工作流程 1）。
+/// 33 个工具、6 个分组（整理页面 6 / 优化文件 3 / 格式转换 12 / 编辑内容 6 / 安全保护 5 / 工作流程 1）。
 /// </summary>
 public sealed class CatalogTests
 {
     private static IReadOnlyList<Tool> LoadCatalog() => ToolCatalog.Load();
 
     [Fact]
-    public void Load_Returns32Tools()
+    public void Load_Returns33Tools()
     {
         var tools = LoadCatalog();
 
-        Assert.Equal(32, tools.Count);
+        Assert.Equal(33, tools.Count);
     }
 
     [Fact]
@@ -44,7 +44,7 @@ public sealed class CatalogTests
         Assert.Equal(
             new[] { "整理页面", "优化文件", "格式转换", "编辑内容", "安全保护", "工作流程" },
             groups.Select(g => g.Name).ToArray());
-        Assert.Equal(32, groups.Sum(g => g.Tools.Count));
+        Assert.Equal(33, groups.Sum(g => g.Tools.Count));
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class CatalogTests
         {
             ["整理页面"] = 6,
             ["优化文件"] = 3,
-            ["格式转换"] = 11,
+            ["格式转换"] = 12,
             ["编辑内容"] = 6,
             ["安全保护"] = 5,
             ["工作流程"] = 1,

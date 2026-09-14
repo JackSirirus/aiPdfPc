@@ -6,7 +6,7 @@ using Xunit;
 namespace AIPDF.Windows.Tests;
 
 /// <summary>
-/// 主视图模型测试：真实工具目录加载（32 工具 / 6 组）、选中工具的变更通知与状态栏文案。
+/// 主视图模型测试：真实工具目录加载（33 工具 / 6 组）、选中工具的变更通知与状态栏文案。
 /// </summary>
 public sealed class MainViewModelTests
 {
@@ -15,9 +15,9 @@ public sealed class MainViewModelTests
     {
         var vm = CreateViewModel();
 
-        Assert.Equal(32, vm.Tools.Count);
+        Assert.Equal(33, vm.Tools.Count);
         Assert.Equal(6, vm.Groups.Count);
-        Assert.Equal(32, vm.Groups.Sum(g => g.Tools.Count));
+        Assert.Equal(33, vm.Groups.Sum(g => g.Tools.Count));
         Assert.Null(vm.SelectedTool);
         Assert.Single(vm.ToolsView.GroupDescriptions);
     }
@@ -27,7 +27,7 @@ public sealed class MainViewModelTests
     {
         var vm = CreateViewModel();
 
-        Assert.Contains("32", vm.StatusText);
+        Assert.Contains("33", vm.StatusText);
         Assert.Contains("6", vm.StatusText);
         Assert.Contains("就绪", vm.StatusText);
     }

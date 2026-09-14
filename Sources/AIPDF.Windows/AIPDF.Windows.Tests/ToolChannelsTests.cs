@@ -8,7 +8,7 @@ namespace AIPDF.Windows.Tests;
 
 /// <summary>
 /// V3 工具通道路由测试。权威基准 = 设计/v1.0-阅读器/prd/01-工具通道映射表.md：
-/// 起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 21 + 临时标签 3（crop / edit / forms）= 32。
+/// 起始页 6 + 右抽屉 2（organize / pdfa）+ 向导 22 + 临时标签 3（crop / edit / forms）= 33。
 /// id 显式列出，并验证路由不依赖 <see cref="Tool.Multiple"/>。
 /// </summary>
 public sealed class ToolChannelsTests
@@ -23,7 +23,7 @@ public sealed class ToolChannelsTests
         "merge", "split", "remove", "extract", "compress", "repair", "ocr",
         "pdf_to_images", "pdf_to_word", "pdf_to_ppt", "pdf_to_excel", "rotate",
         "numbers", "watermark", "unlock", "protect", "sign", "redact", "compare",
-        "markdown", "workflow",
+        "markdown", "translate_batch", "workflow",
     ];
 
     private static readonly string[] ExpectedTempTab = ["crop", "edit", "forms"];
@@ -45,7 +45,7 @@ public sealed class ToolChannelsTests
     }
 
     [Fact]
-    public void ChannelFor_Wizard_IsExactlyTheTwentyOneMultiFileOrMultiStepTools()
+    public void ChannelFor_Wizard_IsExactlyTheTwentyTwoMultiFileOrMultiStepTools()
     {
         var actual = IdsWith(ToolChannel.Wizard);
 
@@ -61,28 +61,28 @@ public sealed class ToolChannelsTests
     }
 
     [Fact]
-    public void EveryCatalogTool_RoutesToExactlyOneChannel_AndAll32AccountedFor()
+    public void EveryCatalogTool_RoutesToExactlyOneChannel_AndAll33AccountedFor()
     {
         var tools = ToolCatalog.Load();
         var byChannel = tools
             .GroupBy(ToolChannels.ChannelFor)
             .ToDictionary(group => group.Key, group => group.Select(t => t.Id).ToList());
 
-        Assert.Equal(32, tools.Count);
+        Assert.Equal(33, tools.Count);
         Assert.Equal(ExpectedRightDrawer.Length, byChannel[ToolChannel.RightDrawer].Count);
         Assert.Equal(ExpectedStartPage.Length, byChannel[ToolChannel.StartPage].Count);
         Assert.Equal(ExpectedWizard.Length, byChannel[ToolChannel.Wizard].Count);
         Assert.Equal(ExpectedTempTab.Length, byChannel[ToolChannel.TempTab].Count);
 
-        // 权威分布：起始页 6 / 右抽屉 2 / 向导 21 / 临时标签 3。
+        // 权威分布：起始页 6 / 右抽屉 2 / 向导 22 / 临时标签 3。
         Assert.Equal(6, byChannel[ToolChannel.StartPage].Count);
         Assert.Equal(2, byChannel[ToolChannel.RightDrawer].Count);
-        Assert.Equal(21, byChannel[ToolChannel.Wizard].Count);
+        Assert.Equal(22, byChannel[ToolChannel.Wizard].Count);
         Assert.Equal(3, byChannel[ToolChannel.TempTab].Count);
 
         var union = byChannel.Values.SelectMany(ids => ids).ToList();
-        Assert.Equal(32, union.Count); // 无工具落入两个通道（分组拆解后总数不变）
-        Assert.Equal(32, union.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(33, union.Count); // 无工具落入两个通道（分组拆解后总数不变）
+        Assert.Equal(33, union.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(
             tools.Select(t => t.Id).OrderBy(id => id),
             union.OrderBy(id => id));

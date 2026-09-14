@@ -10,7 +10,7 @@ namespace AIPDF.Windows.Tests;
 
 /// <summary>
 /// 起始页（T6）测试：最近文件存储读写（临时目录）、列表增删/去重/20 条上限【D15】/失效标注【ST-05】/
-/// 清空二次确认，以及常用工具 8 项【R19】与 32 工具完整入口的目录消费。
+/// 清空二次确认，以及常用工具 8 项【R19】与 33 工具完整入口的目录消费。
 /// </summary>
 public sealed class StartPageTests
 {
@@ -340,7 +340,7 @@ public sealed class StartPageTests
         }
     }
 
-    // ======================= 工具入口（【R19】静态 8 项 + 32 工具完整入口） =======================
+    // ======================= 工具入口（【R19】静态 8 项 + 33 工具完整入口） =======================
 
     [Fact]
     public void FavoriteTools_StaticEightIds_FromRealCatalog()
@@ -360,12 +360,12 @@ public sealed class StartPageTests
     }
 
     [Fact]
-    public void ToolGroups_ConsumeCatalog_SixGroups32Tools_ReadOnly()
+    public void ToolGroups_ConsumeCatalog_SixGroups33Tools_ReadOnly()
     {
         var catalog = RealCatalog();
         var vm = NewVm(catalog: catalog);
 
-        Assert.Equal(32, vm.Tools.Count);
+        Assert.Equal(33, vm.Tools.Count);
         Assert.Equal(6, vm.ToolGroups.Count);
         Assert.Equal(catalog.Count, vm.ToolGroups.Sum(group => group.Tools.Count));
 
@@ -392,7 +392,7 @@ public sealed class StartPageTests
     public void AllToolsToggleText_ReflectsExpansionState()
     {
         var vm = NewVm();
-        Assert.Contains("32 个工具", vm.AllToolsToggleText);
+        Assert.Contains("33 个工具", vm.AllToolsToggleText);
         vm.IsAllToolsExpanded = true;
         Assert.Equal("收起全部工具", vm.AllToolsToggleText);
     }
