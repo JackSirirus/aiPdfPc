@@ -111,6 +111,20 @@ public class SelectionTranslationServiceTests
     }
 
     [Fact]
+    public void RuntimeConfig_ToString_RedactsApiKey()
+    {
+        var config = new TranslationRuntimeConfig(
+            "cloud", "https://api.example.com/v1", "m", "sk-super-secret-value",
+            "en", "zh", "generic");
+
+        var text = config.ToString();
+
+        Assert.DoesNotContain("sk-super-secret-value", text);
+        Assert.Contains("ApiKey", text);
+        Assert.Contains("<redacted>", text);
+    }
+
+    [Fact]
     public void NullSidecarStore_ReportsNotWired_WithoutThrowing()
     {
         var store = new NullSelectionSidecarStore { ActiveDocument = "a.pdf" };

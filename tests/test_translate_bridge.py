@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 AIPDF contributors
-"""翻译桥接传输层：NDJSON 分块、oversize 上限与原子输出。仅用合成数据。"""
-import io
-import json
+"""翻译桥接传输层：原子输出。仅用合成数据。
+
+NDJSON 分块协议（`write_ndjson_chunk` / `read_ndjson_chunks`）从未被 engine 接入，
+已按 G 决策移除；本文件只保留确实在用的原子写/替换测试。
+"""
 import sys
 import tempfile
 import unittest
@@ -12,11 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 from translate import bridge
-
-
-def final_result(**extra):
-    """引擎最终单行结果的最小形状（含 "ok"，宿主向后扫描的锚点）。"""
-    return {"ok": True, "outputs": [], **extra}
 
 
 class TempDirTestCase(unittest.TestCase):
@@ -31,132 +28,6 @@ class TempDirTestCase(unittest.TestCase):
 
     def leftovers(self):
         return sorted(p.name for p in self.root.glob(bridge.TEMP_PREFIX + "*"))
-
-
-class NdjsonRoundTripTests(TempDirTestCase):
-    def test_text_stream_round_trip(self):
-        stream = io.StringIO()
-        chunks = [{"chunk_id": 0, "page": 0, "text": "第一段"},
-                  {"chunk_id": 1, "page": 0, "text": "second"},
-                  {"chunk_id": 2, "page": 1, "text": "第三段"}]
-        for chunk in chunks:
-            bridge.write_ndjson_chunk(stream, chunk)
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)), chunks)
-
-    def test_binary_stream_round_trip(self):
-        stream = io.BytesIO()
-        chunks = [{"chunk_id": 0, "text": "中文"}, {"chunk_id": 1, "text": "ascii"}]
-        for chunk in chunks:
-            bridge.write_ndjson_chunk(stream, chunk)
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)), chunks)
-
-    def test_path_round_trip_appends_each_chunk(self):
-        path = self.root / "chunks.ndjson"
-        chunks = [{"chunk_id": 0, "text": "一"}, {"chunk_id": 1, "text": "二"}]
-        for chunk in chunks:
-            bridge.write_ndjson_chunk(path, chunk)
-        self.assertEqual(list(bridge.read_ndjson_chunks(path)), chunks)
-
-    def test_returns_bytes_written_including_newline(self):
-        stream = io.StringIO()
-        chunk = {"chunk_id": 0, "text": "你好"}
-        written = bridge.write_ndjson_chunk(stream, chunk)
-        self.assertEqual(written, len(stream.getvalue().encode("utf-8")))
-        self.assertEqual(stream.getvalue().count("\n"), 1)
-
-    def test_each_chunk_is_one_line_with_utf8_cjk(self):
-        stream = io.StringIO()
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 0, "text": "汉字"})
-        line = stream.getvalue()
-        self.assertTrue(line.endswith("\n"))
-        self.assertEqual(line, '{"chunk_id":0,"text":"汉字"}\n')
-
-
-class OversizeTests(unittest.TestCase):
-    def test_oversize_chunk_becomes_sentinel(self):
-        stream = io.StringIO()
-        with unittest.mock.patch.object(bridge, "MAX_CHUNK_BYTES", 64):
-            bridge.write_ndjson_chunk(stream, {"chunk_id": 7, "text": "x" * 200})
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)),
-                         [{"error": "extraction_chunk_oversize", "chunk_id": 7}])
-
-    def test_stream_continues_after_oversize(self):
-        stream = io.StringIO()
-        with unittest.mock.patch.object(bridge, "MAX_CHUNK_BYTES", 64):
-            bridge.write_ndjson_chunk(stream, {"chunk_id": 7, "text": "x" * 200})
-            bridge.write_ndjson_chunk(stream, {"chunk_id": 8, "text": "ok"})
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)),
-                         [{"error": "extraction_chunk_oversize", "chunk_id": 7},
-                          {"chunk_id": 8, "text": "ok"}])
-
-    def test_default_cap_rejects_real_megabyte_line(self):
-        stream = io.StringIO()
-        huge = "x" * (bridge.MAX_CHUNK_BYTES + 10)
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 3, "text": huge})
-        stream.seek(0)
-        parsed = list(bridge.read_ndjson_chunks(stream))
-        self.assertEqual(parsed, [{"error": "extraction_chunk_oversize", "chunk_id": 3}])
-
-    def test_under_cap_chunk_is_written_verbatim(self):
-        stream = io.StringIO()
-        chunk = {"chunk_id": 1, "text": "small"}
-        bridge.write_ndjson_chunk(stream, chunk)
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)), [chunk])
-
-    def test_oversize_without_chunk_id_reports_none(self):
-        stream = io.StringIO()
-        with unittest.mock.patch.object(bridge, "MAX_CHUNK_BYTES", 8):
-            bridge.write_ndjson_chunk(stream, {"blob": "x" * 40})
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)),
-                         [{"error": "extraction_chunk_oversize", "chunk_id": None}])
-
-
-class TailPreservationTests(TempDirTestCase):
-    def test_single_line_result_tail_is_not_consumed(self):
-        stream = io.StringIO()
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 0, "text": "一"})
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 1, "text": "二"})
-        stream.write(json.dumps(final_result(outputs=["a.pdf"])) + "\n")
-        stream.seek(0)
-
-        chunks = list(bridge.read_ndjson_chunks(stream))
-        self.assertEqual([c["chunk_id"] for c in chunks], [0, 1])
-        # 终止行被回退，调用方仍能读到引擎最终结果。
-        self.assertEqual(json.loads(stream.read().strip()), final_result(outputs=["a.pdf"]))
-
-    def test_non_json_line_stops_iteration(self):
-        stream = io.StringIO()
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 0, "text": "一"})
-        stream.write("third-party notice - not json\n")
-        stream.write(json.dumps({"chunk_id": 9}) + "\n")
-        stream.seek(0)
-
-        chunks = list(bridge.read_ndjson_chunks(stream))
-        self.assertEqual(chunks, [{"chunk_id": 0, "text": "一"}])
-        self.assertTrue(stream.read().startswith("third-party notice"))
-
-    def test_non_object_json_line_stops_iteration(self):
-        stream = io.StringIO()
-        bridge.write_ndjson_chunk(stream, {"chunk_id": 0})
-        stream.write("[1, 2, 3]\n")
-        stream.seek(0)
-        self.assertEqual(list(bridge.read_ndjson_chunks(stream)), [{"chunk_id": 0}])
-
-    def test_path_stream_keeps_final_result_line(self):
-        path = self.root / "with-tail.ndjson"
-        bridge.write_ndjson_chunk(path, {"chunk_id": 0, "text": "一"})
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(final_result()) + "\n")
-
-        self.assertEqual(list(bridge.read_ndjson_chunks(path)), [{"chunk_id": 0, "text": "一"}])
-        lines = path.read_text(encoding="utf-8").splitlines()
-        self.assertTrue(json.loads(lines[-1])["ok"])
 
 
 class AtomicWriteTests(TempDirTestCase):

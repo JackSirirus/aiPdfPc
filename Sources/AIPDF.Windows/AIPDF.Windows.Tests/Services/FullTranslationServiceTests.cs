@@ -109,6 +109,19 @@ public class FullTranslationServiceTests
     }
 
     [Fact]
+    public void Request_ToString_RedactsApiKeyAndPassword()
+    {
+        var request = Request() with { Password = "pdf-open-secret" };
+
+        var text = request.ToString();
+
+        Assert.DoesNotContain("sk-test", text);
+        Assert.DoesNotContain("pdf-open-secret", text);
+        Assert.Contains("ApiKey = <redacted>", text);
+        Assert.Contains("Password = <redacted>", text);
+    }
+
+    [Fact]
     public async Task TranslateAsync_EngineFailure_SurfacesError()
     {
         var bridge = new StubBridge(new EngineResult { Ok = false, Error = "请先配置翻译服务端点。" });

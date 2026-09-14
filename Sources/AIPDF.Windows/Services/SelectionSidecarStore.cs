@@ -217,12 +217,13 @@ public sealed class SelectionSidecarStore : ISelectionSidecarStore
 
         if (File.Exists(target))
         {
-            // 已存在的 sidecar 可能带隐藏属性，先归位再删除，避免替换失败。
+            // 已存在的 sidecar 可能带隐藏属性，先归位，避免替换失败。
             TryClearAttributes(target);
-            File.Delete(target);
         }
 
-        File.Move(temp, target);
+        // 原子替换（MoveFileEx REPLACE_EXISTING）：崩在写入中途也不会出现「已删除旧文件、
+        // 新文件未就位」的空窗；绝不先 Delete 再 Move。
+        File.Move(temp, target, overwrite: true);
         _ = TrySetHidden(target);
     }
 

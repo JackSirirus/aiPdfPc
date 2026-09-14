@@ -38,7 +38,27 @@ public sealed record TranslationRuntimeConfig(
     string TargetLang,
     string Template,
     string? GlossaryPath = null,
-    int? MaxTokens = null);
+    int? MaxTokens = null)
+{
+    /// <summary>
+    /// 显式脱敏 <c>ToString()</c>：记录的默认 PrintMembers 会逐个打印位置成员，把 <see cref="ApiKey"/>
+    /// 明文带进调试 / 日志 / 异常文本。此覆盖以固定占位替换密钥，密钥只存在于内存字段与子进程 stdin。
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0051",
+        Justification = "由编译器生成的 ToString() 调用。")]
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("Provider = ").Append(Provider)
+               .Append(", Endpoint = ").Append(Endpoint)
+               .Append(", Model = ").Append(Model)
+               .Append(", ApiKey = <redacted>, SourceLang = ").Append(SourceLang)
+               .Append(", TargetLang = ").Append(TargetLang)
+               .Append(", Template = ").Append(Template);
+        if (GlossaryPath is not null) builder.Append(", GlossaryPath = ").Append(GlossaryPath);
+        if (MaxTokens is int maxTokens) builder.Append(", MaxTokens = ").Append(maxTokens);
+        return true;
+    }
+}
 
 /// <summary>运行时配置「未就绪」的具体原因（供 UI 给出可操作的引导，不把不同缺口混为一谈）。</summary>
 public enum TranslationRuntimeConfigStatus

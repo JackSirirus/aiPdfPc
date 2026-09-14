@@ -36,7 +36,35 @@ public sealed record FullTranslationRequest(
     string? Password = null,
     bool Marker = true,
     bool ExportMarkdown = false,
-    string? CustomPrompt = null);
+    string? CustomPrompt = null)
+{
+    /// <summary>
+    /// 显式脱敏 <c>ToString()</c>：记录的默认 PrintMembers 会逐个打印位置成员，把 <see cref="ApiKey"/>
+    /// 与源文档 <see cref="Password"/> 明文带进调试 / 日志 / 异常文本。两者一律以固定占位替换。
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0051",
+        Justification = "由编译器生成的 ToString() 调用。")]
+    private bool PrintMembers(System.Text.StringBuilder builder)
+    {
+        builder.Append("FilePath = ").Append(FilePath)
+               .Append(", OutputDir = ").Append(OutputDir)
+               .Append(", SourceLang = ").Append(SourceLang)
+               .Append(", TargetLang = ").Append(TargetLang)
+               .Append(", Template = ").Append(Template)
+               .Append(", Endpoint = ").Append(Endpoint)
+               .Append(", Model = ").Append(Model)
+               .Append(", ApiKey = <redacted>")
+               .Append(", GenerateMono = ").Append(GenerateMono)
+               .Append(", GenerateDual = ").Append(GenerateDual)
+               .Append(", Password = <redacted>")
+               .Append(", Marker = ").Append(Marker)
+               .Append(", ExportMarkdown = ").Append(ExportMarkdown);
+        if (GlossaryPath is not null) builder.Append(", GlossaryPath = ").Append(GlossaryPath);
+        if (MaxTokens is int maxTokens) builder.Append(", MaxTokens = ").Append(maxTokens);
+        if (CustomPrompt is not null) builder.Append(", CustomPrompt = ").Append(CustomPrompt);
+        return true;
+    }
+}
 
 /// <summary>
 /// 输出形态 → 引擎 <c>format</c> 值（决策 #4）。mono/dual 组合为 <c>both/mono/dual</c>；

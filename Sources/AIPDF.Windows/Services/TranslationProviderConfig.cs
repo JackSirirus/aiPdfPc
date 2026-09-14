@@ -21,6 +21,13 @@ public sealed class TranslationProviderConfig
     public const string EmbeddedSecretMessage = "密钥请保存在系统凭据管理器中，不要写在端点地址里。";
 
     /// <summary>
+    /// 非 loopback 端点使用明文 <c>http://</c> 时的提示：云端请求的
+    /// <c>Authorization: Bearer &lt;key&gt;</c> 会在链路上明文传输；http 仅允许本机地址。
+    /// </summary>
+    public const string PlainHttpMessage =
+        "云端端点必须使用 https（http 仅限 127.0.0.1 / ::1 / localhost 本机地址），否则 API Key 会以明文传输。";
+
+    /// <summary>
     /// 「本地」服务商标识（大小写不敏感）。标记为「本地」时端点必须是 loopback
     /// （127.0.0.1 / ::1 / localhost），否则不得以本地名义绕过云端同意（§本地引擎 loopback 校验）。
     /// </summary>
@@ -56,7 +63,8 @@ public sealed class TranslationProviderConfig
         => string.IsNullOrEmpty(Model) ? $"{Provider} · {Endpoint}" : $"{Provider} · {Model} · {Endpoint}";
 
     /// <summary>
-    /// 校验端点：必须为 http(s) 绝对地址，且不含内嵌密钥。返回 null 表示通过，否则为完整提示文案。
+    /// 校验端点：必须为 http(s) 绝对地址、不含内嵌密钥，且非 loopback 时必须是 https
+    /// （防 Bearer 密钥明文传输）。返回 null 表示通过，否则为完整提示文案。
     /// </summary>
     public static string? ValidateEndpoint(string? endpoint)
     {
@@ -76,6 +84,9 @@ public sealed class TranslationProviderConfig
             var name = pair.Split('=', 2)[0].Trim();
             if (SecretQueryNames.Contains(name, StringComparer.OrdinalIgnoreCase)) return EmbeddedSecretMessage;
         }
+
+        // 非 loopback（云端）端点必须是 https：明文 http 会把 Bearer 密钥暴露在链路上。
+        if (uri.Scheme == Uri.UriSchemeHttp && !IsLoopbackEndpoint(value)) return PlainHttpMessage;
 
         return null;
     }

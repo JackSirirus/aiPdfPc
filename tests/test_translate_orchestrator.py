@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 import engine
 import pymupdf as fitz
-from translate import llm
+from translate import llm, output
 
 ENDPOINT = "https://api.example.test/v1"
 API_KEY = "sk-orchestrator-secret-key-123456"
@@ -148,6 +148,93 @@ class TranslateOrchestratorTests(unittest.TestCase):
             self.dispatch(options={"apiKey": API_KEY, "endpoint": ENDPOINT})
         with self.assertRaisesRegex(engine.UserError, "API Key"):
             self.dispatch(options={"endpoint": ENDPOINT, "model": MODEL})
+
+    def test_local_loopback_allows_empty_key(self):
+        """本地 loopback（Ollama / LM Studio）常无需密钥：空 apiKey 也必须照常请求。"""
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(response_body())
+
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            result = self.dispatch(options=self.default_options(
+                apiKey="", endpoint="http://127.0.0.1:11434/v1", format="mono"))
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(captured)
+        self.assertEqual(captured[0].get_header("Authorization"), "Bearer ")
+
+    def test_selection_loopback_allows_empty_key(self):
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(response_body())
+
+        request = {"operation": "translate_text",
+                   "options": {"text": "Hello world", "endpoint": "http://127.0.0.1:11434/v1",
+                               "model": MODEL, "apiKey": "", "targetLang": "zh",
+                               "template": "generic"}}
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            result = engine.dispatch(request)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["translation"], TRANSLATION)
+        self.assertTrue(captured)
+
+    def test_non_loopback_still_requires_key(self):
+        """云端（非 loopback）空密钥仍然拒绝，且不发起请求。"""
+        with unittest.mock.patch.object(llm, "_open") as mocked:
+            with self.assertRaisesRegex(engine.UserError, "API Key"):
+                self.dispatch(options=self.default_options(apiKey=""))
+            with self.assertRaisesRegex(engine.UserError, "API Key"):
+                engine.dispatch({"operation": "translate_text",
+                                 "options": {"text": "Hi", "endpoint": ENDPOINT,
+                                             "model": MODEL, "apiKey": ""}})
+        mocked.assert_not_called()
+
+    def test_cancellation_cleans_partial_task_dir(self):
+        """取消发生在 mono 与 dual 之间：半成品任务目录应被清理，而非留给用户误用。"""
+        parent = self.root / "cancel-case"
+        parent.mkdir()
+
+        def cancel(*_args, **_kwargs):
+            raise engine.CancelledError("翻译已取消。")
+
+        with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(response_body())), \
+                unittest.mock.patch.object(output, "build_dual", side_effect=cancel):
+            with self.assertRaises(engine.CancelledError):
+                self.dispatch(options=self.default_options(), output_dir=parent)
+
+        self.assertEqual(list(parent.glob("AIPDF-*")), [])
+
+    def test_llm_abort_cleans_task_dir(self):
+        """LLM 中止（用户取消）同样转成 CancelledError 并清理任务目录。"""
+        parent = self.root / "abort-case"
+        parent.mkdir()
+
+        with unittest.mock.patch.object(llm, "_open",
+                                        side_effect=llm.AbortedError("翻译已取消。")):
+            with self.assertRaises(engine.CancelledError):
+                self.dispatch(options=self.default_options(), output_dir=parent)
+
+        self.assertEqual(list(parent.glob("AIPDF-*")), [])
+
+    def test_ordinary_failure_keeps_task_dir_for_diagnostics(self):
+        """普通失败仍保留任务目录（可能含已完成产物），不误当取消清理。"""
+        parent = self.root / "fail-case"
+        parent.mkdir()
+
+        def boom(*_args, **_kwargs):
+            raise engine.UserError("输出失败")
+
+        with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(response_body())), \
+                unittest.mock.patch.object(output, "build_dual", side_effect=boom):
+            with self.assertRaises(engine.UserError):
+                self.dispatch(options=self.default_options(), output_dir=parent)
+
+        self.assertEqual(len(list(parent.glob("AIPDF-*"))), 1)
 
     def test_invalid_output_directory_is_rejected(self):
         with self.assertRaisesRegex(engine.UserError, "输出文件夹"):

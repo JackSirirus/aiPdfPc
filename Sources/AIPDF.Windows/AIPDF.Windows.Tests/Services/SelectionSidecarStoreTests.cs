@@ -115,6 +115,34 @@ public sealed class SelectionSidecarStoreTests : IDisposable
     }
 
     [Fact]
+    public void Add_OverwriteReplacesExistingSidecar_Atomically_LeavesNoTemp()
+    {
+        var store = new SelectionSidecarStore(TempRoot()) { ActiveDocument = _document };
+        Assert.True(store.Add(0, Rect(), "第一版", "en→zh").Ok);
+
+        var result = store.Add(1, Rect(), "第二版", "en→zh");
+
+        Assert.True(result.Ok);
+        // 覆盖后两条都在（不是删除后重建、也不丢旧数据），且没有残留 .tmp 半成品。
+        Assert.Equal(2, store.GetAll().Count);
+        using (var document = JsonDocument.Parse(File.ReadAllText(SourceSidecar)))
+        {
+            var annotations = document.RootElement.GetProperty("annotations");
+            Assert.Equal(2, annotations.GetArrayLength());
+            var values = annotations.EnumerateArray()
+                .Select(a => a.GetProperty("translation").GetString()).ToList();
+            Assert.Contains("第一版", values);
+            Assert.Contains("第二版", values);
+        }
+
+        Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True((File.GetAttributes(SourceSidecar) & FileAttributes.Hidden) != 0);
+        }
+    }
+
+    [Fact]
     public void Add_WithoutActiveDocument_Fails()
     {
         var store = new SelectionSidecarStore(TempRoot());

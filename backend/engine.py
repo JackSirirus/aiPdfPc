@@ -11,6 +11,7 @@ import difflib
 from contextlib import redirect_stdout
 import html
 import io
+import ipaddress
 import json
 import locale
 import math
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 import uuid
 
 import pymupdf as fitz
@@ -42,6 +44,13 @@ if sys.platform == "win32":
 
 class UserError(Exception):
     pass
+
+
+class CancelledError(UserError):
+    """用户取消（SIGTERM/SIGINT 或 LLM 中止）。与普通失败区分：半成品任务目录会被清理，
+    而不是像普通失败那样保留供排查。宿主据此 errorCode=`cancelled` 识别取消。"""
+
+    code = "cancelled"
 
 
 class InPlaceSaveError(UserError):
@@ -96,7 +105,7 @@ def stop(*_):
     for child in CHILDREN:
         if child.poll() is None:
             terminate_tree(child)
-    raise UserError("处理已取消。已完成的文件保留在本次输出目录。")
+    raise CancelledError("处理已取消。已完成的文件保留在本次输出目录。")
 
 
 def progress(message, fraction=0):
@@ -859,7 +868,10 @@ def _translate_one_segment(client, pair, source_text, page_no, report, source_la
     for _attempt in range(2):
         try:
             content = client.translate(pair, validator=validator)
-        except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
+        except llm.AbortedError as error:
+            # 用户取消：转成可辨识的 CancelledError，交由上层清理半成品任务目录。
+            raise CancelledError(str(error)) from error
+        except (llm.OverBudgetError, llm.AuthError,
                 llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
             # 配置/网络/成本类错误终止整个任务；文案不含服务商原始报文。
             raise UserError(str(error)) from error
@@ -942,6 +954,33 @@ def _translate_document(source_doc, source_path, options, out, client, formats, 
     return result, report
 
 
+def _is_loopback_endpoint(endpoint):
+    """端点是否为本机 loopback（127.0.0.1 / ::1 / localhost）。
+
+    与 C# `TranslationProviderConfig.IsLoopbackEndpoint` 同口径：用户自备的本地
+    OpenAI 兼容服务（Ollama / LM Studio）常无需密钥，loopback 时允许空 apiKey；
+    非 loopback（云端）仍强制要求密钥。
+    """
+    value = str(endpoint or "").strip()
+    if not value:
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    host = (parts.hostname or "").strip().lower()
+    if not host:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def translate_request(request):
     """翻译操作 dispatch：在 BY_ID 与 outputDir 校验之前处理，自建等价校验（T10）。"""
     from translate import glossary as glossary_module
@@ -962,7 +1001,8 @@ def translate_request(request):
         raise UserError("请先配置翻译服务端点。")
     if not model:
         raise UserError("请先配置翻译模型。")
-    if not api_key:
+    if not api_key and not _is_loopback_endpoint(endpoint):
+        # 本地 loopback（Ollama / LM Studio）常无需密钥；云端必须提供。
         raise UserError("请先配置翻译服务 API Key。")
     template_name = str(options.get("template") or "generic")
     custom_template = None
@@ -1016,6 +1056,11 @@ def translate_request(request):
                 "inputBytes": sum(Path(f).stat().st_size for f in files),
                 "outputBytes": sum(p.stat().st_size for p in outputs),
                 "elapsed": round(time.monotonic() - started, 2)}
+    except CancelledError:
+        # 取消发生在 mono 与 dual 之间等中途：任务目录里只有半成品，清理掉，
+        # 避免用户看到/误用一个不完整的「成果」。普通失败仍保留目录供排查。
+        shutil.rmtree(out, ignore_errors=True)
+        raise
     except Exception as error:
         raise UserError(f"{str(error) if isinstance(error, UserError) else '翻译失败，请检查文件格式、网络与配置。'}\n本次输出目录：{out}") from error
 
@@ -1044,7 +1089,8 @@ def translate_text_request(request):
         raise UserError("请先配置翻译服务端点。")
     if not model:
         raise UserError("请先配置翻译模型。")
-    if not api_key:
+    if not api_key and not _is_loopback_endpoint(endpoint):
+        # 本地 loopback（Ollama / LM Studio）常无需密钥；云端必须提供。
         raise UserError("请先配置翻译服务 API Key。")
     template_name = str(options.get("template") or "generic")
     custom_template = None
@@ -1082,7 +1128,9 @@ def translate_text_request(request):
                                        custom_template=custom_template)[0]
             translated = _translate_one_segment(client, pair, text, 1, report,
                                                 source_lang, target_lang)
-        except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
+        except llm.AbortedError as error:
+            raise CancelledError(str(error)) from error
+        except (llm.OverBudgetError, llm.AuthError,
                 llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
             raise UserError(str(error)) from error
         except llm.LLMError as error:

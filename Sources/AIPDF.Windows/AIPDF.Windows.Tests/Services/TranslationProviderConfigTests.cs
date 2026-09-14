@@ -17,6 +17,22 @@ public sealed class TranslationProviderConfigTests
     public void ValidateEndpoint_AcceptsHttpAbsoluteUrls(string endpoint)
         => Assert.Null(TranslationProviderConfig.ValidateEndpoint(endpoint));
 
+    // 明文 http 仅限 loopback；云端端点用 http 会让 Bearer 密钥在链路上明文传输。
+    [Theory]
+    [InlineData("http://127.0.0.1:11434/v1")]
+    [InlineData("http://[::1]:8080/v1")]
+    [InlineData("http://localhost:11434/v1")]
+    public void ValidateEndpoint_AllowsPlainHttpForLoopback(string endpoint)
+        => Assert.Null(TranslationProviderConfig.ValidateEndpoint(endpoint));
+
+    [Theory]
+    [InlineData("http://api.deepseek.com/v1")]
+    [InlineData("http://192.168.1.10:11434/v1")]
+    [InlineData("http://remote.example.com:8443/v1")]
+    public void ValidateEndpoint_RejectsPlainHttpForNonLoopback(string endpoint)
+        => Assert.Equal(TranslationProviderConfig.PlainHttpMessage,
+                        TranslationProviderConfig.ValidateEndpoint(endpoint));
+
     [Theory]
     [InlineData("", "请填写端点地址。")]
     [InlineData("   ", "请填写端点地址。")]
