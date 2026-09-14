@@ -3,8 +3,10 @@
 // v1.1 T15 整篇翻译视图模型单测（纯逻辑，不依赖桌面 / 真实引擎）：
 //   文档缺失 / 未配置 / 受限确认门禁 / 成功结果与披露 / 取消 / 超时 / 后台继续（会话内）/ 模板映射 / 扫描页提示。
 using System.IO;
+using System.Linq;
 using System.Threading;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.ViewModels.Translation;
 using Xunit;
 
@@ -137,6 +139,84 @@ public sealed class FullTranslationViewModelTests
 
         Assert.True(asked);
         Assert.Equal(1, service.Calls);
+    }
+
+    [Fact]
+    public async Task Start_HighRiskTemplate_DeclinedConfirmation_DoesNotTranslate()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.SelectedTemplate = vm.Config.TemplateOptions.First(t => t.Id == "legal");
+        string? askedLabel = null;
+        vm.ConfirmHighRiskTemplateAsync = label => { askedLabel = label; return Task.FromResult(false); };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, service.Calls);
+        Assert.Equal("法律", askedLabel);
+        Assert.Contains("未确认高风险模板", vm.StatusMessage);
+        Assert.True(vm.Config.RequiresHighRiskConfirmation);
+    }
+
+    [Fact]
+    public async Task Start_HighRiskTemplate_Confirmed_Translates()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.SelectedTemplate = vm.Config.TemplateOptions.First(t => t.Id == "medical");
+        var asked = false;
+        vm.ConfirmHighRiskTemplateAsync = _ => { asked = true; return Task.FromResult(true); };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.True(asked);
+        Assert.Equal(1, service.Calls);
+    }
+
+    [Fact]
+    public async Task Start_HighRiskTemplate_WithoutConfirmationDelegate_DoesNotTranslate()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.SelectedTemplate = vm.Config.TemplateOptions.First(t => t.Id == "legal");
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, service.Calls);
+        Assert.Contains("未确认高风险模板", vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Start_HighRiskTemplate_ForcesMarker_EvenWhenSettingDisabled()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.SelectedTemplate = vm.Config.TemplateOptions.First(t => t.Id == "legal");
+        vm.ConfirmHighRiskTemplateAsync = _ => Task.FromResult(true);
+        vm.FooterMarkerProvider = () => false; // 设置关闭页脚标记
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.LastRequest);
+        Assert.True(service.LastRequest!.Marker); // 高风险强制写标记，忽略设置
+    }
+
+    [Fact]
+    public async Task Start_NormalTemplate_MarkerFollowsSetting()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.FooterMarkerProvider = () => false;
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.LastRequest);
+        Assert.False(service.LastRequest!.Marker); // 一般文档可关
+
+        var service2 = new FakeFullTranslationService();
+        var vm2 = NewViewModel(service2);
+        await vm2.StartCommand.ExecuteAsync(null);
+        Assert.True(service2.LastRequest!.Marker); // 默认开
     }
 
     [Fact]

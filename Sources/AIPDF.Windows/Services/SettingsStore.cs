@@ -212,6 +212,13 @@ public sealed class AppSettings
     /// <summary>成本硬上限 token 数，钳制到 [1, 1e9]；非正数回退默认 2.0M。</summary>
     [JsonPropertyName("translationCostLimitTokens")]
     public long TranslationCostLimitTokens { get; set; } = TranslationCostLimitTokensDefault;
+
+    /// <summary>
+    /// 产物 PDF 页脚是否写「机器翻译 · 请核对」标记（缺省开，§9.3）。一般文档可关；
+    /// 法律 / 医学高风险模板**强制写标记、忽略此设置**，由 backend <c>output.add_marker(high_risk=True)</c> 兜底。
+    /// </summary>
+    [JsonPropertyName("translationMarkerEnabled")]
+    public bool TranslationMarkerEnabled { get; set; } = true;
 }
 
 /// <summary>

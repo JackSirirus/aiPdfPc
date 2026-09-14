@@ -92,6 +92,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             new EngineFullTranslationService((DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge()),
             _translationConfig);
         _fullTranslation.ConfirmRestrictedDocumentAsync = () => Task.FromResult(RestrictedDocumentDialog.Show(this));
+        // 高风险模板（法律 / 医学）确认门禁：默认未勾选，必须显式确认才可开始（F2b）。
+        _fullTranslation.ConfirmHighRiskTemplateAsync = label => Task.FromResult(HighRiskTemplateDialog.Show(this, label));
+        // 产物页脚标记：跟随设置（默认开）；高风险模板由 VM + 引擎双重强制，忽略设置（§9.3）。
+        _fullTranslation.FooterMarkerProvider = () => _settingsStore.Load().TranslationMarkerEnabled;
         _fullTranslation.OpenArtifactRequested += (_, artifact) => OpenDocumentTab(artifact.Path);
         TranslationFullPanel.DataContext = _fullTranslation;
 

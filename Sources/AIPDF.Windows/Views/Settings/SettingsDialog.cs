@@ -47,6 +47,7 @@ public sealed class SettingsDialog : Window
     private readonly PasswordBox _keyBox = new();
     private readonly TextBlock _consentStatus = new();
     private readonly TextBlock _translationMessage = new();
+    private readonly CheckBox _markerCheck = new();
     private readonly CheckBox _revokeAlsoClear = new();
     private readonly Button _saveProviderButton = new();
     private readonly Button _storeKeyButton = new();
@@ -274,6 +275,20 @@ public sealed class SettingsDialog : Window
         translationActions.Children.Add(_revokeButton);
         translationActions.Children.Add(_clearCredentialButton);
         AddSpanningRow(rows, ref row, translationActions);
+
+        // 产物页脚标记（§9.3）：一般文档可关；法律 / 医学高风险模板强制显示、不受此开关影响。
+        _markerCheck.Content = "产物 PDF 页脚添加「机器翻译 · 请核对」标记（一般文档可关）";
+        _markerCheck.IsChecked = current.TranslationMarkerEnabled;
+        _markerCheck.FontSize = 12;
+        _markerCheck.Cursor = System.Windows.Input.Cursors.Hand;
+        _markerCheck.VerticalAlignment = VerticalAlignment.Center;
+        _markerCheck.Margin = new Thickness(0, 12, 0, 0);
+        AddSpanningRow(rows, ref row, _markerCheck);
+        AddSpanningRow(rows, ref row, new TextBlock
+        {
+            Text = "法律 / 医学高风险模板强制显示该页脚标记，不受此开关影响；结果区「机器翻译 · 请核对」标记始终常驻。",
+            Style = FindStyle("FieldHint"),
+        });
 
         RefreshProviderCombo();
 
@@ -629,6 +644,7 @@ public sealed class SettingsDialog : Window
             TranslationGlossaryPath = existing.TranslationGlossaryPath,
             TranslationCostLimitEnabled = existing.TranslationCostLimitEnabled,
             TranslationCostLimitTokens = existing.TranslationCostLimitTokens,
+            TranslationMarkerEnabled = _markerCheck.IsChecked == true,
         };
 
         try

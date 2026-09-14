@@ -1,0 +1,79 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<!-- v1.1 T15 高风险模板确认（F2b / 需求总结 §9.3）：法律 / 医学模板在开始整篇翻译前显式确认。
+     确认框默认未勾选；未勾选时「确认并开始」禁用。文案覆盖：准确性免责 + 涉密/特权/受监管数据合规警告。
+     配色全部复用应用级 Brush.* token（DynamicResource），不新增 token。 -->
+<Window x:Class="AIPDF.Windows.Views.Translation.HighRiskTemplateDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="高风险文档 · 请确认"
+        Width="480"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24,20,24,20">
+        <!-- 高风险提示条 -->
+        <Border Padding="12,9"
+                CornerRadius="6"
+                Background="{DynamicResource Brush.ConverterWarnBackground}">
+            <TextBlock FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Brush.ConverterWarnText}"
+                       Text="⚠ 法律 / 医学属高风险文档：机器翻译结果不得直接作为专业依据。" />
+        </Border>
+
+        <TextBlock Margin="0,14,0,0"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource Brush.TextPrimary}"
+                   Text="高风险文档 · 请确认" />
+
+        <TextBlock x:Name="TemplateLead"
+                   Margin="0,8,0,0"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Brush.TextSecondary}" />
+
+        <!-- 标记规则：结果区常驻 + 产物页脚强制 -->
+        <Border Margin="0,12,0,0"
+                Padding="10,8"
+                CornerRadius="6"
+                Background="{DynamicResource Brush.ConverterWarnBackground}">
+            <TextBlock FontSize="11"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Brush.ConverterWarnText}"
+                       Text="结果区常驻「机器翻译 · 请核对」标记；产物 PDF 每页页脚加极小标记，高风险模板（法律/医学）下强制显示、不可由设置关闭。" />
+        </Border>
+
+        <TextBlock Margin="0,10,0,0"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Brush.TextSecondary}"
+                   Text="上传涉密 / 受特权保护或受监管数据前请确认合规与授权。机器翻译不替代专业法律 / 医学意见。" />
+
+        <CheckBox x:Name="ConfirmCheck"
+                  Margin="0,14,0,0"
+                  FontSize="12"
+                  Cursor="Hand"
+                  Foreground="{DynamicResource Brush.TextPrimary}"
+                  VerticalContentAlignment="Center"
+                  Content="我已知悉上述风险，并确认由具备资质的人员复核后使用" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button x:Name="ConfirmButton"
+                    Content="确认并开始"
+                    Style="{StaticResource PrimaryButton}"
+                    IsDefault="True"
+                    MinWidth="104"
+                    IsEnabled="{Binding IsChecked, ElementName=ConfirmCheck}"
+                    Click="OnConfirmClick" />
+            <Button Content="取消"
+                    Style="{StaticResource SecondaryButton}"
+                    IsCancel="True"
+                    MinWidth="88"
+                    Margin="8,0,0,0"
+                    Click="OnCancelClick" />
+        </StackPanel>
+    </StackPanel>
+</Window>

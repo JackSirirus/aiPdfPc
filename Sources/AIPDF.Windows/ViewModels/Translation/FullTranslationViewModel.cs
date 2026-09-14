@@ -92,6 +92,20 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     /// </summary>
     public Func<Task<bool>>? ConfirmRestrictedDocumentAsync { get; set; }
 
+    /// <summary>
+    /// 高风险模板确认委托（法律 / 医学；宿主接模态，参数为模板显示名，勾选确认后返回 true）。
+    /// 确认框默认未勾选，覆盖准确性免责 + 涉密/特权/受监管数据合规警告（F2b）。
+    /// 未注入时视为未确认 —— 高风险模板不会在未确认下开始。
+    /// </summary>
+    public Func<string, Task<bool>>? ConfirmHighRiskTemplateAsync { get; set; }
+
+    /// <summary>
+    /// 产物 PDF 页脚「机器翻译 · 请核对」标记策略（映射设置 <c>TranslationMarkerEnabled</c>）。默认开。
+    /// 高风险模板（法律 / 医学）时无论该值如何都强制写标记，与 backend
+    /// <c>output.add_marker(high_risk=True)</c> 的强制口径一致（§9.3）。
+    /// </summary>
+    public Func<bool> FooterMarkerProvider { get; set; } = static () => true;
+
     /// <summary>整篇任务超时（默认 <see cref="DefaultTimeout"/>；测试可缩短）。</summary>
     public TimeSpan Timeout { get; set; } = DefaultTimeout;
 
@@ -289,6 +303,18 @@ public sealed partial class FullTranslationViewModel : ObservableObject
             }
         }
 
+        // 高风险模板（法律 / 医学）确认门禁：默认未勾选，必须显式确认才可开始（F2b / §9.3）。
+        if (Config.IsHighRiskTemplate)
+        {
+            var confirmed = ConfirmHighRiskTemplateAsync is not null
+                && await ConfirmHighRiskTemplateAsync(Config.SelectedTemplate?.Label ?? "");
+            if (!confirmed)
+            {
+                StatusMessage = "已取消：未确认高风险模板提示，未开始翻译。";
+                return;
+            }
+        }
+
         var request = BuildRequest(runtime, output);
 
         RestrictionDisclosure = null;
@@ -376,7 +402,9 @@ public sealed partial class FullTranslationViewModel : ObservableObject
             GenerateMono: Config.GenerateMono,
             GenerateDual: Config.GenerateDual,
             Password: DocumentPassword,
-            Marker: true);
+            // 页脚标记：设置开关；高风险模板（法律 / 医学）强制开启，忽略设置（§9.3，
+            // 与 backend output.add_marker(high_risk=True) 的强制口径一致）。
+            Marker: FooterMarkerProvider() || Config.IsHighRiskTemplate);
 
     /// <summary>
     /// T13 模板标识 → 引擎 <c>prompt.PRESET_TEMPLATES</c> 键名。

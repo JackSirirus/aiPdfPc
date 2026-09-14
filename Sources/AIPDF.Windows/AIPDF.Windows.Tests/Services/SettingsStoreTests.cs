@@ -274,6 +274,7 @@ public sealed class SettingsStoreTests
             TranslationGlossaryPath = @"  C:\dict\terms.csv  ",
             TranslationCostLimitEnabled = false,
             TranslationCostLimitTokens = 500_000,
+            TranslationMarkerEnabled = false,
             TranslationProviders =
             [
                 new TranslationProviderConfig
@@ -293,6 +294,7 @@ public sealed class SettingsStoreTests
         Assert.Equal(@"C:\dict\terms.csv", loaded.TranslationGlossaryPath);
         Assert.False(loaded.TranslationCostLimitEnabled);
         Assert.Equal(500_000, loaded.TranslationCostLimitTokens);
+        Assert.False(loaded.TranslationMarkerEnabled);
         Assert.Single(loaded.TranslationProviders);
         var provider = loaded.TranslationProviders[0];
         Assert.Equal("deepseek", provider.Provider);
@@ -314,6 +316,7 @@ public sealed class SettingsStoreTests
         Assert.Equal("", loaded.TranslationGlossaryPath);
         Assert.True(loaded.TranslationCostLimitEnabled);
         Assert.Equal(2_000_000, loaded.TranslationCostLimitTokens);
+        Assert.True(loaded.TranslationMarkerEnabled); // 页脚标记默认开
         Assert.Empty(loaded.TranslationProviders);
     }
 
