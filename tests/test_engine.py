@@ -374,8 +374,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(subtypes,["/Ink","/Square"])
 
     def test_annotation_operations_stay_out_of_catalog(self):
-        # 批注 handler 不得进 BY_ID（32 工具目录不变）
-        self.assertEqual(len(engine.BY_ID),32)
+        # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
+        self.assertEqual(len(engine.BY_ID),33)
         for op in engine.ANNOTATION_OPERATIONS:
             self.assertNotIn(op,engine.BY_ID)
         self.assertIn("add_ink_annot",engine.ANNOTATION_OPERATIONS)
@@ -561,12 +561,18 @@ class EngineTests(unittest.TestCase):
         with self.pdf(result) as d:self.assertEqual(len(d),1);self.assertEqual(d[0].rotation,90);self.assertFalse(d.needs_pass)
 
     def test_removed_ai_tools_and_offline_health(self):
-        self.assertEqual(len(engine.BY_ID),32)
+        self.assertEqual(len(engine.BY_ID),33)
         self.assertEqual(engine.BY_ID["markdown"]["category"],"格式转换")
-        for op in ["summarize","translate"]:
-            self.assertNotIn(op,engine.BY_ID)
-            with self.assertRaisesRegex(engine.UserError,"未知的工具"):
-                self.run_tool(op)
+        # v1.1：翻译正式纳入范围。目录 id 为 translate_batch，请求 operation 为
+        # translate，专用 dispatch 处理，二者都不应被当成「未知的工具」。
+        self.assertEqual(engine.BY_ID["translate_batch"]["name"],"批量翻译")
+        self.assertNotIn("translate",engine.BY_ID)
+        with self.assertRaisesRegex(engine.UserError,"翻译服务端点"):
+            self.run_tool("translate")
+        # AI 摘要仍由维护者排除。
+        self.assertNotIn("summarize",engine.BY_ID)
+        with self.assertRaisesRegex(engine.UserError,"未知的工具"):
+            self.run_tool("summarize")
         with patch("socket.create_connection",side_effect=AssertionError("Health must not connect to services")):
             status=engine.health()
         self.assertTrue(status["ok"])

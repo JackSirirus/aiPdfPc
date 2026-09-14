@@ -53,9 +53,23 @@ tool("sign", "PDF 签名", "手写、输入姓名或放置签名图片", "安全
 tool("redact", "永久遮盖", "从导出文件中移除敏感内容", "安全保护", "rectangle.fill", [PAGES, field("text", "匹配文字（可选，每行一项）", "", "textarea")] + RECT, note="按关键词或框选区域删除文字、图片和图形；导出时清理元数据、附件、批注和表单。请复核结果。")
 tool("compare", "比较 PDF", "并排看版本，突出视觉和文字差异", "安全保护", "square.split.2x1", note="选择两份 PDF，导出逐页视觉对比 PDF 和文字差异 HTML。按页序比较，不自动对齐插入页。")
 tool("markdown", "PDF 转 Markdown", "把文档转换为可复用的笔记", "格式转换", "text.alignleft", [PAGES], note="提取文字、标题、链接、表格和图片；复杂阅读顺序可能需要整理。")
+tool("translate_batch", "批量翻译", "把 PDF 文字翻译成目标语言，生成纯译文与对照", "格式转换", "character.bubble",
+     [field("targetLang", "目标语言", "zh", "choice", ["zh", "en", "ja", "ko", "fr", "de", "es", "ru"], help="目标语言必须显式选择，不参与自动检测。"),
+      field("sourceLang", "源语言", "auto", "choice", ["auto", "zh", "en", "ja", "ko", "fr", "de", "es", "ru"], help="自动检测仅用于源语言。"),
+      field("template", "翻译模板", "generic", "choice", ["generic", "academic", "technical", "legal", "medical"]),
+      field("endpoint", "服务端点", "", help="OpenAI 兼容 API 基址，例如 https://host/v1。"),
+      field("model", "模型名称", ""),
+      field("apiKey", "API Key", "", "secret", help="仅经 stdin 传递给引擎，不写入配置、日志或命令行。"),
+      field("glossary", "术语表 CSV（可选）", "", "file"),
+      field("format", "输出形态", "both", "choice", ["both", "mono", "dual"]),
+      field("marker", "添加“机器翻译 · 请核对”页脚", "true", "toggle"),
+      field("maxTokens", "单任务 token 上限（可选）", "", help="留空不限额；达到上限即停止后续请求。")],
+     note="整篇文本会分批发送至你配置的云端服务商；仅在你明确同意后联网，密钥经 stdin 传递。扫描件先运行 OCR。法律/医学模板产出强制显示机器翻译标记。")
 tool("workflow", "工作流程", "保存常用步骤，一次完成处理", "工作流程", "arrow.triangle.branch", multiple=True, note="把多个 PDF 操作按顺序串联，并保存为本机预设；每一步均保留输出副本。")
 
 BY_ID = {t["id"]: t for t in TOOLS}
 
 if __name__ == "__main__":
-    Path(__file__).with_name("catalog.json").write_text(json.dumps(TOOLS, ensure_ascii=False, indent=2))
+    # 固定 UTF-8 + LF：不随平台默认编码/换行漂移，catalog.json 在仓库中始终可移植。
+    Path(__file__).with_name("catalog.json").write_text(
+        json.dumps(TOOLS, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")

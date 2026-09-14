@@ -1140,6 +1140,130 @@
     "dependency": ""
   },
   {
+    "id": "translate_batch",
+    "name": "批量翻译",
+    "subtitle": "把 PDF 文字翻译成目标语言，生成纯译文与对照",
+    "category": "格式转换",
+    "icon": "character.bubble",
+    "fields": [
+      {
+        "key": "targetLang",
+        "label": "目标语言",
+        "value": "zh",
+        "kind": "choice",
+        "choices": [
+          "zh",
+          "en",
+          "ja",
+          "ko",
+          "fr",
+          "de",
+          "es",
+          "ru"
+        ],
+        "help": "目标语言必须显式选择，不参与自动检测。"
+      },
+      {
+        "key": "sourceLang",
+        "label": "源语言",
+        "value": "auto",
+        "kind": "choice",
+        "choices": [
+          "auto",
+          "zh",
+          "en",
+          "ja",
+          "ko",
+          "fr",
+          "de",
+          "es",
+          "ru"
+        ],
+        "help": "自动检测仅用于源语言。"
+      },
+      {
+        "key": "template",
+        "label": "翻译模板",
+        "value": "generic",
+        "kind": "choice",
+        "choices": [
+          "generic",
+          "academic",
+          "technical",
+          "legal",
+          "medical"
+        ],
+        "help": ""
+      },
+      {
+        "key": "endpoint",
+        "label": "服务端点",
+        "value": "",
+        "kind": "text",
+        "choices": [],
+        "help": "OpenAI 兼容 API 基址，例如 https://host/v1。"
+      },
+      {
+        "key": "model",
+        "label": "模型名称",
+        "value": "",
+        "kind": "text",
+        "choices": [],
+        "help": ""
+      },
+      {
+        "key": "apiKey",
+        "label": "API Key",
+        "value": "",
+        "kind": "secret",
+        "choices": [],
+        "help": "仅经 stdin 传递给引擎，不写入配置、日志或命令行。"
+      },
+      {
+        "key": "glossary",
+        "label": "术语表 CSV（可选）",
+        "value": "",
+        "kind": "file",
+        "choices": [],
+        "help": ""
+      },
+      {
+        "key": "format",
+        "label": "输出形态",
+        "value": "both",
+        "kind": "choice",
+        "choices": [
+          "both",
+          "mono",
+          "dual"
+        ],
+        "help": ""
+      },
+      {
+        "key": "marker",
+        "label": "添加“机器翻译 · 请核对”页脚",
+        "value": "true",
+        "kind": "toggle",
+        "choices": [],
+        "help": ""
+      },
+      {
+        "key": "maxTokens",
+        "label": "单任务 token 上限（可选）",
+        "value": "",
+        "kind": "text",
+        "choices": [],
+        "help": "留空不限额；达到上限即停止后续请求。"
+      }
+    ],
+    "extensions": [
+      "pdf"
+    ],
+    "multiple": true,
+    "note": "整篇文本会分批发送至你配置的云端服务商；仅在你明确同意后联网，密钥经 stdin 传递。扫描件先运行 OCR。法律/医学模板产出强制显示机器翻译标记。",
+    "dependency": ""
+  },
+  {
     "id": "workflow",
     "name": "工作流程",
     "subtitle": "保存常用步骤，一次完成处理",

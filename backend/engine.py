@@ -777,6 +777,204 @@ def save_annotations_request(request, operation="save_annotations"):
     return {"ok": True, "outputs": [path], "annotationHandles": handles}
 
 
+# --- V1.1 翻译接入（T10） ------------------------------------------------------
+# 翻译是范围扩展后的专用操作：它在 BY_ID 之前处理（目录 id 为 translate_batch，
+# 请求 operation 为 translate），自建校验并新建任务输出目录。API Key 只从 stdin
+# JSON 的 options 读入并直接交给 LLMClient，绝不写入 argv / 环境变量 / 日志。
+_TRANSLATE_FORMATS = {"both": ("mono", "dual"), "mono": ("mono",), "dual": ("dual",)}
+
+
+def _parse_translation_json(content):
+    """解析模型返回的逐段译文：`[{"index","text"}]`、`{"segments":[...]}` 或纯文本数组。"""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        raise ValueError("翻译输出不是合法 JSON。") from error
+    if isinstance(data, dict):
+        if isinstance(data.get("segments"), list):
+            data = data["segments"]
+        elif "text" in data:
+            data = [data]
+        else:
+            data = [data]
+    if not isinstance(data, list) or not data:
+        raise ValueError("翻译输出为空。")
+    segments = []
+    for item in data:
+        value = item.get("text") if isinstance(item, dict) else item
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("翻译输出缺少文本。")
+        segments.append(value)
+    return segments
+
+
+def _segment_validator(llm):
+    """llm.translate 的 schema 校验回调：失败抛 ValidationError 触发其内部重试一次。"""
+    def validate(content):
+        try:
+            texts = _parse_translation_json(content)
+        except ValueError as error:
+            raise llm.ValidationError(str(error)) from error
+        if len(texts) != 1:
+            raise llm.ValidationError("翻译输出段落数与请求不一致。")
+    return validate
+
+
+def _translate_one_segment(client, pair, source_text, page_no, report, source_lang, target_lang):
+    """翻译一段并校验；校验不过按规格逐段重译一次，仍失败保留原文并标降级。"""
+    from translate import llm, verify
+    validator = _segment_validator(llm)
+    for _attempt in range(2):
+        try:
+            content = client.translate(pair, validator=validator)
+        except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
+                llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
+            # 配置/网络/成本类错误终止整个任务；文案不含服务商原始报文。
+            raise UserError(str(error)) from error
+        except llm.LLMError:
+            continue  # 拒译 / 空响应 / schema: 重译一次，仍失败走降级
+        try:
+            candidate = _parse_translation_json(content)[0]
+        except (ValueError, IndexError):
+            continue
+        if verify.verify_translation(source_text, candidate, source_lang, target_lang).ok:
+            return candidate
+    report.add(page_no, verify.UNTRANSLATED_ECHO)
+    return ""
+
+
+def _translate_blocks(blocks, report, client, template_name, glossary_entries, source_lang, target_lang):
+    """按 token 分块逐段翻译，再按源块下标重组（chunk T4 + prompt T6 + LLM T5）。"""
+    from translate import chunk, prompt
+    chunks = chunk.chunk_blocks(blocks)
+    progress(f"正在翻译，共 {len(chunks)} 个分块", 0.25)
+    translations = []
+    for item in chunks:
+        core = [blocks[index] for index in item.source_indices]
+        if not core:
+            continue
+        pairs = prompt.build_prompt([block.text for block in core], template_name=template_name,
+                                    glossary=glossary_entries)
+        for block, pair in zip(core, pairs):
+            translations.append(_translate_one_segment(client, pair, block.text, block.page_no,
+                                                       report, source_lang, target_lang))
+    return chunk.reassemble_chunks(chunks, translations)
+
+
+def _translate_document(source_doc, source_path, options, out, client, formats, high_risk):
+    """单文件：抽取 T3 → 分块 T4 → prompt T6 → LLM T5 → 校验 T7 → 回填 T8 → 输出 T9。"""
+    from translate import extract, output, verify
+    bridge = _bridge_module()
+    progress("正在抽取文本", 0.1)
+    extraction = extract.extract_document(source_doc)
+    report = verify.DegradationReport(task_id=uuid.uuid4().hex[:12], total_pages=len(source_doc))
+    for page in extraction.report["pages"]:
+        for reason in page["reasons"]:
+            report.add(page["page"], reason)
+    # 复用抽取结果按页分组，避免再次抽取（扫描页会重复触发 OCR），并保证
+    # 扁平译文的下标与 output.page_translations 的页偏移完全对齐。
+    blocks_by_page = [[] for _ in range(len(source_doc))]
+    for block in extraction.blocks:
+        blocks_by_page[block.page_no - 1].append(block)
+    translations = _translate_blocks(extraction.blocks, report, client,
+                                     str(options.get("template") or "generic"),
+                                     options.get("_glossary"),
+                                     options.get("sourceLang"), options.get("targetLang"))
+    progress("正在回填排版", 0.85)
+    result = output.write_outputs(source_doc, source_path, translations, report, out,
+                                  marker=bool(options.get("marker", True)), high_risk=high_risk,
+                                  formats=formats, blocks_by_page=blocks_by_page, task_dir=out)
+    payload = report.to_dict()
+    info = getattr(report, "source_protection", None)
+    if info:
+        payload["source_protection"] = info
+    bridge.atomic_write(out / f"{Path(source_path).stem}-降级报告.json",
+                        json.dumps(payload, ensure_ascii=False, indent=2))
+    return result, report
+
+
+def translate_request(request):
+    """翻译操作 dispatch：在 BY_ID 与 outputDir 校验之前处理，自建等价校验（T10）。"""
+    from translate import glossary as glossary_module
+    from translate import llm, prompt
+    files = [str(Path(p).expanduser().resolve()) for p in request.get("files", [])]
+    options = request.get("options", {}) or {}
+    if not files:
+        raise UserError("请先选择文件。")
+    for path in files:
+        if not Path(path).is_file():
+            raise UserError(f"文件不存在：{Path(path).name}")
+        if Path(path).suffix.lower().lstrip(".") != "pdf":
+            raise UserError(f"{Path(path).name} 的格式不适用于此工具。")
+    api_key = str(options.get("apiKey", "") or "")
+    endpoint = str(options.get("endpoint", "") or "").strip()
+    model = str(options.get("model", "") or "").strip()
+    if not endpoint:
+        raise UserError("请先配置翻译服务端点。")
+    if not model:
+        raise UserError("请先配置翻译模型。")
+    if not api_key:
+        raise UserError("请先配置翻译服务 API Key。")
+    template_name = str(options.get("template") or "generic")
+    if template_name not in prompt.PRESET_TEMPLATES:
+        raise UserError(f"未知的翻译模板：{template_name}。")
+    formats = _TRANSLATE_FORMATS.get(str(options.get("format") or "both"))
+    if formats is None:
+        raise UserError("输出形态只能是 both、mono 或 dual。")
+    cap = str(options.get("maxTokens", "") or "").strip()
+    try:
+        cost_cap = int(cap) if cap else None
+    except ValueError:
+        raise UserError("单任务 token 上限必须是整数。")
+    glossary_entries = None
+    glossary_path = str(options.get("glossary", "") or "").strip()
+    if glossary_path:
+        try:
+            glossary_entries = glossary_module.load_glossary(glossary_path)
+        except glossary_module.GlossaryError as error:
+            raise UserError(str(error)) from error
+    options = {**options, "_glossary": glossary_entries}
+    parent = Path(request.get("outputDir", "")).expanduser()
+    if not parent.is_absolute() or not parent.is_dir():
+        raise UserError("请选择有效的输出文件夹。")
+    out = parent / ("AIPDF-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    out.mkdir(mode=0o700)
+    started = time.monotonic()
+    try:
+        client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
+        high_risk = prompt.PRESET_TEMPLATES[template_name].get("high_risk", False)
+        outputs, results = [], []
+        for index, path in enumerate(files):
+            progress(f"正在翻译文件 {index + 1}/{len(files)}", index / len(files))
+            with open_pdf(path, str(options.get("password", "") or "")) as source_doc:
+                result, report = _translate_document(source_doc, path, options, out, client,
+                                                     formats, high_risk)
+            for kind in ("mono", "dual"):
+                if result.get(kind):
+                    outputs.append(Path(result[kind]))
+            results.append({"file": path, "taskDir": result["taskDir"],
+                            "mono": result.get("mono"), "dual": result.get("dual"),
+                            "report": report.to_dict()})
+        progress("翻译完成", 1.0)
+        return {"ok": True, "outputs": [str(p) for p in outputs], "outputDir": str(out),
+                "results": results,
+                "inputBytes": sum(Path(f).stat().st_size for f in files),
+                "outputBytes": sum(p.stat().st_size for p in outputs),
+                "elapsed": round(time.monotonic() - started, 2)}
+    except Exception as error:
+        raise UserError(f"{str(error) if isinstance(error, UserError) else '翻译失败，请检查文件格式、网络与配置。'}\n本次输出目录：{out}") from error
+
+
+def _bridge_module():
+    """延迟导入 translate.bridge（仅在翻译分支需要，避免普通工具加载翻译栈）。"""
+    from translate import bridge
+    return bridge
+
+
 def position_rect(page, options, width, height):
     bounds = page.rect
     p = options.get("position", "bottom-center")
@@ -1399,6 +1597,9 @@ def dispatch(request):
     operation=request.get("operation", "")
     if operation=="health": return health()
     if operation=="inspect": return inspect_file(request["files"][0],request.get("options",{}).get("password",""))
+    # 翻译产出新任务目录且密钥只经 stdin 传入；它在 BY_ID 之前处理，自建
+    # 文件/扩展名/输出目录/配置等价校验，与批注保存同属专用 dispatch。
+    if operation=="translate": return translate_request(request)
     # 批注保存就地写回原文件，无输出目录且非 catalog 工具，必须在 BY_ID/outputDir
     # 校验之前处理；其内部自建 file/扩展名/multiple 等价校验（M-1）。
     if operation in ANNOTATION_OPERATIONS: return save_annotations_request(request,operation)
