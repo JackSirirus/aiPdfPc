@@ -20,6 +20,7 @@ public sealed class TranslationConsentService
     private readonly TranslationCredentialStore _credentials;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Dictionary<string, TranslationConsent> _sessionOnly = new(StringComparer.Ordinal);
+    private int _generation;
 
     /// <summary>默认使用系统时钟；测试注入固定时钟。</summary>
     public TranslationConsentService(
@@ -38,6 +39,13 @@ public sealed class TranslationConsentService
     /// </summary>
     public bool IsConsented(string provider, string endpoint, string? apiKey)
         => FindValidConsent(provider, endpoint, apiKey) is not null;
+
+    /// <summary>
+    /// 同意代次：每次「撤销同意」真正生效（移除会话 / 持久记录，或清除凭据）时 +1；授予同意、
+    /// 无实际变化时不递增。运行中的云端翻译任务据此在代次变化时立即取消，停止继续向已撤回
+    /// 同意的服务商发送请求（见 <c>ConsentRevocationWatcher</c>）。线程安全。
+    /// </summary>
+    public int Generation => Volatile.Read(ref _generation);
 
     /// <summary>
     /// 用凭据管理器中实际保存的密钥做「漫游校验」（决策 (i)）：同意记录中的指纹与机器上真实密钥不一致
@@ -154,6 +162,12 @@ public sealed class TranslationConsentService
         if (alsoClearCredential)
         {
             removed |= _credentials.Delete(normalizedProvider, normalizedEndpoint);
+        }
+
+        if (removed)
+        {
+            // 代次递增 → 运行中的云端任务监听到后自行取消（见 ConsentRevocationWatcher）。
+            Interlocked.Increment(ref _generation);
         }
 
         return removed;

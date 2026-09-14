@@ -148,7 +148,9 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     private readonly IFullTranslationService _service;
     private readonly ITranslationRuntimeConfigProvider _configProvider;
     private CancellationTokenSource? _cts;
+    private Task? _consentWatch;
     private bool _userCancelled;
+    private volatile bool _consentRevoked;
 
     public FullTranslationViewModel(
         IFullTranslationService service,
@@ -194,6 +196,9 @@ public sealed partial class FullTranslationViewModel : ObservableObject
 
     /// <summary>整篇任务超时（默认 <see cref="DefaultTimeout"/>；测试可缩短）。</summary>
     public TimeSpan Timeout { get; set; } = DefaultTimeout;
+
+    /// <summary>同意代次轮询间隔（F21；测试可缩短以快速验证撤销取消）。</summary>
+    internal TimeSpan ConsentCheckInterval { get; set; } = ConsentRevocationWatcher.DefaultInterval;
 
     /// <summary>请求打开某产物（宿主接新标签）。</summary>
     public event EventHandler<FullTranslationArtifactViewModel>? OpenArtifactRequested;
@@ -455,9 +460,19 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         NotifyCollections();
 
         _userCancelled = false;
+        _consentRevoked = false;
         using var timeoutCts = new CancellationTokenSource(Timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
         _cts = linked;
+
+        // F21：云端任务运行期监视同意代次；撤销同意即取消，停止继续向已撤回同意的服务商发送请求。
+        if (!TranslationProviderConfig.IsLocalProvider(runtime.Provider))
+        {
+            var generation = _configProvider.ConsentGeneration;
+            _consentWatch = ConsentRevocationWatcher.Start(
+                () => _configProvider.ConsentGeneration, generation, linked,
+                onRevoked: () => _consentRevoked = true, interval: ConsentCheckInterval).Task;
+        }
 
         IsRunning = true;
         IsBackgrounded = false;
@@ -474,6 +489,13 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         }
         finally
         {
+            linked.Cancel();
+            if (_consentWatch is not null)
+            {
+                await _consentWatch;
+                _consentWatch = null;
+            }
+
             _cts = null;
             IsRunning = false;
             IsBackgrounded = false;
@@ -600,6 +622,14 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     {
         if (outcome.Cancelled)
         {
+            if (_consentRevoked && !timedOut)
+            {
+                StageText = "已取消";
+                StatusMessage = "已取消：云端同意已被撤销，本次任务已停止，未采用半成品。";
+                ProgressFraction = 0;
+                return;
+            }
+
             StageText = timedOut ? "已超时" : "已取消";
             StatusMessage = timedOut
                 ? $"已超时（超过 {Timeout.TotalMinutes:0} 分钟），任务已停止，未采用半成品。"

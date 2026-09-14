@@ -19,6 +19,16 @@ public sealed class FullTranslationViewModelTests
         public TranslationRuntimeConfig? Get() => config;
     }
 
+    /// <summary>可变更同意代次的配置提供者（模拟运行中撤销同意，F21）。</summary>
+    private sealed class RevocableConfigProvider(TranslationRuntimeConfig? config) : ITranslationRuntimeConfigProvider
+    {
+        public int Generation { get; set; }
+
+        public TranslationRuntimeConfig? Get() => config;
+
+        public int ConsentGeneration => Generation;
+    }
+
     private sealed class FakeFullTranslationService : IFullTranslationService
     {
         public Func<FullTranslationRequest, IProgress<FullTranslationProgress>?, CancellationToken, Task<FullTranslationOutcome>> Handler
@@ -414,6 +424,44 @@ public sealed class FullTranslationViewModelTests
         Assert.Contains("已取消", vm.StatusMessage);
         Assert.False(vm.IsErrorStatus);
         Assert.False(vm.IsRunning);
+    }
+
+    [Fact]
+    public async Task Start_ConsentRevokedMidRun_CancelsInFlightTask_AndReportsRevocation()
+    {
+        var service = new FakeFullTranslationService();
+        var provider = new RevocableConfigProvider(
+            new TranslationRuntimeConfig("deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic"));
+        var vm = new FullTranslationViewModel(service, provider)
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+            ConsentCheckInterval = TimeSpan.FromMilliseconds(10),
+        };
+        service.Handler = async (_, _, token) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 真实服务把取消转成 Cancelled 结果。
+            }
+
+            return FullTranslationOutcome.Cancelled_;
+        };
+
+        var start = vm.StartCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => vm.IsRunning);
+
+        provider.Generation++; // 运行中撤销云端同意 → 在途任务必须停止
+
+        await start;
+
+        Assert.False(vm.IsRunning);
+        Assert.Contains("同意已被撤销", vm.StatusMessage);
+        Assert.False(vm.IsErrorStatus);
     }
 
     [Fact]

@@ -177,7 +177,8 @@ def _text_blocks_from_dict(page, dehyphenate):
             rect=geometry.RectNorm(bbox.x0, bbox.y0, bbox.x1, bbox.y1, rotation),
             text=text, size=size, font=font, bold=bold, italic=italic,
             confidence=1.0 - suspicious_ratio(text),
-            script=detect.classify_unsupported(text, dirs)))
+            # dir 与 bbox 同在未旋转坐标；传入页面 rotation 后按可见方向判竖排（§2.4）。
+            script=detect.classify_unsupported(text, dirs, rotation=rotation)))
     return blocks
 
 

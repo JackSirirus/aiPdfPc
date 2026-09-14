@@ -20,6 +20,16 @@ public sealed class TranslationBatchViewModelTests
         public TranslationRuntimeConfig? Get() => config;
     }
 
+    /// <summary>可变更同意代次的配置提供者（模拟运行中撤销同意，F21）。</summary>
+    private sealed class RevocableConfigProvider(TranslationRuntimeConfig? config) : ITranslationRuntimeConfigProvider
+    {
+        public int Generation { get; set; }
+
+        public TranslationRuntimeConfig? Get() => config;
+
+        public int ConsentGeneration => Generation;
+    }
+
     private static TranslationRuntimeConfig RuntimeConfig()
         => new("local", "http://127.0.0.1:11434/v1", "qwen", "sk-test", "auto", "zh", "academic");
 
@@ -50,6 +60,23 @@ public sealed class TranslationBatchViewModelTests
                 OutputDir = @"D:\out\task",
                 ExitCode = 0,
             };
+    }
+
+    /// <summary>会阻塞到取消的假桥（验证运行中撤销同意会停止在途批量）。</summary>
+    private sealed class BlockingBridge : EngineBridge
+    {
+        public BlockingBridge() : base("nonexistent-python", "nonexistent-engine")
+        {
+        }
+
+        public List<EngineRequest> Requests { get; } = [];
+
+        public override async Task<EngineResult> ExecuteAsync(EngineRequest request, CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return RecordingBridge.Success();
+        }
     }
 
     private static TranslationBatchViewModel NewViewModel(RecordingBridge bridge, params string[] files)
@@ -172,6 +199,37 @@ public sealed class TranslationBatchViewModelTests
 
         Assert.Empty(bridge.Requests);
         Assert.Contains("翻译服务尚未配置", vm.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Start_ConsentRevokedMidRun_CancelsBatch_AndReportsRevocation()
+    {
+        using var temp = new TempDirectory();
+        var provider = new RevocableConfigProvider(new TranslationRuntimeConfig(
+            "deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic"));
+        var bridge = new BlockingBridge();
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider)
+        {
+            ConsentCheckInterval = TimeSpan.FromMilliseconds(10),
+        };
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        var start = vm.StartCommand.ExecuteAsync(null);
+        var deadline = Environment.TickCount64 + 3000;
+        while (bridge.Requests.Count == 0 && Environment.TickCount64 < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.NotEmpty(bridge.Requests); // 第一个文件已在途
+
+        provider.Generation++; // 运行中撤销云端同意 → 在途批量必须停止
+
+        await start;
+
+        Assert.False(vm.IsRunning);
+        Assert.Contains("同意已被撤销", vm.StatusMessage);
+        Assert.Single(bridge.Requests); // 撤销后不再发起第二个文件
     }
 
     [Fact]

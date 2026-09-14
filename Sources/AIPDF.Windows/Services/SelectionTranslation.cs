@@ -117,6 +117,12 @@ public interface ITranslationRuntimeConfigProvider
     TranslationRuntimeConfig? Get();
 
     /// <summary>
+    /// 同意代次：每次云端同意被撤销时递增。运行中的云端任务据此在代次变化时取消，
+    /// 停止继续向已撤回同意的服务商发送请求。默认 0（无同意来源 / 本地提供者）。
+    /// </summary>
+    int ConsentGeneration => 0;
+
+    /// <summary>
     /// 解析运行时配置，并区分「未就绪」的具体原因。默认实现仅区分「可用 / 未配置」，
     /// 生产实现（<c>SettingsTranslationRuntimeConfigProvider</c>）覆盖为细分原因。
     /// </summary>

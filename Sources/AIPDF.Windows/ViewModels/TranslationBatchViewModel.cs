@@ -190,9 +190,14 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
     /// <summary>单次批量建议文件上限（超出仅提示，不阻断）。</summary>
     public const int RecommendedFileLimit = 20;
 
+    /// <summary>云端同意被撤销时停止在途批量的状态文案（F21）。</summary>
+    internal const string ConsentRevokedMessage = "已取消：云端同意已被撤销，批量翻译已停止，未采用半成品。";
+
     private readonly EngineBridge? _bridge;
     private readonly ITranslationRuntimeConfigProvider _configProvider;
     private CancellationTokenSource? _cts;
+    private Task? _consentWatch;
+    private volatile bool _consentRevoked;
     private int _totalFiles;
     private int _completedFiles;
     private double _currentFileFraction;
@@ -240,6 +245,9 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
     /// <summary>是否支持多文件（文件选择对话框的 Multiselect）。</summary>
     public bool SupportsMultipleFiles => true;
+
+    /// <summary>同意代次轮询间隔（F21；测试可缩短以快速验证撤销取消）。</summary>
+    internal TimeSpan ConsentCheckInterval { get; set; } = ConsentRevocationWatcher.DefaultInterval;
 
     /// <summary>文件选择对话框过滤（批量翻译只接受 PDF）。</summary>
     public string FileDialogFilter { get; } = "PDF 文件|*.pdf|所有文件 (*.*)|*.*";
@@ -405,7 +413,8 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             token,
             $"正在批量翻译 {Files.Count} 份文件…",
             () => $"完成：{SummaryText}。结果在下方按需打开。",
-            "已取消：批量翻译已停止，未采用半成品。");
+            "已取消：批量翻译已停止，未采用半成品。",
+            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
     }
 
     /// <summary>取消批量翻译：取消令牌 → EngineBridge 终止当前子进程树，不采用半成品。</summary>
@@ -503,7 +512,8 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             cts.Token,
             $"正在重试 {item.Name}…",
             () => item.IsDone ? $"重试成功：{item.Name}。" : $"重试失败：{item.ResultText}",
-            "已取消：重试已停止。");
+            "已取消：重试已停止。",
+            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
     }
 
     private bool CanRetryFile(BatchTranslationFileItem? item) => !IsRunning && item is { CanRetry: true };
@@ -552,7 +562,8 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             cts.Token,
             $"正在重试 {failures.Count} 个失败项…",
             () => $"重试完成：{SummaryText}。",
-            "已取消：重试已停止。");
+            "已取消：重试已停止。",
+            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
     }
 
     private bool CanRetryAll => !IsRunning && HasFailedItems;
@@ -758,26 +769,49 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         CancellationToken token,
         string runningMessage,
         Func<string> completionMessage,
-        string cancelledMessage)
+        string cancelledMessage,
+        bool watchConsent = false)
     {
         IsRunning = true;
         StatusMessage = runningMessage;
         ProgressMessage = "";
         ProgressFraction = 0;
 
+        // F21：云端批量运行期监视同意代次；撤销同意即取消，停止继续向已撤回同意的服务商发送。
+        _consentRevoked = false;
+        var cts = _cts;
+        if (watchConsent && cts is not null)
+        {
+            var generation = _configProvider.ConsentGeneration;
+            _consentWatch = ConsentRevocationWatcher.Start(
+                () => _configProvider.ConsentGeneration, generation, cts,
+                onRevoked: () => _consentRevoked = true, interval: ConsentCheckInterval).Task;
+        }
+
         _bridge!.Progress += OnBridgeProgress;
         try
         {
             await RunFilesAsync(files, options, token);
             StatusMessage = token.IsCancellationRequested ? cancelledMessage : completionMessage();
+            if (_consentRevoked)
+            {
+                StatusMessage = ConsentRevokedMessage;
+            }
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = cancelledMessage;
+            StatusMessage = _consentRevoked ? ConsentRevokedMessage : cancelledMessage;
         }
         finally
         {
             _bridge.Progress -= OnBridgeProgress;
+            cts?.Cancel();
+            if (_consentWatch is not null)
+            {
+                await _consentWatch;
+                _consentWatch = null;
+            }
+
             _cts = null;
             IsRunning = false;
             ProgressMessage = "";

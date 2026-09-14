@@ -214,9 +214,17 @@ def reassemble_chunks(chunks, translations):
     """把逐段译文按源块下标重组为 `BlockTranslation` 列表。
 
     `translations` 是模型返回的逐段译文（规格 §3.3.1 的 `{index, text}` 展平）。
-    默认按请求段（含重叠上下文段）对位，重叠段只作上下文、**不参与回填**；若模型
-    只返回核心段，则自动按核心段对位。译文多于预期时忽略多余项，少于预期时缺失
-    下标以 `degraded=True` 标记，交由调用方保留原文。
+    接受两种对位，按长度自动判定：
+
+    - **请求对齐（首选）**：`len(translations) == sum(len(chunk.chunks))`，即每个请求段
+      （含重叠上下文段）一个译文。重叠段只作上下文、**不参与回填**，其位置可放任意占位。
+      `engine._translate_blocks` 即按此契约产出（用空串占位重叠段）。
+    - **核心对齐（兼容）**：`len(translations) == sum(len(chunk.source_indices))` 且与请求段数
+      不同时，按核心段对位。仅当存在重叠段（请求段数 ≠ 核心段数）时才可能与请求对齐区分；
+      无重叠时二者等价。
+
+    译文多于预期时忽略多余项，少于预期时缺失下标以 `degraded=True` 标记，交由调用方保留
+    原文。调用方应优先产出请求对齐输入，避免长度巧合带来的歧义。
     """
     chunks = list(chunks or [])
     translations = list(translations or [])

@@ -93,6 +93,66 @@ public sealed class EngineBridgeTests
         Assert.Contains("MemoryError", error.Message);
     }
 
+    // ---------- ①b 诊断脱敏（F27：引擎 traceback 不得泄漏 apiKey / password） ----------
+
+    [Fact]
+    public void ParseResult_RedactsSecretsFromDiagnostics()
+    {
+        const string key = "sk-live-murphy-secret-123";
+        var lines = new[] { "引擎崩溃前的最后输出" };
+
+        var error = Assert.Throws<EngineBridgeException>(() => EngineBridge.ParseResult(
+            lines,
+            exitCode: 1,
+            diagnostics:
+            [
+                $"Traceback (most recent call last): options={{'apiKey': '{key}', 'targetLang': 'zh'}}",
+                $"Authorization: Bearer {key}",
+            ],
+            secrets: [key]));
+
+        Assert.DoesNotContain(key, error.Message, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", error.Message, StringComparison.Ordinal);
+        // Diagnostics 属性同样不得残留密钥。
+        Assert.DoesNotContain(key, string.Join("|", error.Diagnostics), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseResult_RedactsUrlEncodedSecrets()
+    {
+        const string key = "sk/with+special=chars";
+        var encoded = Uri.EscapeDataString(key);
+
+        var error = Assert.Throws<EngineBridgeException>(() => EngineBridge.ParseResult(
+            ["x"],
+            exitCode: 1,
+            diagnostics: [$"request body: apiKey={encoded}"],
+            secrets: [key]));
+
+        Assert.DoesNotContain(encoded, error.Message, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SensitiveOptionValues_ExtractsApiKeyAndPasswordOnly()
+    {
+        var request = new EngineRequest
+        {
+            Options = new Dictionary<string, object?>
+            {
+                ["apiKey"] = "k1",
+                ["password"] = "p1",
+                ["endpoint"] = "https://api.example.test/v1",
+            },
+        };
+
+        var secrets = EngineBridge.SensitiveOptionValues(request);
+
+        Assert.Contains("k1", secrets);
+        Assert.Contains("p1", secrets);
+        Assert.DoesNotContain("https://api.example.test/v1", secrets);
+    }
+
     [Fact]
     public void TryParseProgress_ValidLine_ReturnsMessageAndFraction()
     {

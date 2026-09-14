@@ -181,6 +181,14 @@ class ReassembleTests(unittest.TestCase):
                          [(0, "t0"), (1, "t1"), (2, "t2")])
         self.assertFalse(any(r.degraded for r in results))
 
+    def test_request_aligned_with_overlap_placeholders_tracks_request_order(self):
+        # F1 引擎契约：重叠段用空串占位，整体长度 == 请求段数，逐段对位不得错位。
+        translations = ["t0", "t1", "", "t2"]  # chunk0 无重叠；chunk1 前导重叠段占位
+        results = chunk.reassemble_chunks(self.chunks, translations)
+        self.assertEqual([(r.index, r.text) for r in results],
+                         [(0, "t0"), (1, "t1"), (2, "t2")])
+        self.assertFalse(any(r.degraded for r in results))
+
     def test_fewer_translations_mark_missing_as_degraded(self):
         results = chunk.reassemble_chunks(self.chunks, ["t0"])
         self.assertEqual([r.index for r in results], [0, 1, 2])

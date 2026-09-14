@@ -69,6 +69,12 @@ public class EngineBridge
 {
     private const int DiagnosticCapacity = 200;
 
+    /// <summary>脱敏占位符：诊断文本中出现的敏感值一律以此替换。</summary>
+    private const string RedactionPlaceholder = "[REDACTED]";
+
+    /// <summary>请求 options 中需要从诊断里脱敏的键（apiKey / password）。</summary>
+    private static readonly string[] SensitiveOptionKeys = ["apiKey", "password"];
+
     private readonly string _pythonPath;
     private readonly string _enginePath;
     private readonly IReadOnlyDictionary<string, string>? _environment;
@@ -194,7 +200,7 @@ public class EngineBridge
             throw new OperationCanceledException("引擎处理已取消。", cancellationToken);
         }
 
-        return ParseResult(stdoutLines, process.ExitCode, RecentDiagnostics);
+        return ParseResult(stdoutLines, process.ExitCode, RecentDiagnostics, SensitiveOptionValues(request));
     }
 
     /// <summary>stdout 行式异步读循环；管道断裂（进程被杀）视为流结束。</summary>
@@ -273,7 +279,7 @@ public class EngineBridge
     /// 从 stdout 行集合解析结果：从后向前找最后一条能解析为含 "ok" 属性的 JSON 对象的行，
     /// 保证第三方库混入的通知行、损坏行、超长行都不会破坏协议。
     /// </summary>
-    internal static EngineResult ParseResult(IReadOnlyList<string> stdoutLines, int exitCode, IReadOnlyList<string> diagnostics)
+    internal static EngineResult ParseResult(IReadOnlyList<string> stdoutLines, int exitCode, IReadOnlyList<string> diagnostics, IReadOnlyList<string>? secrets = null)
     {
         for (var i = stdoutLines.Count - 1; i >= 0; i--)
         {
@@ -298,11 +304,70 @@ public class EngineBridge
             }
         }
 
-        var detail = diagnostics.Count > 0
-            ? "最近诊断：" + string.Join(" | ", diagnostics.TakeLast(5))
+        // 引擎崩溃时 Python traceback 可能把请求 options（含 apiKey / password）打到 stderr；
+        // 先脱敏再拼装异常消息与 Diagnostics，密钥绝不进入 UI / 日志。
+        var redacted = RedactDiagnostics(diagnostics, secrets);
+        var detail = redacted.Count > 0
+            ? "最近诊断：" + string.Join(" | ", redacted.TakeLast(5))
             : "无 stderr 诊断。";
-        throw new EngineBridgeException($"引擎没有返回有效的 JSON 结果（退出码 {exitCode}）。{detail}", exitCode, diagnostics);
+        throw new EngineBridgeException($"引擎没有返回有效的 JSON 结果（退出码 {exitCode}）。{detail}", exitCode, redacted);
     }
+
+    /// <summary>
+    /// 请求 options 中需要脱敏的敏感值（apiKey / password）。引擎异常时 Python 可能把
+    /// 整个请求 options 打进 traceback，宿主据这些值在诊断进入异常前做替换。
+    /// </summary>
+    internal static IReadOnlyList<string> SensitiveOptionValues(EngineRequest request)
+    {
+        var secrets = new List<string>();
+        foreach (var name in SensitiveOptionKeys)
+        {
+            if (request.Options.TryGetValue(name, out var value)
+                && value is string text && text.Length > 0)
+            {
+                secrets.Add(text);
+            }
+        }
+
+        return secrets;
+    }
+
+    /// <summary>
+    /// 把文本中出现的敏感值替换为固定占位符。原样命中即覆盖
+    /// <c>Bearer &lt;key&gt;</c>、<c>apiKey: "&lt;key&gt;"</c> 等常见形态；另替换 URL 编码形态
+    /// （<see cref="Uri.EscapeDataString(string)"/>），防止被转义后绕过替换。
+    /// </summary>
+    internal static string RedactSecrets(string text, IReadOnlyList<string>? secrets)
+    {
+        if (string.IsNullOrEmpty(text) || secrets is not { Count: > 0 })
+        {
+            return text;
+        }
+
+        var redacted = text;
+        foreach (var secret in secrets)
+        {
+            if (string.IsNullOrEmpty(secret))
+            {
+                continue;
+            }
+
+            redacted = redacted.Replace(secret, RedactionPlaceholder, StringComparison.Ordinal);
+            var encoded = Uri.EscapeDataString(secret);
+            if (!string.Equals(encoded, secret, StringComparison.Ordinal))
+            {
+                redacted = redacted.Replace(encoded, RedactionPlaceholder, StringComparison.Ordinal);
+            }
+        }
+
+        return redacted;
+    }
+
+    /// <summary>对整批诊断行做脱敏；无可脱敏值时原样返回。</summary>
+    private static IReadOnlyList<string> RedactDiagnostics(IReadOnlyList<string> diagnostics, IReadOnlyList<string>? secrets)
+        => secrets is { Count: > 0 }
+            ? [.. diagnostics.Select(line => RedactSecrets(line, secrets))]
+            : diagnostics;
 
     private static EngineResult FromJson(JsonElement root, int exitCode)
     {

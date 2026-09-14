@@ -65,12 +65,20 @@ def is_rtl_text(text, threshold=RTL_RATIO_THRESHOLD):
     return rtl_ratio(text) > threshold
 
 
-def is_vertical_lines(dirs, ratio=VERTICAL_DIR_RATIO):
-    """行方向多为竖排时返回 True。
+def is_vertical_lines(dirs, ratio=VERTICAL_DIR_RATIO, rotation=0):
+    """行方向多为竖排时返回 True（仅在 axis-preserving 旋转下判定）。
 
     `dirs` 为 PyMuPDF `line["dir"]` 的 (dx, dy) 序列；横排约 (1,0)/(-1,0)，
     竖排约 (0,±1)。以 |dy| > |dx| 判定单行竖排，再要求占比达 `ratio`。
+
+    **/Rotate 90/270 会把内容坐标系的 x/y 轴对调**：此时未旋转 `dir` 的「竖」在可见
+    页面可能是「横」，反之亦然（扫描件侧放、靠 /Rotate 摆正即属此类）。这类页面的
+    竖排判定不可靠，一律不判竖排——宁可翻译一张旋转页，也不误判整块跳过（不翻译）。
+    仅当 `rotation` 为 0/180（轴不交换）时才用 `dir` 判竖排。`geometry.page_rotation`
+    已保证 rotation ∈ {0,90,180,270}。
     """
+    if int(rotation or 0) % 180 != 0:
+        return False
     normalized = [tuple(direction) for direction in (dirs or []) if direction]
     if not normalized:
         return False
@@ -79,15 +87,17 @@ def is_vertical_lines(dirs, ratio=VERTICAL_DIR_RATIO):
 
 
 def classify_unsupported(text, dirs=None, *, rtl_threshold=RTL_RATIO_THRESHOLD,
-                         vertical_ratio=VERTICAL_DIR_RATIO):
+                         vertical_ratio=VERTICAL_DIR_RATIO, rotation=0):
     """返回块的不支持脚本类型：`"rtl"` / `"vertical"` / `""`（正常）。
 
-    先判 RTL（文本可得），再判竖排（需行方向 `dirs`）。二者都命中时以 RTL 优先，
-    因为 RTL 文本无论如何都不能按 LTR 回填。
+    先判 RTL（文本可得），再判竖排（需行方向 `dirs` 与页面 `rotation`）。二者都命中
+    时以 RTL 优先，因为 RTL 文本无论如何都不能按 LTR 回填。旋转 90/270 的页面不做
+    竖排判定（轴交换导致 `dir` 不可靠，见 `is_vertical_lines`），避免把正常文本整块
+    误判为竖排而不翻译。
     """
     if is_rtl_text(text, rtl_threshold):
         return "rtl"
-    if is_vertical_lines(dirs, vertical_ratio):
+    if is_vertical_lines(dirs, vertical_ratio, rotation):
         return "vertical"
     return ""
 

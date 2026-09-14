@@ -13,6 +13,7 @@
 翻译跳过（`engine`）→ 报告 sidecar。LLM 调用全部 monkeypatch，不发起真实网络请求。
 """
 import json
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -24,7 +25,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import engine
 import pymupdf as fitz
-from translate import detect, extract, geometry, llm, reflow, verify
+from translate import chunk, detect, extract, geometry, llm, reflow, verify
 
 ARABIC = "\u0627\u0644\u0639\u0631\u0628\u064a\u0629 \u0645\u0631\u062d\u0628\u0627"
 HEBREW = "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd"
@@ -62,6 +63,20 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(detect.classify_unsupported(PROSE, [(0, -1)]), "vertical")
         self.assertEqual(detect.classify_unsupported(ARABIC, [(1, 0)]), "rtl")
         self.assertEqual(detect.classify_unsupported(PROSE, [(1, 0)]), "")
+
+    def test_vertical_detection_skips_rotated_pages(self):
+        """F17：/Rotate 90/270 使内容坐标轴对调，dir 不可靠 → 不判竖排，避免误跳过。"""
+        # 未旋转页：竖排正常判定。
+        self.assertTrue(detect.is_vertical_lines([(0, -1), (0, -1)]))
+        self.assertTrue(detect.is_vertical_lines([(0, -1), (0, -1)], rotation=0))
+        # 180 不交换轴：竖排仍判定。
+        self.assertTrue(detect.is_vertical_lines([(0, -1), (0, -1)], rotation=180))
+        # 90/270 交换轴：不判竖排（扫描件侧放、靠 /Rotate 摆正即属此类）。
+        self.assertFalse(detect.is_vertical_lines([(0, -1), (0, -1)], rotation=90))
+        self.assertFalse(detect.is_vertical_lines([(0, -1), (0, -1)], rotation=270))
+        self.assertFalse(detect.is_vertical_lines([(1, 0), (1, 0)], rotation=90))
+        self.assertEqual(detect.classify_unsupported(PROSE, [(0, 1)], rotation=90), "")
+        self.assertEqual(detect.classify_unsupported(PROSE, [(0, -1)], rotation=0), "vertical")
 
     def test_math_density(self):
         self.assertTrue(detect.is_math_dense(FORMULA))
@@ -128,6 +143,18 @@ class ExtractScriptTests(unittest.TestCase):
         page = doc.new_page(width=400, height=300)
         page.insert_text((40, 60), PROSE, fontsize=12)
         blocks = extract.extract_page(page)
+        self.assertEqual(blocks[0].unsupported_script, "")
+
+    def test_rotated_page_horizontal_text_not_flagged(self):
+        """F17 负向：/Rotate 90 页上摆正的横排文本不得判为竖排（否则整块不翻译）。"""
+        doc = self.make_doc()
+        page = doc.new_page(width=300, height=200)
+        # 内容在未旋转坐标里侧放（dir≈(0,1)），/Rotate 90 使其在可见页面摆正为横排。
+        page.insert_text((100, 100), PROSE, fontsize=12, rotate=270)
+        page.set_rotation(90)
+        self.assertEqual(page.rotation, 90)
+        blocks = extract.extract_page(page)
+        self.assertTrue(blocks, "旋转页文本未被抽取")
         self.assertEqual(blocks[0].unsupported_script, "")
 
 
@@ -271,6 +298,74 @@ class EngineSkipTests(unittest.TestCase):
                                                 "generic", None, "auto", "zh")
         self.assertEqual(len(translations), 1)
         self.assertEqual(translations[0].text, "")  # 未翻译 → 回填保留原文
+
+    def test_rotated_page_horizontal_text_is_translated(self):
+        """F17：旋转页横排文本（未旋转坐标 dir 竖排）不跳过，照常发送并回填译文。"""
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=300, height=200)
+        page.insert_text((100, 100), "Hello rotated page", fontsize=12, rotate=270)
+        page.set_rotation(90)
+        blocks = extract.extract_page(page)
+        self.assertEqual(blocks[0].unsupported_script, "")
+
+        class FakeClient:
+            def translate(self, pair, validator=None):
+                content = json.dumps([{"index": 0, "text": "旋转页译文"}])
+                if validator is not None:
+                    validator(content)
+                return content
+
+        report = verify.DegradationReport()
+        translations = engine._translate_blocks(blocks, report, FakeClient(),
+                                                "generic", None, "auto", "zh")
+        self.assertEqual(translations[0].text, "旋转页译文")
+        self.assertFalse(translations[0].degraded)
+
+
+class OverlapReassemblyTests(unittest.TestCase):
+    """F1：多分块 + 上下文重叠时，每个块必须拿到自己的译文，不得错位/丢段。"""
+
+    # 与源文字符数相近的中文填充，避免触发 verify 的长度比例校验。
+    _FILLER = "这是译文内容。" * 60
+
+    @classmethod
+    def _translation(cls, source_text):
+        # 以源文摘要作为译文前缀，既能通过 echo / 长度校验，又可逐块核对对位。
+        digest = hashlib.md5(source_text.encode("utf-8")).hexdigest()[:12]
+        return f"【{digest}】" + cls._FILLER
+
+    @classmethod
+    def _digest_client(cls):
+        class DigestClient:
+            def translate(self, pair, validator=None):
+                text = pair["user"].split(">", 1)[1].rsplit("</untrusted>", 1)[0]
+                content = json.dumps([{"index": 0, "text": cls._translation(text)}])
+                if validator is not None:
+                    validator(content)
+                return content
+        return DigestClient()
+
+    def test_overlap_chunks_each_block_gets_own_translation(self):
+        # 每块 ~250 token 且互不相同；8 块 >> 1200 → 至少 2 个分块且后续块带上下文重叠。
+        blocks = [extract.TextBlock(
+            page_no=1, rect=geometry.RectNorm(0, 0, 1, 1, 0),
+            text=f"Block {index}. " + "Sentence one. Sentence two. " * 20)
+            for index in range(8)]
+        chunks = chunk.chunk_blocks(blocks)
+        self.assertGreaterEqual(len(chunks), 2, "用例应产生多个分块")
+        self.assertTrue(any(item.overlap_count for item in chunks), "用例应含上下文重叠")
+
+        report = verify.DegradationReport()
+        results = engine._translate_blocks(blocks, report, self._digest_client(),
+                                            "generic", None, "auto", "zh")
+
+        expected_order = [index for item in chunks for index in item.source_indices]
+        self.assertEqual([result.index for result in results], expected_order)
+        self.assertFalse(any(result.degraded for result in results))
+        for result in results:
+            self.assertEqual(result.text, self._translation(blocks[result.index].text))
+
 
 
 class ReportSidecarTests(unittest.TestCase):

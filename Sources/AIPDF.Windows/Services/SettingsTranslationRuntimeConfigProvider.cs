@@ -39,6 +39,9 @@ public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRunti
     public TranslationRuntimeConfig? Get() => Resolve().Config;
 
     /// <inheritdoc />
+    public int ConsentGeneration => _consent.Generation;
+
+    /// <inheritdoc />
     public TranslationRuntimeConfigResolution Resolve()
     {
         var settings = _settings.Load();

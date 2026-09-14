@@ -895,6 +895,12 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
     即**不发送该段**、保留原文，并在降级报告记 `suspicious_instruction`，绝不静默翻译。
     RTL/竖排块（`block.unsupported_script`，规格 §2.4）同样不发送、保留原文；该原因由
     回填阶段（`reflow.backfill_page`）记入降级报告。
+
+    **对齐契约**：`translations` 按 `Chunk.chunks` 的请求段顺序排列，
+    `len(translations) == sum(len(chunk.chunks))`（即 `request_total`）。每个块前导的
+    `overlap_count` 个上下文重叠段**不参与回填**，用空串占位以保持逐段对位；这样
+    `chunk.reassemble_chunks` 无需在「请求对齐 / 核心对齐」之间猜测，避免重叠段造成的
+    错位或丢段（见 chunk.reassemble_chunks）。
     """
     from translate import chunk, prompt, verify
     chunks = chunk.chunk_blocks(blocks)
@@ -904,6 +910,8 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
         core = [blocks[index] for index in item.source_indices]
         if not core:
             continue
+        # 请求段顺序 = [上下文重叠段…, 核心段…]；重叠段仅作提示，用占位符对齐，不参与回填。
+        translations.extend([""] * item.overlap_count)
         pairs = prompt.build_prompt([block.text for block in core], template_name=template_name,
                                     glossary=glossary_entries, custom_template=custom_template)
         for block, pair in zip(core, pairs):

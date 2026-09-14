@@ -239,6 +239,34 @@ public sealed class TranslationConsentServiceTests
         Assert.False(fx.Service.RevokeConsent("", Endpoint));
     }
 
+    [Fact]
+    public void Revoke_IncrementsGenerationOnlyWhenEffective()
+    {
+        using var fx = new Fixture();
+        var baseline = fx.Service.Generation;
+
+        fx.Service.GrantConsent(Provider, Endpoint, Key);
+        Assert.Equal(baseline, fx.Service.Generation); // 授予同意不递增（运行中任务无需停止）
+
+        Assert.True(fx.Service.RevokeConsent(Provider, Endpoint));
+        Assert.Equal(baseline + 1, fx.Service.Generation); // 撤销生效 → 递增，在途任务据此取消
+
+        Assert.False(fx.Service.RevokeConsent(Provider, Endpoint)); // 无实际变化
+        Assert.Equal(baseline + 1, fx.Service.Generation);
+    }
+
+    [Fact]
+    public void Revoke_AlsoClearsCredential_IncrementsGeneration()
+    {
+        using var fx = new Fixture();
+        fx.Credentials.Store(Provider, Endpoint, Key);
+        var baseline = fx.Service.Generation;
+
+        Assert.True(fx.Service.RevokeConsent(Provider, Endpoint, alsoClearCredential: true));
+
+        Assert.Equal(baseline + 1, fx.Service.Generation);
+    }
+
     // ---------------------------------------------------------------- 漫游指纹校验（决策 (i)）
 
     [Fact]
