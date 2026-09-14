@@ -1,0 +1,49 @@
+# 构建日志尾部（原始 console 捕获，PS5.1 Tee-Object UTF-16LE；中文行受控制台编码影响可能有混码）
+# 生成：2026-09-14 23:30:36  完整日志：.omo/evidence/final-dist-build2.log
+# 完整日志行数：95
+# 外层命令观测：EXIT_CODE=0（构建成功；无 Smart App Control 0x800711C7/WinError 4551 阻塞）
+  AIPDF.Windows -> D:\dataCode\LearnCode\aiPdfPc\Sources\AIPDF.Windows\bin\Release\net8.0-windows\win-x64\AIPDF.Windows.dll
+  AIPDF.Windows -> D:\dataCode\LearnCode\aiPdfPc\Sources\AIPDF.Windows\bin\Release\net8.0-windows\win-x64\publish\
+
+==> [6/7] 校验 dist 布局与引擎冒烟
+布局断言：8 项关键文件全部在位。
+dist 引擎冒烟：health ok=true（engine=1.28.2）
+test_bounds_and_invalid_inputs (test_engine.EngineTests.test_bounds_and_invalid_inputs) ... {"message": "姝ｅ湪澶勭悊鏂囦欢 1/1"
+, "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+ok
+test_merge_order (test_engine.EngineTests.test_merge_order) ... {"message": "姝ｅ湪鍚堝苟 1/2", "progress": 0.0}
+{"message": "姝ｅ湪鍚堝苟 2/2", "progress": 0.5}
+ok
+test_page_validation (test_engine.EngineTests.test_page_validation) ... {"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+ok
+test_rotation_crop (test_engine.EngineTests.test_rotation_crop) ... {"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+ok
+test_split_ranges_and_pages (test_engine.EngineTests.test_split_ranges_and_pages) ... {"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "pro
+gress": 0.0}
+{"message": "姝ｅ湪澶勭悊鏂囦欢 1/1", "progress": 0.0}
+ok
+test_worker_json_protocol (test_engine.EngineTests.test_worker_json_protocol) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 2.221s
+
+OK
+
+==> [7/7] 打包嵌入式 Python 运行时与离线依赖
+解压嵌入式 Python 到 engine\python …
+离线安装依赖 wheel 到 engine\site-packages …
+自包含布局断言：7 项关键文件全部在位。
+dist 自包含引擎冒烟：health ok=true（engine=1.28.2，vision=True）
+检测到本机 LibreOffice，Office/PDF/A 转换可用。
+
+应用已生成：D:\dataCode\LearnCode\aiPdfPc\dist\aipdf-windows
