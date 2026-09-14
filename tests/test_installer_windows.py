@@ -14,7 +14,8 @@
   上游 test_runtime_changes_when_python_or_lock_changes→ test_07（安装信息不含绝对路径）
   上游 test_incomplete_runtime_is_not_reused           → test_02（残缺安装被整体替换）
   上游 test_bundle_cannot_reference_source_or_escape   → test_07（安装树无源路径泄漏）
-  Windows 专属（上游无对应测试）：test_08 卸载清理、test_09 前置缺失指引文案
+  Windows 专属（上游无对应测试）：test_08 卸载清理、test_09 前置缺失指引文案、
+  test_14 卸载翻译凭据清理（隔离前缀 + 合成凭据，绝不触碰真实凭据）
 
 沙箱来源布局是合成的：app/helper 为哑文件，engine/backend 复制仓库真实
 engine.py/catalog.py/catalog.json，因此引擎冒烟（test_06）无需 dist 构建产物。
@@ -59,11 +60,14 @@ SOURCE_README = "AIPDF windows test dist\n"
 OLD_MARKER = "OLD-INSTALL-MARKER\n"
 
 
-def run_installer(script, args, env=None):
+def run_installer(script, args, env=None, input_data=None):
     """参数数组调用 powershell，不经过 shell；输出按 UTF-8 解码（脚本已设
-    Console::OutputEncoding=UTF8，重定向两路字节均为 UTF-8，见 T21 验证）。"""
+    Console::OutputEncoding=UTF8，重定向两路字节均为 UTF-8，见 T21 验证）。
+
+    input_data 非 None 时以管道喂给子进程 stdin（应答卸载的凭据确认提示）；
+    默认 None 不重定向 stdin，与既有用例行为一致。"""
     cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *args]
-    proc = subprocess.run(cmd, capture_output=True, timeout=INSTALL_TIMEOUT, env=env)
+    proc = subprocess.run(cmd, capture_output=True, timeout=INSTALL_TIMEOUT, env=env, input=input_data)
     return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
 
 
@@ -137,10 +141,14 @@ class InstallerWindowsTests(unittest.TestCase):
         args += self._association_args(association)
         return run_installer(script, [*args, *extra], env=env)
 
-    def uninstall(self, target, extra=(), association=None):
+    def uninstall(self, target, extra=(), association=None, skip_credentials=True, input_data=None):
+        # 常规卸载用例默认 -SkipCredentialCleanup：绝不枚举/删除本机真实翻译凭据；
+        # 凭据清理用例显式传 skip_credentials=False + 隔离的 -CredentialPrefix。
         args = ["-Uninstall", "-InstallDir", str(target), "-ShortcutDir", str(self.shortcuts)]
         args += self._association_args(association)
-        return run_installer(self.source / "Install.ps1", [*args, *extra])
+        if skip_credentials:
+            args.append("-SkipCredentialCleanup")
+        return run_installer(self.source / "Install.ps1", [*args, *extra], input_data=input_data)
 
     @staticmethod
     def _association_args(association):
@@ -520,6 +528,73 @@ class InstallerWindowsTests(unittest.TestCase):
         self.assertEqual(rc, 0, f"卸载失败：{err}")
         self.assertFalse(self._reg_key_exists(rf"Software\Classes\{progid}"), "卸载后 ProgId 残留")
         self.assertFalse(self._openwith_value_exists(progid), "卸载后 OpenWithProgids 残留")
+
+    # ------------------------------------------------------------------
+    # ⑭ -Uninstall 翻译凭据清理（v1.1 决策「凭据命名与卸载清理」）
+    # 用隔离前缀 + cmdkey 合成凭据（合成口令，非真实密钥），验证：
+    #   未确认（stdin 无应答，等价自动化默认）→ 保留；
+    #   确认 y → 删除匹配前缀的全部凭据并报告数量；
+    #   再次卸载 → 零条时优雅提示。
+    # 断言输出只列目标名、绝不含凭据口令；前缀之外的同名凭据（诱饵）不受影响；
+    # 真实 AIPDF-Translate-* 全程不触碰（显式 -CredentialPrefix + 默认跳过开关）。
+    # ------------------------------------------------------------------
+    def test_14_uninstall_translation_credential_cleanup(self):
+        import uuid
+
+        prefix = "AIPDF.CT." + uuid.uuid4().hex[:10] + "-"
+        targets = [prefix + "alpha-11111111", prefix + "beta-22222222"]
+        decoy = "AIPDF.CT-other-" + uuid.uuid4().hex[:8]
+        fake_secret = "test-only-fake-secret"
+        for target in [*targets, decoy]:
+            self.addCleanup(self._delete_credential, target)
+            subprocess.run(
+                ["cmdkey", f"/generic:{target}", "/user:test", f"/pass:{fake_secret}"],
+                capture_output=True,
+                check=True,
+            )
+
+        self.assertEqual(self.install()[0], 0)
+
+        # 1) stdin 无应答 → 默认不删除；诱饵保留；输出不得泄漏凭据口令。
+        rc, out, err = self.uninstall(
+            self.target, extra=["-CredentialPrefix", prefix], skip_credentials=False, input_data=b"",
+        )
+        self.assertEqual(rc, 0, f"卸载失败：{err}")
+        self.assertIn("已保留翻译凭据", out)
+        self.assertTrue(self._credential_exists(targets[0]), "未确认时不得删除凭据")
+        self.assertTrue(self._credential_exists(decoy), "非匹配前缀的凭据不得被删除")
+        self.assertNotIn(fake_secret, out + err, "输出不得包含凭据内容")
+
+        # 2) 确认 y → 删除全部匹配前缀的凭据并报告数量；诱饵保留。
+        rc, out, err = self.uninstall(
+            self.target, extra=["-CredentialPrefix", prefix], skip_credentials=False, input_data=b"y\n",
+        )
+        self.assertEqual(rc, 0, f"卸载失败：{err}")
+        self.assertIn("发现 2 条", out, "确认前应先列出数量")
+        self.assertIn(targets[0], out, "确认前应列出将删除的凭据名")
+        self.assertIn("已删除 2/2 条", out)
+        self.assertFalse(self._credential_exists(targets[0]), "确认后应删除凭据")
+        self.assertFalse(self._credential_exists(targets[1]), "确认后应删除凭据")
+        self.assertTrue(self._credential_exists(decoy), "非匹配前缀的凭据不得被删除")
+        self.assertNotIn(fake_secret, out + err, "输出不得包含凭据内容")
+
+        # 3) 零条匹配 → 优雅提示，退出码 0。
+        rc, out, err = self.uninstall(
+            self.target, extra=["-CredentialPrefix", prefix], skip_credentials=False, input_data=b"",
+        )
+        self.assertEqual(rc, 0, f"卸载失败：{err}")
+        self.assertIn("无需清理", out)
+
+    @staticmethod
+    def _credential_exists(target):
+        """cmdkey /list 原始字节是否含目标名。目标名为 ASCII，不受输出代码页影响。"""
+        proc = subprocess.run(["cmdkey", "/list"], capture_output=True)
+        return target.encode("ascii") in proc.stdout
+
+    @staticmethod
+    def _delete_credential(target):
+        """幂等清理合成凭据（存在与否都不失败）。"""
+        subprocess.run(["cmdkey", f"/delete:{target}"], capture_output=True)
 
     # ------------------------------------------------------------------
     # 注册表断言辅助（winreg 直连 HKCU；仅用于临时 ProgId）

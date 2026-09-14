@@ -9,10 +9,15 @@
 #   powershell -ExecutionPolicy Bypass -File Install.ps1 -InstallDir D:\dir [-ShortcutDir D:\menu]
 #                                                                        指定安装目录（供测试沙箱）
 #   powershell -ExecutionPolicy Bypass -File Install.ps1 -Uninstall [-InstallDir D:\dir]
-#                                                                        卸载（删除安装目录与快捷方式）
+#                                                                        卸载（删除安装目录与快捷方式；
+#                                                                        列出翻译凭据数量，确认后清理）
+#   powershell -ExecutionPolicy Bypass -File Install.ps1 -Uninstall -SkipCredentialCleanup
+#                                                                        卸载但保留翻译凭据
 #   powershell -ExecutionPolicy Bypass -File Install.ps1 -NoAssociation   不登记 .pdf 打开方式
 #   powershell -ExecutionPolicy Bypass -File Install.ps1 -AssociationProgId X -RegistryRoot R
 #                                                                        关联落点覆盖（测试用临时 ProgId/隔离根）
+#   powershell -ExecutionPolicy Bypass -File Install.ps1 -CredentialPrefix P
+#                                                                        翻译凭据前缀覆盖（测试用隔离前缀）
 # 说明：仅安装到当前用户目录，不写 HKLM，不需要管理员；不下载 Python/LibreOffice，
 #       只检查并给出指引。文件关联仅写 HKCU\Software\Classes：登记 ProgId 的
 #       shell\open\command 与 .pdf 的「打开方式」候选，不写 UserChoice、不覆盖用户默认程序。
@@ -31,7 +36,13 @@ param(
     # 默认 ProgId = AIPDF.Pdf；测试传入临时 ProgId（AIPDF.assoc.test.<guid>）并测后清理。
     [string]$AssociationProgId = "AIPDF.Pdf",
     [string]$RegistryRoot = "HKCU:\Software\Classes",
-    [switch]$NoAssociation
+    [switch]$NoAssociation,
+    # v1.1 翻译凭据（设计 §凭据命名与卸载清理）：
+    # -Uninstall 默认枚举 AIPDF-Translate-* 通用凭据，列出数量并经用户确认后逐条删除；
+    # -SkipCredentialCleanup 跳过清理（凭据保留；自动化/测试与「只想删程序」的场景）；
+    # -CredentialPrefix 覆盖前缀（测试用隔离前缀；默认与 TranslationCredentialStore.TargetPrefix 一致）。
+    [switch]$SkipCredentialCleanup,
+    [string]$CredentialPrefix = "AIPDF-Translate-"
 )
 
 $ErrorActionPreference = "Stop"
@@ -230,6 +241,165 @@ function Unregister-PdfAssociation([string]$ProgId, [string]$Root) {
 }
 
 # ---------------------------------------------------------------------------
+# 翻译凭据清理（v1.1 决策「凭据命名与卸载清理」）
+#   应用把云端翻译 API Key 写入 Windows 凭据管理器的通用凭据，命名空间为
+#   AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 8 位 hex}
+#   （见 Sources/AIPDF.Windows/Services/TranslationCredentialStore.cs）。
+#   卸载时只清理该前缀：先枚举并列出数量与名称，经用户确认（y/N，默认 N）后逐条删除；
+#   全程只接触凭据「目标名」，不读取、不输出密钥内容，也绝不触碰其他凭据。
+#   正常升级（同名覆盖安装）不经过本函数，凭据保留（决策：重装/升级不丢失）。
+#   枚举与删除复用应用同一组 Win32 API（CredEnumerateW / CredDeleteW），
+#   保证目标集合与 TranslationCredentialStore.DeleteAll() 完全一致。
+# ---------------------------------------------------------------------------
+
+function Initialize-CredentialApi {
+    # 幂等：类型已加载则直接返回（同一进程内 Add-Type 只需编译一次）。
+    if ("AipdfCredentialApi" -as [type]) { return }
+    # 与 C# Win32CredentialBackend 相同的 P/Invoke 定义：CREDENTIAL 结构 + CredEnumerateW/
+    # CredDeleteW/CredFree。CredentialBlob 在结构里但不读取，凭据枚举不会返回密钥内容。
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+public static class AipdfCredentialApi
+{
+    private const uint CredTypeGeneric = 1;
+    private const int ErrorNotFound = 1168;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CREDENTIAL
+    {
+        public uint Flags;
+        public uint Type;
+        public string TargetName;
+        public string Comment;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
+        public uint CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint Persist;
+        public uint AttributeCount;
+        public IntPtr Attributes;
+        public string TargetAlias;
+        public string UserName;
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredEnumerateW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredEnumerate(string filter, uint flags, out uint count, out IntPtr credentials);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CredDelete(string target, uint type, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredFree", SetLastError = false)]
+    private static extern void CredFree(IntPtr buffer);
+
+    public static string[] Enumerate(string prefix)
+    {
+        uint count;
+        IntPtr array;
+        if (!CredEnumerate(prefix + "*", 0, out count, out array))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == ErrorNotFound) return new string[0];
+            throw new System.ComponentModel.Win32Exception(error);
+        }
+        try
+        {
+            var targets = new List<string>();
+            for (uint i = 0; i < count; i++)
+            {
+                IntPtr entry = Marshal.ReadIntPtr(array, (int)i * IntPtr.Size);
+                if (entry == IntPtr.Zero) continue;
+                var credential = (CREDENTIAL)Marshal.PtrToStructure(entry, typeof(CREDENTIAL));
+                if (!string.IsNullOrEmpty(credential.TargetName) &&
+                    credential.TargetName.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    targets.Add(credential.TargetName);
+                }
+            }
+            return targets.ToArray();
+        }
+        finally
+        {
+            CredFree(array);
+        }
+    }
+
+    public static bool Delete(string target)
+    {
+        if (CredDelete(target, CredTypeGeneric, 0)) return true;
+        int error = Marshal.GetLastWin32Error();
+        if (error == ErrorNotFound) return false;
+        throw new System.ComponentModel.Win32Exception(error);
+    }
+}
+'@
+}
+
+function Get-TranslationCredentialTargets([string]$Prefix) {
+    # 只读枚举：返回以 $Prefix 开头的凭据目标名，不返回也不读取密钥内容。
+    Initialize-CredentialApi
+    return [AipdfCredentialApi]::Enumerate($Prefix)
+}
+
+function Remove-TranslationCredential([string]$Target) {
+    # 与 C# Win32CredentialBackend.Delete 一致：不存在返回 $false，凭据管理器不可用抛异常。
+    return [AipdfCredentialApi]::Delete($Target)
+}
+
+function Clear-TranslationCredentials([string]$Prefix, [switch]$Skip) {
+    # 返回实际删除条数。失败/跳过时不中断卸载，但明确告知（不把跳过当成功）。
+    if ($Skip) {
+        Write-Host "已跳过翻译凭据清理（-SkipCredentialCleanup），凭据保留。"
+        return 0
+    }
+
+    $targets = @()
+    try {
+        $targets = @(Get-TranslationCredentialTargets $Prefix)
+    }
+    catch {
+        Write-Warning "无法枚举 Windows 凭据管理器：$($_.Exception.Message)"
+        Write-Warning "已跳过翻译凭据清理；如需清理，可在应用「设置 → 翻译」中清除，或手动在「凭据管理器」删除 $Prefix* 条目。"
+        return 0
+    }
+
+    if ($targets.Count -eq 0) {
+        Write-Host "未发现 $Prefix* 翻译凭据，无需清理。"
+        return 0
+    }
+
+    Write-Host "发现 $($targets.Count) 条翻译凭据（仅列出名称，不读取密钥内容）："
+    foreach ($target in $targets) { Write-Host "  $target" }
+    try {
+        $answer = Read-Host "确认删除以上 $($targets.Count) 条凭据？(y/N)"
+    }
+    catch {
+        # 无交互宿主（服务 / 管道）无法询问：按未确认处理，保留凭据。
+        $answer = ""
+    }
+    if ("$answer".Trim() -notmatch '^(y|yes|是)$') {
+        Write-Host "已保留翻译凭据（未确认删除）。"
+        return 0
+    }
+
+    $deleted = 0
+    foreach ($target in $targets) {
+        try {
+            if (Remove-TranslationCredential $target) { $deleted++ }
+            else { Write-Warning "凭据已不存在，跳过：$target" }
+        }
+        catch {
+            Write-Warning "凭据删除失败，跳过：$target（$($_.Exception.Message)）"
+        }
+    }
+    Write-Host "翻译凭据：已删除 $deleted/$($targets.Count) 条。"
+    return $deleted
+}
+
+# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 
@@ -278,6 +448,11 @@ if ($Uninstall) {
         $hadAssociation = Test-Path -LiteralPath $assocKey
         Unregister-PdfAssociation $AssociationProgId $RegistryRoot
         if ($hadAssociation) { $removed += "文件关联 $AssociationProgId" }
+    }
+    # 翻译凭据：默认列出数量并确认后清理；跳过或拒绝时凭据保留。
+    $cleanedCredentials = Clear-TranslationCredentials -Prefix $CredentialPrefix -Skip:$SkipCredentialCleanup
+    if ($cleanedCredentials -gt 0) {
+        $removed += "翻译凭据 $cleanedCredentials 条（$CredentialPrefix*）"
     }
     if ($removed.Count -gt 0) {
         Write-Host ("已删除：`n  " + ($removed -join "`n  "))

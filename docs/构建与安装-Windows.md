@@ -71,7 +71,7 @@ dist/aipdf-windows/
 1. 将 `dist/aipdf-windows/` 整个目录复制到目标位置（如 `C:\Program Files\AIPDF`）。
 2. 运行 `AIPDF.Windows.exe` 启动应用。
 
-> 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（不需要管理员权限）。安装器支持 `-InstallDir` 指定路径、`-NoShortcut` 跳过快捷方式创建、`-Uninstall` 卸载。
+> 如需自动安装到固定位置，可运行 `scripts\Install.ps1`（不需要管理员权限）。安装器支持 `-InstallDir` 指定路径、`-NoShortcut` 跳过快捷方式创建、`-Uninstall` 卸载。卸载时会先列出 Windows 凭据管理器中 `AIPDF-Translate-*` 翻译凭据的数量与名称，经确认（y/N，默认不删除）后才逐条清理；`-SkipCredentialCleanup` 可跳过清理、保留凭据。升级安装不会清除凭据。
 
 ## 代码签名与 SmartScreen 警告
 
