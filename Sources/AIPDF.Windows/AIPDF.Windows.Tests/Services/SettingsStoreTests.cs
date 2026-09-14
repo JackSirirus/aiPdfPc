@@ -13,6 +13,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Reader;
 using Xunit;
 
@@ -254,6 +255,160 @@ public sealed class SettingsStoreTests
         Assert.Equal("", SettingsStore.NormalizeOutputDir(null));
         Assert.Equal("", SettingsStore.NormalizeOutputDir("   "));
         Assert.Equal(@"C:\out", SettingsStore.NormalizeOutputDir(@"  C:\out  "));
+    }
+
+    // ---------------------------------------------------------------- v1.1 翻译设置（T23）
+
+    [Fact]
+    public void SaveLoad_Roundtrip_TranslationSettings()
+    {
+        using var fx = new Fixture();
+        var store = fx.NewStore();
+
+        store.Save(new AppSettings
+        {
+            TranslationDefaultSourceLanguage = "en",
+            TranslationDefaultTargetLanguage = "ja",
+            TranslationTemplateId = "legal",
+            TranslationCustomPrompt = "保持术语一致",
+            TranslationGlossaryPath = @"  C:\dict\terms.csv  ",
+            TranslationCostLimitEnabled = false,
+            TranslationCostLimitTokens = 500_000,
+            TranslationProviders =
+            [
+                new TranslationProviderConfig
+                {
+                    Provider = " deepseek ",
+                    Endpoint = " https://api.deepseek.com/v1 ",
+                    Model = " deepseek-chat ",
+                },
+            ],
+        });
+
+        var loaded = store.Load();
+        Assert.Equal("en", loaded.TranslationDefaultSourceLanguage);
+        Assert.Equal("ja", loaded.TranslationDefaultTargetLanguage);
+        Assert.Equal("legal", loaded.TranslationTemplateId);
+        Assert.Equal("保持术语一致", loaded.TranslationCustomPrompt);
+        Assert.Equal(@"C:\dict\terms.csv", loaded.TranslationGlossaryPath);
+        Assert.False(loaded.TranslationCostLimitEnabled);
+        Assert.Equal(500_000, loaded.TranslationCostLimitTokens);
+        Assert.Single(loaded.TranslationProviders);
+        var provider = loaded.TranslationProviders[0];
+        Assert.Equal("deepseek", provider.Provider);
+        Assert.Equal("https://api.deepseek.com/v1", provider.Endpoint);
+        Assert.Equal("deepseek-chat", provider.Model);
+    }
+
+    [Fact]
+    public void Load_MissingTranslationFields_KeepDefaults()
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw("""{"schemaVersion":2}""");
+
+        var loaded = fx.NewStore().Load();
+        Assert.Equal("auto", loaded.TranslationDefaultSourceLanguage);
+        Assert.Equal("zh", loaded.TranslationDefaultTargetLanguage);
+        Assert.Equal("academic", loaded.TranslationTemplateId);
+        Assert.Equal("", loaded.TranslationCustomPrompt);
+        Assert.Equal("", loaded.TranslationGlossaryPath);
+        Assert.True(loaded.TranslationCostLimitEnabled);
+        Assert.Equal(2_000_000, loaded.TranslationCostLimitTokens);
+        Assert.Empty(loaded.TranslationProviders);
+    }
+
+    [Fact]
+    public void Load_UnknownTranslationLanguageOrTemplate_FallsBack()
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw(
+            """{"schemaVersion":2,"translationDefaultSourceLanguage":"klingon","translationDefaultTargetLanguage":"auto","translationTemplateId":"poetry"}""");
+
+        var loaded = fx.NewStore().Load();
+        Assert.Equal("auto", loaded.TranslationDefaultSourceLanguage);
+        Assert.Equal("zh", loaded.TranslationDefaultTargetLanguage); // 目标语言不接受 auto
+        Assert.Equal("academic", loaded.TranslationTemplateId);
+    }
+
+    [Theory]
+    [InlineData(0, 2_000_000L)]
+    [InlineData(-5, 2_000_000L)]
+    [InlineData(1, 1L)]
+    [InlineData(9_999_999_999L, 1_000_000_000L)]
+    [InlineData(250_000, 250_000L)]
+    public void Load_TranslationCostLimitTokens_FallsBackOrClamps(long stored, long expected)
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw($"{{\"schemaVersion\":2,\"translationCostLimitTokens\":{stored}}}");
+        Assert.Equal(expected, fx.NewStore().Load().TranslationCostLimitTokens);
+    }
+
+    [Fact]
+    public void NormalizeTranslationProviders_DropsBlankAndUnsafe_DedupesOrigin()
+    {
+        var providers = new List<TranslationProviderConfig>
+        {
+            new() { Provider = "deepseek", Endpoint = "https://api.deepseek.com/v1", Model = "a" },
+            new() { Provider = "", Endpoint = "https://api.deepseek.com/v1" },                            // 缺 provider
+            new() { Provider = "moonshot", Endpoint = "" },                                               // 缺 endpoint
+            new() { Provider = "leak", Endpoint = "https://key:secret@api.leak.com/v1" },                 // 内嵌密钥
+            new() { Provider = "deepseek", Endpoint = "https://api.deepseek.com/v2/chat", Model = "b" },  // 同 origin → 去重
+        };
+
+        var normalized = SettingsStore.NormalizeTranslationProviders(providers);
+
+        Assert.Single(normalized);
+        Assert.Equal("deepseek", normalized[0].Provider);
+        Assert.Equal("https://api.deepseek.com/v1", normalized[0].Endpoint);
+        Assert.Equal("a", normalized[0].Model);
+    }
+
+    [Fact]
+    public void Load_TranslationProviders_SkipsUnsafeEndpoint()
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw(
+            """{"schemaVersion":2,"translationProviders":[{"provider":"leak","endpoint":"https://api.leak.com/v1?api_key=sk-x","model":"m"}]}""");
+        Assert.Empty(fx.NewStore().Load().TranslationProviders);
+    }
+
+    [Fact]
+    public void TranslationSettings_PersistWithoutSecret()
+    {
+        using var fx = new Fixture();
+        fx.NewStore().Save(new AppSettings
+        {
+            TranslationProviders =
+            [
+                new TranslationProviderConfig
+                {
+                    Provider = "deepseek",
+                    Endpoint = "https://api.deepseek.com/v1",
+                    Model = "deepseek-chat",
+                },
+            ],
+        });
+
+        var raw = File.ReadAllText(fx.SettingsPath);
+        Assert.Contains("translationProviders", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("apiKey", raw, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", raw, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TranslationSettings_OptionCodes_MatchConfigViewModel()
+    {
+        var vm = new TranslationConfigViewModel();
+
+        Assert.Equal(
+            vm.SourceLanguageOptions.Select(o => o.Code),
+            AppSettings.TranslationSourceLanguageCodes);
+        Assert.Equal(
+            vm.TargetLanguageOptions.Select(o => o.Code),
+            AppSettings.TranslationTargetLanguageCodes);
+        Assert.Equal(
+            vm.TemplateOptions.Select(o => o.Id),
+            AppSettings.TranslationTemplateIds);
     }
 
     // ---------------------------------------------------------------- 无密码红线

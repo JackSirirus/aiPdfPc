@@ -145,6 +145,73 @@ public sealed class AppSettings
     /// </summary>
     [JsonPropertyName("translationConsents")]
     public List<TranslationConsent> TranslationConsents { get; set; } = [];
+
+    // ------------------------------------------------------------------ v1.1 翻译默认项与云端连接（T23）
+
+    /// <summary>默认源语言「自动检测」。</summary>
+    public const string TranslationSourceLanguageDefault = "auto";
+
+    /// <summary>默认目标语言（中文，必须显式选择）。</summary>
+    public const string TranslationTargetLanguageDefault = "zh";
+
+    /// <summary>默认 Prompt 模板（学术）。</summary>
+    public const string TranslationTemplateDefault = "academic";
+
+    /// <summary>云端成本硬上限默认 token 数（与 TranslationConfigViewModel.DefaultCostLimitTokens 一致）。</summary>
+    public const long TranslationCostLimitTokensDefault = 2_000_000;
+
+    /// <summary>成本上限下限。</summary>
+    public const long TranslationCostLimitTokensMin = 1;
+
+    /// <summary>成本上限上限（防手工编辑注入离谱值）。</summary>
+    public const long TranslationCostLimitTokensMax = 1_000_000_000;
+
+    /// <summary>源语言允许标识（含「自动检测」）。与 <c>TranslationConfigViewModel.SourceLanguageOptions</c> 保持一致。</summary>
+    public static readonly string[] TranslationSourceLanguageCodes =
+        ["auto", "zh", "en", "ja", "ko", "fr", "de", "ru", "es", "pt", "it"];
+
+    /// <summary>目标语言允许标识（不含「自动检测」）。与 <c>TranslationConfigViewModel.TargetLanguageOptions</c> 保持一致。</summary>
+    public static readonly string[] TranslationTargetLanguageCodes =
+        ["zh", "en", "ja", "ko", "fr", "de", "ru", "es", "pt", "it"];
+
+    /// <summary>Prompt 模板允许标识（5 类预置 + 自定义）。与 <c>TranslationConfigViewModel.TemplateOptions</c> 保持一致。</summary>
+    public static readonly string[] TranslationTemplateIds =
+        ["academic", "legal", "medical", "technical", "general", "custom"];
+
+    /// <summary>
+    /// 云端翻译连接配置列表（provider + endpoint + model）。<b>绝不存密钥</b>；
+    /// 密钥交 <see cref="TranslationCredentialStore"/>（系统凭据管理器）。缺省空列表 = 尚未配置云端。
+    /// </summary>
+    [JsonPropertyName("translationProviders")]
+    public List<TranslationProviderConfig> TranslationProviders { get; set; } = [];
+
+    /// <summary>默认源语言（<c>auto</c> 或语言码）；未知值回退 <c>auto</c>。</summary>
+    [JsonPropertyName("translationDefaultSourceLanguage")]
+    public string TranslationDefaultSourceLanguage { get; set; } = TranslationSourceLanguageDefault;
+
+    /// <summary>默认目标语言（语言码，不含 auto）；未知值回退 <c>zh</c>。</summary>
+    [JsonPropertyName("translationDefaultTargetLanguage")]
+    public string TranslationDefaultTargetLanguage { get; set; } = TranslationTargetLanguageDefault;
+
+    /// <summary>默认 Prompt 模板标识；未知值回退 <c>academic</c>。</summary>
+    [JsonPropertyName("translationTemplateId")]
+    public string TranslationTemplateId { get; set; } = TranslationTemplateDefault;
+
+    /// <summary>自定义 Prompt 正文（模板为 <c>custom</c> 时使用）；缺省空串。</summary>
+    [JsonPropertyName("translationCustomPrompt")]
+    public string TranslationCustomPrompt { get; set; } = "";
+
+    /// <summary>术语表 CSV 路径；空串 = 不使用术语表。</summary>
+    [JsonPropertyName("translationGlossaryPath")]
+    public string TranslationGlossaryPath { get; set; } = "";
+
+    /// <summary>是否启用云端成本硬上限（缺省开）。</summary>
+    [JsonPropertyName("translationCostLimitEnabled")]
+    public bool TranslationCostLimitEnabled { get; set; } = true;
+
+    /// <summary>成本硬上限 token 数，钳制到 [1, 1e9]；非正数回退默认 2.0M。</summary>
+    [JsonPropertyName("translationCostLimitTokens")]
+    public long TranslationCostLimitTokens { get; set; } = TranslationCostLimitTokensDefault;
 }
 
 /// <summary>
@@ -281,6 +348,16 @@ public sealed class SettingsStore
         settings.DefaultOutputDir = NormalizeOutputDir(settings.DefaultOutputDir);
         settings.DefaultRenderDpi = NormalizeRenderDpi(settings.DefaultRenderDpi);
         settings.TranslationConsents = NormalizeConsents(settings.TranslationConsents);
+        settings.TranslationProviders = NormalizeTranslationProviders(settings.TranslationProviders);
+        settings.TranslationDefaultSourceLanguage = NormalizeTranslationLanguage(
+            settings.TranslationDefaultSourceLanguage, AppSettings.TranslationSourceLanguageDefault, AppSettings.TranslationSourceLanguageCodes);
+        settings.TranslationDefaultTargetLanguage = NormalizeTranslationLanguage(
+            settings.TranslationDefaultTargetLanguage, AppSettings.TranslationTargetLanguageDefault, AppSettings.TranslationTargetLanguageCodes);
+        settings.TranslationTemplateId = NormalizeTranslationLanguage(
+            settings.TranslationTemplateId, AppSettings.TranslationTemplateDefault, AppSettings.TranslationTemplateIds);
+        settings.TranslationCustomPrompt = settings.TranslationCustomPrompt?.Trim() ?? "";
+        settings.TranslationGlossaryPath = NormalizeTranslationGlossaryPath(settings.TranslationGlossaryPath);
+        settings.TranslationCostLimitTokens = NormalizeTranslationCostLimitTokens(settings.TranslationCostLimitTokens);
         return settings;
     }
 
@@ -372,4 +449,62 @@ public sealed class SettingsStore
         => dpi <= 0
             ? AppSettings.RenderDpiDefault
             : Math.Clamp(dpi, AppSettings.RenderDpiMin, AppSettings.RenderDpiMax);
+
+    // ------------------------------------------------------------------ v1.1 翻译归一化（Load 与 Save 共用）
+
+    /// <summary>语言 / 模板标识归一化：允许集内保留规范形式（大小写不敏感），否则回退 <paramref name="fallback"/>。</summary>
+    internal static string NormalizeTranslationLanguage(string? code, string fallback, IReadOnlyList<string> allowed)
+    {
+        var value = code?.Trim();
+        if (string.IsNullOrEmpty(value)) return fallback;
+
+        foreach (var candidate in allowed)
+        {
+            if (string.Equals(candidate, value, StringComparison.OrdinalIgnoreCase)) return candidate;
+        }
+
+        return fallback;
+    }
+
+    /// <summary>术语表路径归一化：空白 → 空串；其余仅去首尾空白（存在性与扩展名由翻译配置消费方校验）。</summary>
+    internal static string NormalizeTranslationGlossaryPath(string? path)
+        => string.IsNullOrWhiteSpace(path) ? "" : path.Trim();
+
+    /// <summary>成本上限归一化：非正数回退默认 2.0M，正数钳制到 [1, 1e9]。</summary>
+    internal static long NormalizeTranslationCostLimitTokens(long tokens)
+        => tokens <= 0
+            ? AppSettings.TranslationCostLimitTokensDefault
+            : Math.Clamp(tokens, AppSettings.TranslationCostLimitTokensMin, AppSettings.TranslationCostLimitTokensMax);
+
+    /// <summary>
+    /// 云端连接配置归一化：丢弃 provider / endpoint 缺项或端点内嵌密钥的损坏记录（决策 (j)）；
+    /// 同一 provider + endpoint origin 只保留首条（与同意 / 凭据寻址一致，避免目的地歧义）。
+    /// </summary>
+    internal static List<TranslationProviderConfig> NormalizeTranslationProviders(List<TranslationProviderConfig>? providers)
+    {
+        var result = new List<TranslationProviderConfig>();
+        if (providers is null) return result;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var provider in providers)
+        {
+            if (provider is null) continue;
+
+            var name = provider.Provider?.Trim() ?? "";
+            var endpoint = provider.Endpoint?.Trim() ?? "";
+            var model = provider.Model?.Trim() ?? "";
+            if (name.Length == 0 || endpoint.Length == 0) continue;
+            if (TranslationProviderConfig.ValidateEndpoint(endpoint) is not null) continue;
+
+            var destination = name + "\n" + TranslationConsent.NormalizeEndpoint(endpoint);
+            if (!seen.Add(destination)) continue;
+
+            provider.Provider = name;
+            provider.Endpoint = endpoint;
+            provider.Model = model;
+            result.Add(provider);
+        }
+
+        return result;
+    }
 }
