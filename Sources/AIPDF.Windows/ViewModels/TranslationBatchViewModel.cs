@@ -91,6 +91,24 @@ public sealed partial class BatchTranslationFileItem : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasResult))]
     private int _degradedPages;
 
+    /// <summary>降级原因的用户可见文案（去重保序；复用 <see cref="FullTranslationViewModel.DescribeReason"/>）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ResultText))]
+    [NotifyPropertyChangedFor(nameof(HasResult))]
+    private IReadOnlyList<string> _degradationLabels = [];
+
+    /// <summary>溢出页数（引擎 <c>results[].overflow.pages</c> 聚合；0 表示无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ResultText))]
+    [NotifyPropertyChangedFor(nameof(HasResult))]
+    private int _overflowPages;
+
+    /// <summary>其中被裁切的页数（引擎 <c>results[].overflow.clipPages</c> 聚合；0 表示无）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ResultText))]
+    [NotifyPropertyChangedFor(nameof(HasResult))]
+    private int _clippedPages;
+
     /// <summary>失败原因（引擎原文，可直接展示）。</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ResultText))]
@@ -121,10 +139,26 @@ public sealed partial class BatchTranslationFileItem : ObservableObject
     /// <summary>是否有对照产物。</summary>
     public bool HasDual => !string.IsNullOrEmpty(DualPath);
 
-    /// <summary>结果说明行（成功：产物与降级；失败：原因）。</summary>
+    /// <summary>结果说明行（成功：产物 + 逐项降级原因 + 溢出/裁切；失败：原因）。</summary>
     public string ResultText => IsDone
-        ? (DegradedPages > 0 ? $"已生成 mono + dual · {DegradedPages} 页降级" : "已生成 mono + dual")
+        ? BuildDoneText()
         : IsFailed ? $"失败：{Error}" : "";
+
+    /// <summary>成功结果文案：产物 + 降级页数与逐项原因 + 溢出/裁切计数（缺失项不展示，不伪造）。</summary>
+    private string BuildDoneText()
+    {
+        var parts = new List<string> { "已生成 mono + dual" };
+        if (DegradedPages > 0)
+        {
+            parts.Add(DegradationLabels.Count > 0
+                ? $"{DegradedPages} 页降级（{string.Join("、", DegradationLabels)}）"
+                : $"{DegradedPages} 页降级");
+        }
+
+        if (OverflowPages > 0) parts.Add($"{OverflowPages} 页译文超出范围");
+        if (ClippedPages > 0) parts.Add($"{ClippedPages} 页被裁切");
+        return string.Join(" · ", parts);
+    }
 
     /// <summary>是否有结果说明（结果行显隐）。</summary>
     public bool HasResult => ResultText.Length > 0;
@@ -138,18 +172,31 @@ public sealed partial class BatchTranslationFileItem : ObservableObject
         MonoPath = null;
         DualPath = null;
         DegradedPages = 0;
+        DegradationLabels = [];
+        OverflowPages = 0;
+        ClippedPages = 0;
     }
 
     /// <summary>翻译中进度文案（文件内进度）。</summary>
     public void ReportProgress(double fraction)
         => StatusText = $"翻译中 {Math.Clamp(fraction, 0, 1) * 100:0}%";
 
-    /// <summary>完成：记录 mono / dual 与降级页数。</summary>
-    public void Complete(string? mono, string? dual, int degradedPages)
+    /// <summary>完成：记录 mono / dual、逐项降级原因与溢出/裁切聚合（R5-7）。</summary>
+    public void Complete(
+        string? mono,
+        string? dual,
+        IReadOnlyList<FullTranslationPageIssue> pageIssues,
+        FullTranslationOverflowSummary? overflow)
     {
         MonoPath = mono;
         DualPath = dual;
-        DegradedPages = degradedPages;
+        DegradedPages = pageIssues.Count;
+        DegradationLabels = [.. pageIssues
+            .SelectMany(issue => issue.Reasons)
+            .Select(FullTranslationViewModel.DescribeReason)
+            .Distinct(StringComparer.Ordinal)];
+        OverflowPages = overflow?.OverflowPages ?? 0;
+        ClippedPages = overflow?.ClippedPages ?? 0;
         Error = null;
         Status = BatchFileStatus.Done;
         StatusText = "完成";
@@ -880,7 +927,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             var outcome = EngineFullTranslationService.ParseOutcome(result);
             var mono = outcome.Artifacts.FirstOrDefault(a => a.Kind == "mono")?.Path;
             var dual = outcome.Artifacts.FirstOrDefault(a => a.Kind == "dual")?.Path;
-            file.Complete(mono, dual, outcome.PageIssues.Count);
+            file.Complete(mono, dual, outcome.PageIssues, outcome.Overflow);
         }
         catch (OperationCanceledException)
         {

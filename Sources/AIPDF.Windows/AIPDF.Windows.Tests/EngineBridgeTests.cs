@@ -153,6 +153,20 @@ public sealed class EngineBridgeTests
         Assert.DoesNotContain("https://api.example.test/v1", secrets);
     }
 
+    // R5-5：stderr 行在【入缓冲前】脱敏，公开的 RecentDiagnostics 绝不驻留原文密钥。
+    [Fact]
+    public void OnStderrLine_RedactsBeforeBuffering()
+    {
+        const string key = "sk-stderr-buffer-secret-987";
+        var bridge = new EngineBridge("python", "engine.py");
+
+        bridge.OnStderrLine($"Traceback (most recent call last): options={{'apiKey': '{key}'}}", [key]);
+
+        var diagnostics = string.Join("|", bridge.RecentDiagnostics);
+        Assert.DoesNotContain(key, diagnostics, StringComparison.Ordinal);
+        Assert.Contains("[REDACTED]", diagnostics, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TryParseProgress_ValidLine_ReturnsMessageAndFraction()
     {

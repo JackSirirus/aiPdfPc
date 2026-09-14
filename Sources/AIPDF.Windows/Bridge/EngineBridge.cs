@@ -118,6 +118,10 @@ public class EngineBridge
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // 本请求的敏感值（apiKey / password）先解析一次：既用于 stderr 入缓冲前脱敏，
+        // 也用于异常消息脱敏，保证任何诊断缓冲都不驻留原文（R5-5）。
+        var secrets = SensitiveOptionValues(request);
+
         // 与引擎端 T4 的 UTF-8 stdio 契约配对，中文路径双向无损。
         // 必须用无 BOM 的 UTF8：Encoding.UTF8 静态实例带 BOM 前导，StreamWriter
         // 会把 EF BB BF 写进 stdin，引擎的 json.load 读到 U+FEFF 即报"请求格式不正确"。
@@ -163,7 +167,7 @@ public class EngineBridge
 
         // 先启动两个异步读循环再写 stdin：引擎的任何输出都不会因管道缓冲填满而阻塞。
         var stdoutTask = ReadLinesAsync(process.StandardOutput, stdoutLines.Add);
-        var stderrTask = ReadLinesAsync(process.StandardError, OnStderrLine);
+        var stderrTask = ReadLinesAsync(process.StandardError, line => OnStderrLine(line, secrets));
 
         try
         {
@@ -200,7 +204,7 @@ public class EngineBridge
             throw new OperationCanceledException("引擎处理已取消。", cancellationToken);
         }
 
-        return ParseResult(stdoutLines, process.ExitCode, RecentDiagnostics, SensitiveOptionValues(request));
+        return ParseResult(stdoutLines, process.ExitCode, RecentDiagnostics, secrets);
     }
 
     /// <summary>stdout 行式异步读循环；管道断裂（进程被杀）视为流结束。</summary>
@@ -227,8 +231,14 @@ public class EngineBridge
         }
     }
 
-    private void OnStderrLine(string line)
+    /// <summary>
+    /// stderr 行落环形缓冲：入缓冲【前】用本请求的敏感值脱敏，保证公开的
+    /// <see cref="RecentDiagnostics"/> 绝不返回原文密钥（R5-5）。进度事件同样基于脱敏后的行。
+    /// </summary>
+    internal void OnStderrLine(string line, IReadOnlyList<string>? secrets)
     {
+        var redactedLine = RedactSecrets(line, secrets);
+
         lock (_diagnosticsLock)
         {
             if (_diagnostics.Count == DiagnosticCapacity)
@@ -236,10 +246,10 @@ public class EngineBridge
                 _diagnostics.Dequeue();
             }
 
-            _diagnostics.Enqueue(line);
+            _diagnostics.Enqueue(redactedLine);
         }
 
-        var progress = TryParseProgress(line);
+        var progress = TryParseProgress(redactedLine);
         if (progress is not null)
         {
             Progress?.Invoke(this, progress);

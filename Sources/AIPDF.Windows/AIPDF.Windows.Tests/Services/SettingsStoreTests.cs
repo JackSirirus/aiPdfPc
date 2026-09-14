@@ -347,32 +347,77 @@ public sealed class SettingsStoreTests
     }
 
     [Fact]
-    public void NormalizeTranslationProviders_DropsBlankAndUnsafe_DedupesOrigin()
+    public void NormalizeTranslationProviders_KeepsInvalidWithReason_DropsBlank_DedupesOrigin()
     {
         var providers = new List<TranslationProviderConfig>
         {
             new() { Provider = "deepseek", Endpoint = "https://api.deepseek.com/v1", Model = "a" },
-            new() { Provider = "", Endpoint = "https://api.deepseek.com/v1" },                            // 缺 provider
-            new() { Provider = "moonshot", Endpoint = "" },                                               // 缺 endpoint
-            new() { Provider = "leak", Endpoint = "https://key:secret@api.leak.com/v1" },                 // 内嵌密钥
+            new() { Provider = "", Endpoint = "https://api.deepseek.com/v1" },                            // 缺 provider → 明确无效，丢弃
+            new() { Provider = "moonshot", Endpoint = "" },                                               // 缺 endpoint → 明确无效，丢弃
+            new() { Provider = "leak", Endpoint = "https://key:secret@api.leak.com/v1" },                 // 内嵌密钥 → 保留并标注（R5-3）
             new() { Provider = "deepseek", Endpoint = "https://api.deepseek.com/v2/chat", Model = "b" },  // 同 origin → 去重
         };
 
         var normalized = SettingsStore.NormalizeTranslationProviders(providers);
 
-        Assert.Single(normalized);
+        Assert.Equal(2, normalized.Count); // 仅丢弃缺项条目；失效条目保留（不再静默丢配置）
         Assert.Equal("deepseek", normalized[0].Provider);
         Assert.Equal("https://api.deepseek.com/v1", normalized[0].Endpoint);
         Assert.Equal("a", normalized[0].Model);
+        Assert.True(normalized[0].IsUsable);
+        Assert.Null(normalized[0].ValidationError);
+        Assert.Equal("leak", normalized[1].Provider);
+        Assert.Equal("https://key:secret@api.leak.com/v1", normalized[1].Endpoint);
+        Assert.False(normalized[1].IsUsable);
+        Assert.Equal(TranslationProviderConfig.EmbeddedSecretMessage, normalized[1].ValidationError);
     }
 
     [Fact]
-    public void Load_TranslationProviders_SkipsUnsafeEndpoint()
+    public void NormalizeTranslationProviders_PreservesLegitimateButSuspiciousEndpoint()
+    {
+        // R5-3：/v1/task-management 曾因未锚定的 sk- 正则被误判丢弃；现应原样保留且可用。
+        var providers = new List<TranslationProviderConfig>
+        {
+            new() { Provider = "deepseek", Endpoint = "https://api.deepseek.com/v1/task-management", Model = "m" },
+        };
+
+        var normalized = SettingsStore.NormalizeTranslationProviders(providers);
+
+        var provider = Assert.Single(normalized);
+        Assert.Null(provider.ValidationError);
+        Assert.True(provider.IsUsable);
+        Assert.Equal("https://api.deepseek.com/v1/task-management", provider.Endpoint);
+    }
+
+    [Fact]
+    public void NormalizeTranslationProviders_KeepsInvalidEndpointWithReason()
+    {
+        var providers = new List<TranslationProviderConfig>
+        {
+            new() { Provider = "bad", Endpoint = "http://api.bad.com/v1" }, // 非 loopback 明文 http
+        };
+
+        var normalized = SettingsStore.NormalizeTranslationProviders(providers);
+
+        var provider = Assert.Single(normalized);
+        Assert.False(provider.IsUsable);
+        Assert.Equal(TranslationProviderConfig.PlainHttpMessage, provider.ValidationError);
+        Assert.Equal("http://api.bad.com/v1", provider.Endpoint); // 端点保留供用户修正
+    }
+
+    [Fact]
+    public void Load_TranslationProviders_KeepsUnsafeEndpointWithValidationError()
     {
         using var fx = new Fixture();
         fx.WriteRaw(
             """{"schemaVersion":2,"translationProviders":[{"provider":"leak","endpoint":"https://api.leak.com/v1?api_key=sk-x","model":"m"}]}""");
-        Assert.Empty(fx.NewStore().Load().TranslationProviders);
+
+        var provider = Assert.Single(fx.NewStore().Load().TranslationProviders);
+
+        Assert.Equal("leak", provider.Provider);
+        Assert.Equal("https://api.leak.com/v1?api_key=sk-x", provider.Endpoint);
+        Assert.False(provider.IsUsable);
+        Assert.Equal(TranslationProviderConfig.EmbeddedSecretMessage, provider.ValidationError);
     }
 
     [Fact]

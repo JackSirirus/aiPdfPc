@@ -171,6 +171,17 @@ public sealed record FullTranslationSearchSummary(int DegradedPages, int Unsearc
 }
 
 /// <summary>
+/// 溢出 / 裁切聚合（与引擎 <c>results[].overflow</c> 对齐，R5a/R5-7）：
+/// <see cref="OverflowPages"/> = 命中 <c>overflow_margin</c>(S2) 或 <c>clip</c>(S3) 的页数；
+/// <see cref="ClippedPages"/> = 其中命中 <c>clip</c> 的页数。引擎未给出该聚合时为 null（不伪造结论）。
+/// </summary>
+public sealed record FullTranslationOverflowSummary(int OverflowPages, int ClippedPages)
+{
+    /// <summary>是否记录到任何溢出 / 裁切。</summary>
+    public bool HasAny => OverflowPages > 0 || ClippedPages > 0;
+}
+
+/// <summary>
 /// 整篇翻译结果。<see cref="Ok"/> 为 false 时 <see cref="Error"/> 为可直接展示的原因；
 /// <see cref="Cancelled"/> 为 true 表示用户取消（引擎已杀子树，半成品保留但不采用）。
 /// </summary>
@@ -184,7 +195,8 @@ public sealed record FullTranslationOutcome(
     IReadOnlyList<FullTranslationPageIssue> PageIssues,
     FullTranslationSourceProtection SourceProtection,
     double ElapsedSeconds,
-    FullTranslationSearchSummary? SearchSummary = null)
+    FullTranslationSearchSummary? SearchSummary = null,
+    FullTranslationOverflowSummary? Overflow = null)
 {
     /// <summary>取消结果（不视为失败）。</summary>
     public static FullTranslationOutcome Cancelled_ { get; } =
@@ -289,6 +301,7 @@ public sealed class EngineFullTranslationService : IFullTranslationService
         int? degradedPages = null;
         int? unsearchablePages = null;
         int? totalPages = null;
+        FullTranslationOverflowSummary? overflow = null;
 
         if (result.Extra.TryGetValue("results", out var resultsElement)
             && resultsElement.ValueKind == JsonValueKind.Array)
@@ -308,6 +321,14 @@ public sealed class EngineFullTranslationService : IFullTranslationService
                     {
                         artifacts.Add(new FullTranslationArtifact(kind, path));
                     }
+                }
+
+                // R5a/R5-7：逐文件聚合溢出 / 裁切（引擎放在 results[].overflow；兼容 report.overflow）。
+                if (ParseOverflow(entry) is { } fileOverflow)
+                {
+                    overflow = new FullTranslationOverflowSummary(
+                        (overflow?.OverflowPages ?? 0) + fileOverflow.OverflowPages,
+                        (overflow?.ClippedPages ?? 0) + fileOverflow.ClippedPages);
                 }
 
                 if (entry.TryGetProperty("report", out var report) && report.ValueKind == JsonValueKind.Object)
@@ -397,7 +418,56 @@ public sealed class EngineFullTranslationService : IFullTranslationService
 
         return new FullTranslationOutcome(
             true, null, false, result.OutputDir, taskDir,
-            artifacts, issues, protection, result.Elapsed ?? 0, summary);
+            artifacts, issues, protection, result.Elapsed ?? 0, summary, overflow);
+    }
+
+    /// <summary>
+    /// 解析溢出 / 裁切聚合（R5a）：引擎实际放在 <c>results[].overflow</c>（<c>{pages, clipPages, warn}</c>），
+    /// 兼容备选位置 <c>results[].report.overflow</c>；接受对象（含别名）或整数形式；无法识别时返回 null。
+    /// </summary>
+    private static FullTranslationOverflowSummary? ParseOverflow(JsonElement entry)
+    {
+        if (!entry.TryGetProperty("overflow", out var element)
+            && !(entry.TryGetProperty("report", out var report)
+                 && report.ValueKind == JsonValueKind.Object
+                 && report.TryGetProperty("overflow", out element)))
+        {
+            return null;
+        }
+
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var total))
+        {
+            return new FullTranslationOverflowSummary(total, 0);
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var overflowPages = TryIntAny(element, "pages", "overflow", "overflow_count", "overflow_pages", "overflows");
+        var clippedPages = TryIntAny(element, "clipPages", "clipped", "clip", "clip_count", "clipped_pages", "clips");
+        if (overflowPages is null && clippedPages is null)
+        {
+            return null;
+        }
+
+        return new FullTranslationOverflowSummary(overflowPages ?? 0, clippedPages ?? 0);
+    }
+
+    private static int? TryIntAny(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.Number
+                && value.TryGetInt32(out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        return null;
     }
 
     private static string? TryString(JsonElement element, string name)

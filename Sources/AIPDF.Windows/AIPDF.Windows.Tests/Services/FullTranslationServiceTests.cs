@@ -148,6 +148,8 @@ public class FullTranslationServiceTests
     [Fact]
     public void ParseOutcome_ExtractsArtifactsDegradationsAndProtection()
     {
+        // 形状与引擎一致：results[].report 内嵌（R5a 后引擎真实发出 source_protection / overflow），
+        // 故此处断言的解析路径即生产路径，不再是脱离引擎的手写形状。
         const string json = """
         {
           "ok": true,
@@ -167,8 +169,9 @@ public class FullTranslationServiceTests
                   { "page": 5, "degraded": false, "reasons": [], "searchable": true }
                 ],
                 "summary": { "degraded_pages": 2, "unsearchable_pages": 1, "total_pages": 12 },
-                "source_protection": { "encrypted": true, "restricted": true, "disclosure": "已绕过源文档的抽取限制（经用户确认）" }
-              }
+                "source_protection": { "encrypted": true, "restricted": true, "permissions": 0, "disclosure": "已绕过源文档的抽取限制（经用户确认）" }
+              },
+              "overflow": { "pages": 2, "clipPages": 1, "warn": true }
             }
           ]
         }
@@ -190,8 +193,34 @@ public class FullTranslationServiceTests
         Assert.Equal(2, outcome.SearchSummary.DegradedPages);
         Assert.Equal(1, outcome.SearchSummary.UnsearchablePages);
         Assert.Equal(11, outcome.SearchSummary.SearchablePages);
+        // 解析器确实读取 results[].report.source_protection（引擎实际形状）。
         Assert.True(outcome.SourceProtection.Restricted);
         Assert.Equal("已绕过源文档的抽取限制（经用户确认）", outcome.SourceProtection.Disclosure);
+        // R5a/R5-7：results[].overflow 聚合（pages / clipPages）。
+        Assert.NotNull(outcome.Overflow);
+        Assert.Equal(2, outcome.Overflow!.OverflowPages);
+        Assert.Equal(1, outcome.Overflow.ClippedPages);
+    }
+
+    [Fact]
+    public void ParseOutcome_OverflowAggregateAbsent_LeavesOverflowNull()
+    {
+        const string json = """
+        {
+          "ok": true,
+          "outputs": ["/out/a-mono.pdf"],
+          "outputDir": "/out",
+          "elapsed": 1.0,
+          "results": [
+            { "file": "/in/a.pdf", "taskDir": "/out/task", "mono": "/out/a-mono.pdf",
+              "report": { "pages": [], "summary": { "degraded_pages": 0, "unsearchable_pages": 0, "total_pages": 1 } } }
+          ]
+        }
+        """;
+
+        var outcome = EngineFullTranslationService.ParseOutcome(BuildResult(json));
+
+        Assert.Null(outcome.Overflow); // 引擎未给聚合时不伪造结论
     }
 
     [Fact]

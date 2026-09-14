@@ -4,6 +4,7 @@
 // 串行逐文件执行（顺序即列表顺序）/ 单份失败不中断整体 / 共享配置映射 / 失败项重试 /
 // 结果【按需打开】（绝不自动触发 OpenDocumentRequested）。
 using System.IO;
+using System.Text.Json;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
@@ -142,6 +143,62 @@ public sealed class TranslationBatchViewModelTests
         Assert.All(vm.Files, f => Assert.True(f.IsDone));
         Assert.Equal(3, vm.SuccessCount);
         Assert.False(vm.HasFailedItems);
+    }
+
+    // R5-7：逐项结果不只显示「N 页降级」计数，还展示原因文案与溢出/裁切聚合。
+    [Fact]
+    public async Task Start_DegradedFile_SurfacesReasonLabelsAndOverflowCounts()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge { Handler = _ => ResultWithReport() };
+        var vm = NewViewModel(bridge, temp.CreatePdf("doc.pdf"));
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        var text = vm.Files[0].ResultText;
+        Assert.Contains("已生成 mono + dual", text);
+        Assert.Contains("2 页降级", text);
+        Assert.Contains("该页表格结构可能丢失", text);     // table_fail → ReasonLabels 文案
+        Assert.Contains("该页译文超出原文块范围", text);   // overflow_margin → ReasonLabels 文案
+        Assert.Contains("2 页译文超出范围", text);
+        Assert.Contains("1 页被裁切", text);
+    }
+
+    /// <summary>带逐页降级与 results[].overflow 聚合的引擎结果（经真实 ParseOutcome 解析）。</summary>
+    private static EngineResult ResultWithReport()
+    {
+        const string json = """
+        {
+          "ok": true,
+          "outputs": ["/out/task/doc-mono.pdf", "/out/task/doc-dual.pdf"],
+          "outputDir": "/out/task",
+          "results": [
+            {
+              "file": "doc.pdf",
+              "taskDir": "/out/task",
+              "mono": "/out/task/doc-mono.pdf",
+              "dual": "/out/task/doc-dual.pdf",
+              "report": {
+                "pages": [
+                  { "page": 3, "degraded": true, "reasons": ["table_fail"], "searchable": true },
+                  { "page": 7, "degraded": true, "reasons": ["overflow_margin"], "searchable": true }
+                ],
+                "summary": { "degraded_pages": 2, "unsearchable_pages": 0, "total_pages": 10 }
+              },
+              "overflow": { "pages": 2, "clipPages": 1, "warn": true }
+            }
+          ]
+        }
+        """;
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new EngineResult
+        {
+            Ok = true,
+            OutputDir = root.GetProperty("outputDir").GetString(),
+            Outputs = [.. root.GetProperty("outputs").EnumerateArray().Select(e => e.GetString() ?? "")],
+            Extra = new Dictionary<string, JsonElement> { ["results"] = root.GetProperty("results").Clone() },
+        };
     }
 
     [Fact]

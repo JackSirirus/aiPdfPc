@@ -4,7 +4,9 @@
 //   文档缺失 / 未配置 / 受限确认门禁 / 成功结果与披露 / 取消 / 超时 / 后台继续（会话内）/ 模板映射 / 扫描页提示。
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
+using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.ViewModels.Translation;
@@ -65,6 +67,31 @@ public sealed class FullTranslationViewModelTests
             new FullTranslationSourceProtection(restricted, disclosure),
             2.5,
             searchSummary);
+
+    /// <summary>返回固定结果的桥（不启动进程），用于把引擎 JSON 经真实解析器送进 VM。</summary>
+    private sealed class StubBridge(EngineResult result) : EngineBridge("python", "engine.py")
+    {
+        public override Task<EngineResult> ExecuteAsync(EngineRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(result);
+    }
+
+    private static EngineResult BuildEngineResult(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        return new EngineResult
+        {
+            Ok = root.GetProperty("ok").GetBoolean(),
+            OutputDir = root.TryGetProperty("outputDir", out var dir) ? dir.GetString() : null,
+            Outputs = root.TryGetProperty("outputs", out var outputs)
+                ? [.. outputs.EnumerateArray().Select(e => e.GetString() ?? "")]
+                : [],
+            Elapsed = root.TryGetProperty("elapsed", out var elapsed) ? elapsed.GetDouble() : null,
+            Extra = root.TryGetProperty("results", out var results)
+                ? new Dictionary<string, JsonElement> { ["results"] = results.Clone() }
+                : new Dictionary<string, JsonElement>(),
+        };
+    }
 
     private static TranslationRuntimeConfig RuntimeConfig()
         => new("local", "http://127.0.0.1:11434/v1", "qwen", "sk-test", "auto", "zh", "academic");
@@ -259,6 +286,41 @@ public sealed class FullTranslationViewModelTests
         Assert.Equal(3, vm.Degradations[0].Page);
         Assert.Contains("该页表格结构可能丢失", vm.Degradations[0].LabelText);
         Assert.Equal(100, vm.ProgressPercent);
+    }
+
+    // R5-8：整篇 VM 经真实解析器（EngineFullTranslationService）消费引擎 report 的
+    // source_protection，并把它转成译后受限披露（非直接构造 outcome 的旁路）。
+    [Fact]
+    public async Task Start_EngineReportSourceProtection_SurfacesRestrictionDisclosure()
+    {
+        const string json = """
+        {
+          "ok": true,
+          "outputs": ["/out/a-mono.pdf"],
+          "outputDir": "/out",
+          "elapsed": 1.0,
+          "results": [
+            { "file": "/in/a.pdf", "taskDir": "/out/task", "mono": "/out/a-mono.pdf",
+              "report": { "pages": [], "summary": { "degraded_pages": 0, "unsearchable_pages": 0, "total_pages": 1 },
+                          "source_protection": { "encrypted": true, "restricted": true, "permissions": 0,
+                                                 "disclosure": "已绕过源文档的抽取限制（经用户确认）" } } }
+          ]
+        }
+        """;
+
+        var service = new EngineFullTranslationService(new StubBridge(BuildEngineResult(json)));
+        var vm = new FullTranslationViewModel(service, new FixedConfigProvider(RuntimeConfig()))
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+            IsRestrictedDocument = true,
+            ConfirmRestrictedDocumentAsync = () => Task.FromResult(true),
+        };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.True(vm.ShowRestrictionDisclosure);
+        Assert.Equal("已绕过源文档的抽取限制（经用户确认）", vm.RestrictionDisclosure);
     }
 
     [Fact]

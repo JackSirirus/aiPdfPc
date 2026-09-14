@@ -45,7 +45,9 @@ public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRunti
     public TranslationRuntimeConfigResolution Resolve()
     {
         var settings = _settings.Load();
-        var providers = settings.TranslationProviders.Where(p => p is { IsConfigured: true }).ToList();
+        // 只使用通过端点校验的条目（IsUsable）：归一化保留失效条目供用户修正，但运行时绝不采用
+        // 内嵌密钥 / 非法 scheme 的端点（R5-3）。
+        var providers = settings.TranslationProviders.Where(p => p is { IsUsable: true }).ToList();
         if (providers.Count == 0)
         {
             return Missing(

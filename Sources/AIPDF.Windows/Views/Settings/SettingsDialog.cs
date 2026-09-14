@@ -393,7 +393,8 @@ public sealed class SettingsDialog : Window
         _providerCombo.Items.Clear();
         foreach (var provider in _providers)
         {
-            _providerCombo.Items.Add(new ComboBoxItem { Content = provider.DisplayName, Tag = provider });
+            var label = provider.ValidationError is null ? provider.DisplayName : provider.DisplayName + "（待修正）";
+            _providerCombo.Items.Add(new ComboBoxItem { Content = label, Tag = provider });
         }
         _providerCombo.Items.Add(new ComboBoxItem { Content = "＋ 新增服务商…", Tag = null });
 
@@ -443,6 +444,12 @@ public sealed class SettingsDialog : Window
         _keyBox.Clear();
         _translationMessage.Text = "";
         UpdateConsentStatus(provider);
+
+        // R5-3：归一化会保留端点校验失败的条目（不再静默丢弃），在此提示原因引导用户修正。
+        if (!string.IsNullOrEmpty(provider.ValidationError))
+        {
+            ShowTranslationMessage(provider.ValidationError, isError: true);
+        }
     }
 
     private void StartNewProvider()

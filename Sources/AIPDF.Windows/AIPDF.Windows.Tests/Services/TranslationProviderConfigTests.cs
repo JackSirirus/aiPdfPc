@@ -152,6 +152,20 @@ public sealed class TranslationProviderConfigTests
         Assert.False(called); // 字面量 IP 直接判定，不解析
     }
 
+    // R5-6：生产解析器带短 TTL 缓存，但【注入解析器】不经过缓存，
+    // 同一主机两次不同解析结果必须各自生效（防测试 / 行为互相污染）。
+    [Fact]
+    public void IsLoopbackEndpoint_InjectedResolver_NotCachedAcrossCalls()
+    {
+        const string endpoint = "http://cached-host.test/v1";
+
+        var nonLoopback = TranslationProviderConfig.IsLoopbackEndpoint(endpoint, _ => [IPAddress.Parse("10.0.0.5")]);
+        var loopback = TranslationProviderConfig.IsLoopbackEndpoint(endpoint, _ => [IPAddress.Loopback]);
+
+        Assert.False(nonLoopback);
+        Assert.True(loopback);
+    }
+
     // ---------------------------------------------------------------- F31：URL 片段内嵌密钥
 
     [Theory]
@@ -161,6 +175,13 @@ public sealed class TranslationProviderConfigTests
     public void ValidateEndpoint_RejectsSecretInFragment(string endpoint)
         => Assert.Equal(TranslationProviderConfig.EmbeddedSecretMessage, TranslationProviderConfig.ValidateEndpoint(endpoint));
 
+    // R5-4：片段里的裸密钥（无 key= 名称）此前漏检，必须与 key=value 同口径拒绝。
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1#sk-abcdefgh12345678")]
+    [InlineData("https://api.deepseek.com/v1#token=ABCDEFGH1234")]
+    public void ValidateEndpoint_RejectsBareSecretInFragment(string endpoint)
+        => Assert.Equal(TranslationProviderConfig.EmbeddedSecretMessage, TranslationProviderConfig.ValidateEndpoint(endpoint));
+
     // ---------------------------------------------------------------- F32：路径段疑似内嵌密钥
 
     [Theory]
@@ -168,6 +189,7 @@ public sealed class TranslationProviderConfigTests
     [InlineData("https://api.deepseek.com/v1/key=sk-abcdefgh")]
     [InlineData("https://api.deepseek.com/v1/token:abcdefgh1234")]
     [InlineData("https://api.deepseek.com/v1/api_key-abcdefgh1234")]
+    [InlineData("https://api.deepseek.com/v1/token=ABCDEFGH1234")]
     public void ValidateEndpoint_RejectsSecretLookingPath(string endpoint)
         => Assert.Equal(TranslationProviderConfig.EmbeddedSecretInPathMessage, TranslationProviderConfig.ValidateEndpoint(endpoint));
 
@@ -177,6 +199,17 @@ public sealed class TranslationProviderConfigTests
     public void ValidateEndpoint_AcceptsNormalPath(string endpoint)
         => Assert.Null(TranslationProviderConfig.ValidateEndpoint(endpoint));
 
+    // R5-3：正常路径词含 sk- / key- 子串时不得被误判（此前 /v1/task-management 等会被拒）。
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1/task-management")]
+    [InlineData("https://api.deepseek.com/v1/risk-assessment")]
+    [InlineData("https://api.deepseek.com/v1/disk-encryption")]
+    [InlineData("https://api.deepseek.com/v1/monkey-12345678")]
+    [InlineData("https://api.deepseek.com/v1/token-management")]
+    [InlineData("https://api.deepseek.com/v1/key-value-store")]
+    public void ValidateEndpoint_AcceptsLegitimatePathWords(string endpoint)
+        => Assert.Null(TranslationProviderConfig.ValidateEndpoint(endpoint));
+
     [Theory]
     [InlineData("sk-abcdefgh12345678", true)]
     [InlineData("/v1/sk-abcdefgh12345678", true)]
@@ -184,6 +217,11 @@ public sealed class TranslationProviderConfigTests
     [InlineData("/v1/chat", false)]
     [InlineData("/v1/chat/completions", false)]
     [InlineData("", false)]
+    [InlineData("/v1/task-management", false)]     // sk- 非段首 / 非分隔符前缀
+    [InlineData("/v1/risk-assessment", false)]
+    [InlineData("/v1/disk-encryption", false)]
+    [InlineData("/v1/monkey-12345678", false)]     // key- 非段首 / 非分隔符前缀
+    [InlineData("/v1/token-management", false)]    // 命名值无高熵特征（纯小写短词）
     public void LooksLikeSecretInPath_DetectsKeyLookingSegments(string path, bool expected)
         => Assert.Equal(expected, TranslationProviderConfig.LooksLikeSecretInPath(path));
 }

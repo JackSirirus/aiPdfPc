@@ -484,15 +484,17 @@ public sealed class SettingsStore
             : Math.Clamp(tokens, AppSettings.TranslationCostLimitTokensMin, AppSettings.TranslationCostLimitTokensMax);
 
     /// <summary>
-    /// 云端连接配置归一化：丢弃 provider / endpoint 缺项或端点内嵌密钥的损坏记录（决策 (j)）；
-    /// 同一 provider + endpoint origin 只保留首条（与同意 / 凭据寻址一致，避免目的地歧义）。
+    /// 云端连接配置归一化：仅丢弃 provider / endpoint 缺项的「明确无效」条目；
+    /// 端点校验失败的条目【保留】并写入 <see cref="TranslationProviderConfig.ValidationError"/>
+    /// （不再静默丢配置，R5-3），由运行时（<c>IsUsable</c>）跳过、由设置界面提示用户修正；
+    /// 同一 provider + endpoint origin 只保留一条（可用条目优先，避免失效旧条目遮蔽已修正条目）。
     /// </summary>
     internal static List<TranslationProviderConfig> NormalizeTranslationProviders(List<TranslationProviderConfig>? providers)
     {
         var result = new List<TranslationProviderConfig>();
         if (providers is null) return result;
 
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cleaned = new List<TranslationProviderConfig>();
         foreach (var provider in providers)
         {
             if (provider is null) continue;
@@ -501,14 +503,20 @@ public sealed class SettingsStore
             var endpoint = provider.Endpoint?.Trim() ?? "";
             var model = provider.Model?.Trim() ?? "";
             if (name.Length == 0 || endpoint.Length == 0) continue;
-            if (TranslationProviderConfig.ValidateEndpoint(endpoint) is not null) continue;
-
-            var destination = name + "\n" + TranslationConsent.NormalizeEndpoint(endpoint);
-            if (!seen.Add(destination)) continue;
 
             provider.Provider = name;
             provider.Endpoint = endpoint;
             provider.Model = model;
+            provider.ValidationError = TranslationProviderConfig.ValidateEndpoint(endpoint);
+            cleaned.Add(provider);
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var provider in cleaned.OrderByDescending(p => p.IsUsable))
+        {
+            var destination = provider.Provider + "\n" + TranslationConsent.NormalizeEndpoint(provider.Endpoint);
+            if (!seen.Add(destination)) continue;
+
             result.Add(provider);
         }
 
