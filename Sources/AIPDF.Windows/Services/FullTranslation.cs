@@ -58,6 +58,67 @@ public static class TranslationOutputFormats
     }
 }
 
+/// <summary>
+/// 组装 `translate` op 引擎 options 的唯一实现（整篇服务与批量工具页共用，保证口径一致）。
+/// 值一律字符串（<c>maxTokens</c> / <c>marker</c> 亦然）；密码 / 密钥仅经此处进入子进程 stdin。
+/// </summary>
+internal static class TranslationEngineOptions
+{
+    /// <summary>按已解析的运行时 / 配置值组装选项字典。</summary>
+    public static Dictionary<string, object?> Build(
+        string endpoint,
+        string model,
+        string apiKey,
+        string sourceLang,
+        string targetLang,
+        string template,
+        bool generateMono,
+        bool generateDual,
+        bool exportMarkdown,
+        bool marker,
+        string? glossaryPath = null,
+        string? customPrompt = null,
+        int? maxTokens = null,
+        string? password = null)
+    {
+        var options = new Dictionary<string, object?>
+        {
+            ["endpoint"] = endpoint,
+            ["model"] = model,
+            ["apiKey"] = apiKey,
+            ["sourceLang"] = sourceLang,
+            ["targetLang"] = targetLang,
+            ["template"] = template,
+            ["format"] = TranslationOutputFormats.ToEngineFormat(generateMono, generateDual, exportMarkdown),
+            ["marker"] = marker ? "true" : "false",
+        };
+
+        if (!string.IsNullOrWhiteSpace(glossaryPath))
+        {
+            options["glossary"] = glossaryPath;
+        }
+
+        // 自定义模板正文（决策 #10）：用户填写的 system 指令；引擎据此构建 system+user。
+        if (!string.IsNullOrWhiteSpace(customPrompt))
+        {
+            options["customPrompt"] = customPrompt;
+        }
+
+        if (maxTokens is int cap)
+        {
+            options["maxTokens"] = cap.ToString(CultureInfo.InvariantCulture);
+        }
+
+        // 密码仅本次使用、经 stdin 传递，绝不落盘 / 进 argv。
+        if (!string.IsNullOrEmpty(password))
+        {
+            options["password"] = password;
+        }
+
+        return options;
+    }
+}
+
 /// <summary>翻译进度（阶段名 + 0..1 比例）。</summary>
 public sealed record FullTranslationProgress(string Stage, double Fraction);
 
@@ -174,46 +235,21 @@ public sealed class EngineFullTranslationService : IFullTranslationService
 
     /// <summary>组装引擎 options（值一律字符串；密钥仅经此处进入子进程 stdin）。</summary>
     private static Dictionary<string, object?> BuildOptions(FullTranslationRequest request)
-    {
-        var format = TranslationOutputFormats.ToEngineFormat(
-            request.GenerateMono, request.GenerateDual, request.ExportMarkdown);
-
-        var options = new Dictionary<string, object?>
-        {
-            ["endpoint"] = request.Endpoint,
-            ["model"] = request.Model,
-            ["apiKey"] = request.ApiKey,
-            ["sourceLang"] = request.SourceLang,
-            ["targetLang"] = request.TargetLang,
-            ["template"] = request.Template,
-            ["format"] = format,
-            ["marker"] = request.Marker ? "true" : "false",
-        };
-
-        if (!string.IsNullOrWhiteSpace(request.GlossaryPath))
-        {
-            options["glossary"] = request.GlossaryPath;
-        }
-
-        // 自定义模板正文（决策 #10）：用户填写的 system 指令；引擎据此构建 system+user。
-        if (!string.IsNullOrWhiteSpace(request.CustomPrompt))
-        {
-            options["customPrompt"] = request.CustomPrompt;
-        }
-
-        if (request.MaxTokens is int cap)
-        {
-            options["maxTokens"] = cap.ToString(CultureInfo.InvariantCulture);
-        }
-
-        // 密码仅本次使用、经 stdin 传递，绝不落盘 / 进 argv。
-        if (!string.IsNullOrEmpty(request.Password))
-        {
-            options["password"] = request.Password;
-        }
-
-        return options;
-    }
+        => TranslationEngineOptions.Build(
+            request.Endpoint,
+            request.Model,
+            request.ApiKey,
+            request.SourceLang,
+            request.TargetLang,
+            request.Template,
+            request.GenerateMono,
+            request.GenerateDual,
+            request.ExportMarkdown,
+            request.Marker,
+            request.GlossaryPath,
+            request.CustomPrompt,
+            request.MaxTokens,
+            request.Password);
 
     /// <summary>把引擎结果解析为产物 / 降级报告 / 受限披露（内部可见，便于单测）。</summary>
     internal static FullTranslationOutcome ParseOutcome(EngineResult result)

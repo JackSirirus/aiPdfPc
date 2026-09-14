@@ -9,7 +9,6 @@
 // 设计依据：设计/v1.1-翻译/翻译-设计稿.html F6 / F6b、翻译-全状态设计参考.html T18 / T19。
 // 本类不写 AppSettings / 不落盘密钥；密钥只从运行时配置经 options → stdin 传递，绝不进日志。
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.IO;
 using System.Windows;
 using AIPDF.Windows.Bridge;
@@ -400,32 +399,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         }
 
         RefreshSummary();
-        IsRunning = true;
-        StatusMessage = $"正在批量翻译 {Files.Count} 份文件…";
-        ProgressMessage = "";
-        ProgressFraction = 0;
-
-        _bridge.Progress += OnBridgeProgress;
-        try
-        {
-            await RunFilesAsync([.. Files], options, token);
-            StatusMessage = token.IsCancellationRequested
-                ? "已取消：批量翻译已停止，未采用半成品。"
-                : $"完成：{SummaryText}。结果在下方按需打开。";
-        }
-        catch (OperationCanceledException)
-        {
-            StatusMessage = "已取消：批量翻译已停止，未采用半成品。";
-        }
-        finally
-        {
-            _bridge.Progress -= OnBridgeProgress;
-            _cts = null;
-            IsRunning = false;
-            ProgressMessage = "";
-            ProgressFraction = 0;
-            RefreshSummary();
-        }
+        await RunTranslationAsync(
+            [.. Files],
+            options,
+            token,
+            $"正在批量翻译 {Files.Count} 份文件…",
+            () => $"完成：{SummaryText}。结果在下方按需打开。",
+            "已取消：批量翻译已停止，未采用半成品。");
     }
 
     /// <summary>取消批量翻译：取消令牌 → EngineBridge 终止当前子进程树，不采用半成品。</summary>
@@ -517,28 +497,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
-        IsRunning = true;
-        StatusMessage = $"正在重试 {item.Name}…";
-
-        _bridge.Progress += OnBridgeProgress;
-        try
-        {
-            await RunFilesAsync([item], options, cts.Token);
-            StatusMessage = item.IsDone ? $"重试成功：{item.Name}。" : $"重试失败：{item.ResultText}";
-        }
-        catch (OperationCanceledException)
-        {
-            StatusMessage = "已取消：重试已停止。";
-        }
-        finally
-        {
-            _bridge.Progress -= OnBridgeProgress;
-            _cts = null;
-            IsRunning = false;
-            ProgressMessage = "";
-            ProgressFraction = 0;
-            RefreshSummary();
-        }
+        await RunTranslationAsync(
+            [item],
+            options,
+            cts.Token,
+            $"正在重试 {item.Name}…",
+            () => item.IsDone ? $"重试成功：{item.Name}。" : $"重试失败：{item.ResultText}",
+            "已取消：重试已停止。");
     }
 
     private bool CanRetryFile(BatchTranslationFileItem? item) => !IsRunning && item is { CanRetry: true };
@@ -581,28 +546,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
-        IsRunning = true;
-        StatusMessage = $"正在重试 {failures.Count} 个失败项…";
-
-        _bridge.Progress += OnBridgeProgress;
-        try
-        {
-            await RunFilesAsync(failures, options, cts.Token);
-            StatusMessage = $"重试完成：{SummaryText}。";
-        }
-        catch (OperationCanceledException)
-        {
-            StatusMessage = "已取消：重试已停止。";
-        }
-        finally
-        {
-            _bridge.Progress -= OnBridgeProgress;
-            _cts = null;
-            IsRunning = false;
-            ProgressMessage = "";
-            ProgressFraction = 0;
-            RefreshSummary();
-        }
+        await RunTranslationAsync(
+            failures,
+            options,
+            cts.Token,
+            $"正在重试 {failures.Count} 个失败项…",
+            () => $"重试完成：{SummaryText}。",
+            "已取消：重试已停止。");
     }
 
     private bool CanRetryAll => !IsRunning && HasFailedItems;
@@ -797,6 +747,45 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         return null;
     }
 
+    /// <summary>
+    /// 三个执行入口（开始 / 单文件重试 / 全部重试）共用的运行与收尾骨架：
+    /// 置 IsRunning 与运行文案、订阅进度、串行执行给定文件、按取消/完成设状态，
+    /// finally 统一退订并复位进度。options / token / 前置校验由调用方各自准备。
+    /// </summary>
+    private async Task RunTranslationAsync(
+        IReadOnlyList<BatchTranslationFileItem> files,
+        IReadOnlyDictionary<string, object?> options,
+        CancellationToken token,
+        string runningMessage,
+        Func<string> completionMessage,
+        string cancelledMessage)
+    {
+        IsRunning = true;
+        StatusMessage = runningMessage;
+        ProgressMessage = "";
+        ProgressFraction = 0;
+
+        _bridge!.Progress += OnBridgeProgress;
+        try
+        {
+            await RunFilesAsync(files, options, token);
+            StatusMessage = token.IsCancellationRequested ? cancelledMessage : completionMessage();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = cancelledMessage;
+        }
+        finally
+        {
+            _bridge.Progress -= OnBridgeProgress;
+            _cts = null;
+            IsRunning = false;
+            ProgressMessage = "";
+            ProgressFraction = 0;
+            RefreshSummary();
+        }
+    }
+
     /// <summary>按给定文件【串行】执行，UI 不阻塞；任一文件失败不中断其余。</summary>
     private async Task RunFilesAsync(IReadOnlyList<BatchTranslationFileItem> files, IReadOnlyDictionary<string, object?> options, CancellationToken token)
     {
@@ -859,42 +848,24 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
     /// <summary>组装引擎 translate options（值一律字符串；密钥经此进入子进程 stdin）。</summary>
     private Dictionary<string, object?> BuildEngineOptions(TranslationRuntimeConfig runtime)
-    {
-        var format = TranslationOutputFormats.ToEngineFormat(
-            Config.GenerateMono, Config.GenerateDual, Config.ExportMarkdown);
-
-        var options = new Dictionary<string, object?>
-        {
-            ["endpoint"] = runtime.Endpoint,
-            ["model"] = runtime.Model,
-            ["apiKey"] = runtime.ApiKey,
-            ["sourceLang"] = Config.SourceLanguage?.Code ?? TranslationConfigViewModel.AutoDetectCode,
-            ["targetLang"] = Config.TargetLanguage?.Code ?? TranslationConfigViewModel.DefaultTargetCode,
-            ["template"] = FullTranslationViewModel.ToEngineTemplate(Config.SelectedTemplate?.Id),
-            ["format"] = format,
+        => TranslationEngineOptions.Build(
+            runtime.Endpoint,
+            runtime.Model,
+            runtime.ApiKey,
+            Config.SourceLanguage?.Code ?? TranslationConfigViewModel.AutoDetectCode,
+            Config.TargetLanguage?.Code ?? TranslationConfigViewModel.DefaultTargetCode,
+            FullTranslationViewModel.ToEngineTemplate(Config.SelectedTemplate?.Id),
+            Config.GenerateMono,
+            Config.GenerateDual,
+            Config.ExportMarkdown,
             // 批量产物始终带「机器翻译 · 请核对」页脚（F6b）；法律/医学由引擎强制，口径一致。
-            ["marker"] = "true",
-        };
-
-        if (!string.IsNullOrWhiteSpace(Config.GlossaryPath))
-        {
-            options["glossary"] = Config.GlossaryPath.Trim();
-        }
-
-        // 自定义模板正文（决策 #10）：用户填写的 system 指令，随请求发往引擎。
-        if (Config.IsCustomTemplate && !string.IsNullOrWhiteSpace(Config.CustomPrompt))
-        {
-            options["customPrompt"] = Config.CustomPrompt.Trim();
-        }
-
-        if (Config.CostLimitEnabled)
-        {
-            options["maxTokens"] = Math.Clamp(Config.CostLimitTokens, 1, int.MaxValue)
-                .ToString(CultureInfo.InvariantCulture);
-        }
-
-        return options;
-    }
+            marker: true,
+            glossaryPath: string.IsNullOrWhiteSpace(Config.GlossaryPath) ? null : Config.GlossaryPath.Trim(),
+            // 自定义模板正文（决策 #10）：用户填写的 system 指令，随请求发往引擎。
+            customPrompt: Config.IsCustomTemplate && !string.IsNullOrWhiteSpace(Config.CustomPrompt)
+                ? Config.CustomPrompt.Trim()
+                : null,
+            maxTokens: Config.CostLimitEnabled ? (int?)Math.Clamp(Config.CostLimitTokens, 1, int.MaxValue) : null);
 
     private void OpenArtifact(BatchTranslationFileItem? item, string? path, string kindLabel)
     {
