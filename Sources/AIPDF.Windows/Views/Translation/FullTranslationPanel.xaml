@@ -51,6 +51,13 @@
                        Text="自定义 Prompt 尚未接入引擎，开始后按「通用」模板处理。"
                        Visibility="{Binding Config.IsCustomTemplate, Converter={StaticResource BoolToVis}}" />
 
+            <!-- Markdown 导出为可选产物：整篇引擎当前只产出 PDF，勾选后本次不会生成 .md -->
+            <TextBlock Margin="0,8,0,0"
+                       Style="{StaticResource FieldHint}"
+                       TextWrapping="Wrap"
+                       Text="Markdown 导出为可选产物，整篇引擎当前仅产出 PDF；勾选后本次不会生成 .md。"
+                       Visibility="{Binding Config.ExportMarkdown, Converter={StaticResource BoolToVis}}" />
+
             <!-- 输出文件夹 -->
             <TextBlock Style="{StaticResource FieldLabel}" Margin="0,14,0,0" Text="输出文件夹" />
             <Grid Margin="0,5,0,0">
@@ -239,7 +246,7 @@
                                     <Button Grid.Column="2"
                                             VerticalAlignment="Center"
                                             Style="{StaticResource PrimaryButton}"
-                                            Content="打开"
+                                            Content="{Binding OpenLabel}"
                                             Command="{Binding DataContext.OpenArtifactCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                             CommandParameter="{Binding}" />
                                 </Grid>
@@ -260,14 +267,115 @@
                                Text="{Binding RestrictionDisclosure}" />
                 </Border>
 
-                <!-- 每页降级报告摘要 -->
-                <TextBlock Margin="0,6,0,0"
+                <!-- 可搜索校验（F4）：引擎 report.summary 聚合 -->
+                <TextBlock Margin="0,8,0,0"
                            FontSize="11"
                            TextWrapping="Wrap"
-                           Foreground="{DynamicResource Brush.TextSecondary}"
-                           Text="{Binding DegradationSummary}"
-                           Visibility="{Binding HasDegradation, Converter={StaticResource BoolToVis}}" />
+                           Visibility="{Binding HasSearchSummary, Converter={StaticResource BoolToVis}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSearchSummaryOk}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource Brush.Success}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                    <Run Text="{Binding SearchSummaryText, Mode=OneWay}" />
+                </TextBlock>
+
+                <!-- 聚合上传披露：本地 / 云端口径不同，不夸大不缩小 -->
+                <Border Margin="0,8,0,0"
+                        Padding="10,7"
+                        CornerRadius="6"
+                        Background="{DynamicResource Brush.AccentSoft}"
+                        Visibility="{Binding ShowUploadDisclosure, Converter={StaticResource BoolToVis}}">
+                    <TextBlock FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource Brush.AccentText}"
+                               Text="{Binding UploadDisclosure}" />
+                </Border>
+
+                <!-- 每页降级报告（F4）：逐页原因 + 可搜索性 -->
+                <StackPanel Margin="0,10,0,0"
+                            Visibility="{Binding HasDegradation, Converter={StaticResource BoolToVis}}">
+                    <TextBlock FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Brush.TextPrimary}"
+                               Text="{Binding DegradationHeader}" />
+                    <ItemsControl Margin="0,6,0,0" ItemsSource="{Binding Degradations}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,6"
+                                        Padding="9,7"
+                                        CornerRadius="6"
+                                        Background="{DynamicResource Brush.FieldBackground}"
+                                        BorderBrush="{DynamicResource Brush.Border}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource Brush.TextPrimary}"
+                                                       Text="{Binding Title}" />
+                                            <Border Grid.Column="1"
+                                                    Padding="6,1"
+                                                    CornerRadius="4"
+                                                    Background="{DynamicResource Brush.ConverterWarnBackground}"
+                                                    Visibility="{Binding ShowUnsearchable, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock FontSize="10"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource Brush.ConverterWarnText}"
+                                                           Text="不可搜索" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Margin="0,3,0,0"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource Brush.TextSecondary}"
+                                                   Text="{Binding LabelText}" />
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </StackPanel>
+
+            <!-- 产物不存在 / 已移动（T41）：点「打开」检测到缺失时的降级态 -->
+            <Border Margin="0,12,0,0"
+                    Padding="10,9"
+                    CornerRadius="6"
+                    Background="{DynamicResource Brush.ConverterWarnBackground}"
+                    Visibility="{Binding HasArtifactError, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                    <TextBlock FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Brush.ConverterWarnText}"
+                               Text="⚠ 找不到产物文件" />
+                    <TextBlock Margin="0,4,0,0"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource Brush.ConverterWarnText}"
+                               Text="{Binding ArtifactErrorMessage}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Content="重新定位…"
+                                Command="{Binding RelocateArtifactCommand}"
+                                Visibility="{Binding CanRelocateArtifact, Converter={StaticResource BoolToVis}}" />
+                        <Button Margin="8,0,0,0"
+                                Style="{StaticResource SecondaryButton}"
+                                Content="关闭"
+                                Command="{Binding DismissArtifactErrorCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

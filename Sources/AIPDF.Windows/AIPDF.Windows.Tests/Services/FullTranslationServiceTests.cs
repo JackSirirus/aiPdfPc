@@ -118,7 +118,12 @@ public class FullTranslationServiceTests
               "mono": "/out/a-mono.pdf",
               "dual": "/out/a-dual.pdf",
               "report": {
-                "pages": [ { "page": 3, "reasons": ["table_fail"] }, { "page": 5, "reasons": [] } ],
+                "pages": [
+                  { "page": 3, "degraded": true, "reasons": ["table_fail"], "searchable": true },
+                  { "page": 7, "degraded": true, "reasons": ["raster_overlay"], "searchable": false },
+                  { "page": 5, "degraded": false, "reasons": [], "searchable": true }
+                ],
+                "summary": { "degraded_pages": 2, "unsearchable_pages": 1, "total_pages": 12 },
                 "source_protection": { "encrypted": true, "restricted": true, "disclosure": "已绕过源文档的抽取限制（经用户确认）" }
               }
             }
@@ -133,8 +138,15 @@ public class FullTranslationServiceTests
         Assert.Equal(2, outcome.Artifacts.Count);
         Assert.Contains(outcome.Artifacts, a => a.Kind == "mono" && a.Path == "/out/a-mono.pdf");
         Assert.Contains(outcome.Artifacts, a => a.Kind == "dual" && a.Path == "/out/a-dual.pdf");
-        Assert.Single(outcome.PageIssues);
+        Assert.Equal(2, outcome.PageIssues.Count);
         Assert.Equal(3, outcome.PageIssues[0].Page);
+        Assert.True(outcome.PageIssues[0].Searchable);
+        Assert.False(outcome.PageIssues[1].Searchable);
+        Assert.NotNull(outcome.SearchSummary);
+        Assert.Equal(12, outcome.SearchSummary!.TotalPages);
+        Assert.Equal(2, outcome.SearchSummary.DegradedPages);
+        Assert.Equal(1, outcome.SearchSummary.UnsearchablePages);
+        Assert.Equal(11, outcome.SearchSummary.SearchablePages);
         Assert.True(outcome.SourceProtection.Restricted);
         Assert.Equal("已绕过源文档的抽取限制（经用户确认）", outcome.SourceProtection.Disclosure);
     }

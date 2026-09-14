@@ -46,13 +46,15 @@ public sealed class FullTranslationViewModelTests
         bool restricted = false,
         string? disclosure = null,
         IReadOnlyList<FullTranslationPageIssue>? issues = null,
-        IReadOnlyList<FullTranslationArtifact>? artifacts = null)
+        IReadOnlyList<FullTranslationArtifact>? artifacts = null,
+        FullTranslationSearchSummary? searchSummary = null)
         => new(
             true, null, false, "out-dir", "task-dir",
             artifacts ?? [new FullTranslationArtifact("mono", "/out/report-mono.pdf"), new FullTranslationArtifact("dual", "/out/report-dual.pdf")],
             issues ?? [],
             new FullTranslationSourceProtection(restricted, disclosure),
-            2.5);
+            2.5,
+            searchSummary);
 
     private static TranslationRuntimeConfig RuntimeConfig()
         => new("local", "http://127.0.0.1:11434/v1", "qwen", "sk-test", "auto", "zh", "academic");
@@ -238,11 +240,121 @@ public sealed class FullTranslationViewModelTests
         Assert.True(vm.HasResults);
         Assert.Equal(2, vm.Artifacts.Count);
         Assert.Equal("MONO", vm.Artifacts[0].Badge);
+        Assert.Equal("打开纯译文", vm.Artifacts[0].OpenLabel);
+        Assert.Equal("打开对照", vm.Artifacts[1].OpenLabel);
         Assert.True(vm.ShowRestrictionDisclosure);
         Assert.Equal(disclosure, vm.RestrictionDisclosure);
         Assert.True(vm.HasDegradation);
-        Assert.Contains("每页降级：1 页", vm.DegradationSummary);
+        Assert.Single(vm.Degradations);
+        Assert.Equal(3, vm.Degradations[0].Page);
+        Assert.Contains("该页表格结构可能丢失", vm.Degradations[0].LabelText);
         Assert.Equal(100, vm.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task Start_Success_ShowsSearchableSummary_AndAggregateUploadDisclosure()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service); // 默认 runtime provider = local
+        service.Handler = (_, _, _) => Task.FromResult(Success(
+            searchSummary: new FullTranslationSearchSummary(2, 1, 12)));
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.True(vm.HasSearchSummary);
+        Assert.False(vm.IsSearchSummaryOk);
+        Assert.Contains("11/12 页可提取文本", vm.SearchSummaryText);
+        Assert.Contains("1 页不可搜索", vm.SearchSummaryText);
+        Assert.True(vm.ShowUploadDisclosure);
+        Assert.Contains("本地引擎", vm.UploadDisclosure);
+        Assert.Contains("全文未离开本机", vm.UploadDisclosure);
+    }
+
+    [Fact]
+    public async Task Start_Success_AllSearchable_ReportsPass()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        service.Handler = (_, _, _) => Task.FromResult(Success(
+            searchSummary: new FullTranslationSearchSummary(2, 0, 12)));
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsSearchSummaryOk);
+        Assert.Contains("通过", vm.SearchSummaryText);
+        Assert.Contains("0 页意外不可搜索", vm.SearchSummaryText);
+    }
+
+    [Fact]
+    public void OpenArtifact_ExistingFile_RaisesOpenRequest()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        var existing = Path.GetTempFileName();
+        try
+        {
+            var artifact = new FullTranslationArtifactViewModel("mono", existing);
+            FullTranslationArtifactViewModel? opened = null;
+            vm.OpenArtifactRequested += (_, a) => opened = a;
+
+            vm.OpenArtifactCommand.Execute(artifact);
+
+            Assert.Same(artifact, opened);
+            Assert.False(vm.HasArtifactError);
+        }
+        finally
+        {
+            File.Delete(existing);
+        }
+    }
+
+    [Fact]
+    public void OpenArtifact_MissingFile_ShowsGracefulError_AndDismisses()
+    {
+        var vm = NewViewModel(new FakeFullTranslationService());
+        var missing = new FullTranslationArtifactViewModel(
+            "dual", Path.Combine(Path.GetTempPath(), "missing-" + Guid.NewGuid().ToString("N") + ".pdf"));
+        var raised = false;
+        vm.OpenArtifactRequested += (_, _) => raised = true;
+
+        vm.OpenArtifactCommand.Execute(missing);
+
+        Assert.False(raised); // 不静默打开空白标签
+        Assert.True(vm.HasArtifactError);
+        Assert.Contains("找不到产物文件", vm.ArtifactErrorMessage);
+
+        vm.DismissArtifactErrorCommand.Execute(null);
+        Assert.False(vm.HasArtifactError);
+        Assert.Null(vm.ArtifactErrorMessage);
+    }
+
+    [Fact]
+    public void OpenArtifact_MissingFile_RelocateOpensNewLocation()
+    {
+        var vm = NewViewModel(new FakeFullTranslationService());
+        var relocated = Path.GetTempFileName();
+        try
+        {
+            vm.RelocateArtifactHandler = _ => relocated;
+            var missing = new FullTranslationArtifactViewModel(
+                "mono", Path.Combine(Path.GetTempPath(), "gone-" + Guid.NewGuid().ToString("N") + ".pdf"));
+            FullTranslationArtifactViewModel? opened = null;
+            vm.OpenArtifactRequested += (_, a) => opened = a;
+
+            vm.OpenArtifactCommand.Execute(missing);
+            Assert.True(vm.HasArtifactError);
+
+            vm.RelocateArtifactCommand.Execute(null);
+
+            Assert.NotNull(opened);
+            Assert.Equal(relocated, opened!.Path);
+            Assert.Equal("mono", opened.Kind);
+            Assert.False(vm.HasArtifactError);
+        }
+        finally
+        {
+            File.Delete(relocated);
+        }
     }
 
     [Fact]

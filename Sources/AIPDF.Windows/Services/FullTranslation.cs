@@ -42,8 +42,22 @@ public sealed record FullTranslationProgress(string Stage, double Fraction);
 /// <summary>一个产物（mono / dual）。</summary>
 public sealed record FullTranslationArtifact(string Kind, string Path);
 
-/// <summary>单页降级项（页码 1 起 + 原因枚举，与 backend verify 对齐）。</summary>
-public sealed record FullTranslationPageIssue(int Page, IReadOnlyList<string> Reasons);
+/// <summary>单页降级项（页码 1 起 + 原因枚举 + 可搜索性，与 backend verify 对齐）。</summary>
+public sealed record FullTranslationPageIssue(
+    int Page,
+    IReadOnlyList<string> Reasons,
+    bool Searchable = true,
+    bool Degraded = true);
+
+/// <summary>
+/// 可搜索性聚合（与 backend <c>report.summary</c> 对齐，规格 §9.2）：
+/// <c>degraded_pages</c> / <c>unsearchable_pages</c> / <c>total_pages</c>。
+/// </summary>
+public sealed record FullTranslationSearchSummary(int DegradedPages, int UnsearchablePages, int TotalPages)
+{
+    /// <summary>可提取文本页数（总页数 − 不可搜索页；下限 0）。</summary>
+    public int SearchablePages => Math.Max(0, TotalPages - UnsearchablePages);
+}
 
 /// <summary>
 /// 整篇翻译结果。<see cref="Ok"/> 为 false 时 <see cref="Error"/> 为可直接展示的原因；
@@ -58,7 +72,8 @@ public sealed record FullTranslationOutcome(
     IReadOnlyList<FullTranslationArtifact> Artifacts,
     IReadOnlyList<FullTranslationPageIssue> PageIssues,
     FullTranslationSourceProtection SourceProtection,
-    double ElapsedSeconds)
+    double ElapsedSeconds,
+    FullTranslationSearchSummary? SearchSummary = null)
 {
     /// <summary>取消结果（不视为失败）。</summary>
     public static FullTranslationOutcome Cancelled_ { get; } =
@@ -180,6 +195,9 @@ public sealed class EngineFullTranslationService : IFullTranslationService
         var issues = new List<FullTranslationPageIssue>();
         var protection = FullTranslationSourceProtection.None;
         string? taskDir = null;
+        int? degradedPages = null;
+        int? unsearchablePages = null;
+        int? totalPages = null;
 
         if (result.Extra.TryGetValue("results", out var resultsElement)
             && resultsElement.ValueKind == JsonValueKind.Array)
@@ -193,7 +211,7 @@ public sealed class EngineFullTranslationService : IFullTranslationService
 
                 taskDir ??= TryString(entry, "taskDir");
 
-                foreach (var kind in new[] { "mono", "dual" })
+                foreach (var kind in new[] { "mono", "dual", "markdown" })
                 {
                     if (TryString(entry, kind) is { Length: > 0 } path)
                     {
@@ -230,8 +248,31 @@ public sealed class EngineFullTranslationService : IFullTranslationService
                                     && pageNumber.TryGetInt32(out var parsed)
                                         ? parsed
                                         : 0;
-                                issues.Add(new FullTranslationPageIssue(number, list));
+                                var searchable = !page.TryGetProperty("searchable", out var searchableElement)
+                                    || searchableElement.ValueKind != JsonValueKind.False;
+                                var degraded = !page.TryGetProperty("degraded", out var degradedElement)
+                                    || degradedElement.ValueKind != JsonValueKind.False;
+                                issues.Add(new FullTranslationPageIssue(number, list, searchable, degraded));
                             }
+                        }
+                    }
+
+                    if (report.TryGetProperty("summary", out var summaryElement)
+                        && summaryElement.ValueKind == JsonValueKind.Object)
+                    {
+                        if (TryInt(summaryElement, "degraded_pages") is int degraded)
+                        {
+                            degradedPages = (degradedPages ?? 0) + degraded;
+                        }
+
+                        if (TryInt(summaryElement, "unsearchable_pages") is int unsearchable)
+                        {
+                            unsearchablePages = (unsearchablePages ?? 0) + unsearchable;
+                        }
+
+                        if (TryInt(summaryElement, "total_pages") is int total)
+                        {
+                            totalPages = (totalPages ?? 0) + total;
                         }
                     }
 
@@ -259,13 +300,24 @@ public sealed class EngineFullTranslationService : IFullTranslationService
             }
         }
 
+        var summary = totalPages is int known
+            ? new FullTranslationSearchSummary(degradedPages ?? 0, unsearchablePages ?? 0, known)
+            : null;
+
         return new FullTranslationOutcome(
             true, null, false, result.OutputDir, taskDir,
-            artifacts, issues, protection, result.Elapsed ?? 0);
+            artifacts, issues, protection, result.Elapsed ?? 0, summary);
     }
 
     private static string? TryString(JsonElement element, string name)
         => element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
+
+    private static int? TryInt(JsonElement element, string name)
+        => element.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt32(out var parsed)
+                ? parsed
+                : null;
 }

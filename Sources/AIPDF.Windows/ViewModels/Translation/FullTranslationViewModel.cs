@@ -9,6 +9,7 @@
 //   - 扫描页提示：文档含无文本层页时显示提示条（由宿主探测后注入计数）。
 // 本类不写 AppSettings / 不落盘密钥 / 不持久化任何任务状态。
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using AIPDF.Windows.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -47,8 +48,53 @@ public sealed class FullTranslationArtifactViewModel
     {
         "mono" => "纯译文",
         "dual" => "原文 / 译文对照",
+        "markdown" => "Markdown 文本（可选）",
         _ => "输出文件",
     };
+
+    /// <summary>「打开」按钮文案（F4 两个入口：纯译文 / 对照）。</summary>
+    public string OpenLabel => Kind switch
+    {
+        "mono" => "打开纯译文",
+        "dual" => "打开对照",
+        "markdown" => "打开 Markdown",
+        _ => "打开",
+    };
+}
+
+/// <summary>
+/// 一页降级项（F4「每页降级报告」）：页码 + 用户可见原因文案 + 是否可搜索。
+/// 原始原因标记（<c>table_fail</c> 等）只用于查表，不直接展示给用户。
+/// </summary>
+public sealed class FullTranslationDegradationViewModel
+{
+    public FullTranslationDegradationViewModel(int page, IReadOnlyList<string> reasons, bool searchable)
+    {
+        Page = page;
+        Reasons = reasons;
+        Searchable = searchable;
+    }
+
+    /// <summary>页码（1 起；0 表示引擎未给出）。</summary>
+    public int Page { get; }
+
+    /// <summary>原始降级原因标记（与 backend verify 枚举对齐）。</summary>
+    public IReadOnlyList<string> Reasons { get; }
+
+    /// <summary>该页是否可提取文本。</summary>
+    public bool Searchable { get; }
+
+    /// <summary>页码标题。</summary>
+    public string Title => Page > 0 ? $"第 {Page} 页" : "未知页";
+
+    /// <summary>用户可见原因文案（查 <see cref="FullTranslationViewModel.DescribeReason"/> 表）。</summary>
+    public IReadOnlyList<string> Labels => Reasons.Select(FullTranslationViewModel.DescribeReason).ToList();
+
+    /// <summary>原因文案拼接（顿号分隔）。</summary>
+    public string LabelText => Labels.Count > 0 ? string.Join(" · ", Labels) : "已降级";
+
+    /// <summary>是否标记为「不可搜索」（红色徽标入口）。</summary>
+    public bool ShowUnsearchable => !Searchable;
 }
 
 /// <summary>
@@ -66,6 +112,37 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     /// <summary>默认整篇任务超时（取消/超时必存在，不允许无限等待）。</summary>
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>
+    /// 降级原因用户可见文案（与 backend <c>verify.REASON_LABELS</c> / 回填规格 §9.1 对齐）。
+    /// 未知标记回退展示原始标记，绝不静默吞掉原因。
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> ReasonLabels = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["font_shrink"] = "该页为适配译文缩小了字号",
+        ["overflow_margin"] = "该页译文超出原文块范围",
+        ["clip"] = "该页存在被裁切的译文",
+        ["font_fallback"] = "该页使用了替代字体",
+        ["glyph_missing"] = "该页存在无法显示的字符",
+        ["formula_fail"] = "该页公式未保留原样",
+        ["table_fail"] = "该页表格结构可能丢失",
+        ["reassembly_mismatch"] = "该页部分内容未回填",
+        ["extraction_low_conf"] = "该页原文抽取可能不可靠",
+        ["rotation_crop"] = "该页因旋转/裁剪回填降级",
+        ["unsupported_script"] = "该页文字方向不支持，保留原文",
+        ["no_text_block"] = "该页无可用文本（纯图/矢量）",
+        ["empty_page"] = "该页无可用文本（纯图/矢量）",
+        ["skip_page"] = "该页未翻译",
+        ["page_failed"] = "该页翻译失败",
+        ["raster_overlay"] = "该页原文为图像，未移除",
+        ["segment_split"] = "该页有超长段落被切分",
+        ["search_verify_fail"] = "该页译文可能不可搜索",
+        ["untranslated_echo"] = "该段疑似未翻译/回显",
+    };
+
+    /// <summary>降级原因标记 → 用户可见文案（未知标记原样返回）。</summary>
+    internal static string DescribeReason(string reason)
+        => ReasonLabels.TryGetValue(reason, out var label) ? label : reason;
+
     private readonly IFullTranslationService _service;
     private readonly ITranslationRuntimeConfigProvider _configProvider;
     private CancellationTokenSource? _cts;
@@ -81,6 +158,7 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         Config = config ?? new TranslationConfigViewModel();
         Log = new ObservableCollection<string>();
         Artifacts = new ObservableCollection<FullTranslationArtifactViewModel>();
+        Degradations = new ObservableCollection<FullTranslationDegradationViewModel>();
     }
 
     /// <summary>共享翻译配置面板（T13）。</summary>
@@ -111,6 +189,12 @@ public sealed partial class FullTranslationViewModel : ObservableObject
 
     /// <summary>请求打开某产物（宿主接新标签）。</summary>
     public event EventHandler<FullTranslationArtifactViewModel>? OpenArtifactRequested;
+
+    /// <summary>
+    /// 「重新定位…」处理器（宿主接文件选择框）：返回新路径则打开，返回 null/取消则保持原态。
+    /// 未注入时该出口不显示（<see cref="CanRelocateArtifact"/> 为 false）。
+    /// </summary>
+    public Func<FullTranslationArtifactViewModel, string?>? RelocateArtifactHandler { get; set; }
 
     // ---------- 文档上下文（宿主注入） ----------
 
@@ -185,16 +269,33 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowRestrictionDisclosure))]
     private string? _restrictionDisclosure;
 
-    /// <summary>降级页数摘要（每页降级报告）。</summary>
+    /// <summary>可搜索校验文案（引擎 report.summary；无摘要时为空，不伪造结论）。</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasDegradation))]
-    private string _degradationSummary = "";
+    [NotifyPropertyChangedFor(nameof(HasSearchSummary))]
+    [NotifyPropertyChangedFor(nameof(IsSearchSummaryOk))]
+    private string _searchSummaryText = "";
+
+    /// <summary>聚合上传披露（本地 / 云端口径不同；结果区常驻展示）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUploadDisclosure))]
+    private string _uploadDisclosure = "";
+
+    /// <summary>「打开」失败时的降级文案（产物不存在 / 已移动，T41）。</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasArtifactError))]
+    private string? _artifactErrorMessage;
 
     /// <summary>进度日志（诊断行；不含文档正文 / 密码 / 密钥）。</summary>
     public ObservableCollection<string> Log { get; }
 
-    /// <summary>译后产物（mono / dual）。</summary>
+    /// <summary>译后产物（mono / dual / 可选 markdown）。</summary>
     public ObservableCollection<FullTranslationArtifactViewModel> Artifacts { get; }
+
+    /// <summary>每页降级报告（F4）。</summary>
+    public ObservableCollection<FullTranslationDegradationViewModel> Degradations { get; }
+
+    /// <summary>待重定位的产物（点「打开」发现缺失时记录；供「重新定位…」消费）。</summary>
+    private FullTranslationArtifactViewModel? _missingArtifact;
 
     // ---------- 派生状态 ----------
 
@@ -235,8 +336,23 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     /// <summary>是否显示译后受限披露。</summary>
     public bool ShowRestrictionDisclosure => !string.IsNullOrEmpty(RestrictionDisclosure);
 
-    /// <summary>是否显示降级摘要。</summary>
-    public bool HasDegradation => DegradationSummary.Length > 0;
+    /// <summary>是否显示降级报告（有降级页）。</summary>
+    public bool HasDegradation => Degradations.Count > 0;
+
+    /// <summary>降级报告标题（含聚合页数）。</summary>
+    public string DegradationHeader => $"每页降级报告 · {Degradations.Count} 页";
+
+    /// <summary>是否显示可搜索校验行（引擎未给出摘要时不显示）。</summary>
+    public bool HasSearchSummary => SearchSummaryText.Length > 0;
+
+    /// <summary>可搜索校验是否通过（无意外不可搜索页；校验行用成功色）。</summary>
+    public bool IsSearchSummaryOk => SearchSummaryText.StartsWith("可搜索校验：通过", StringComparison.Ordinal);
+
+    /// <summary>是否显示聚合上传披露。</summary>
+    public bool ShowUploadDisclosure => UploadDisclosure.Length > 0;
+
+    /// <summary>是否显示「产物不存在/已移动」态（T41）。</summary>
+    public bool HasArtifactError => !string.IsNullOrEmpty(ArtifactErrorMessage);
 
     /// <summary>是否显示任务视图（运行中且未后台）。</summary>
     public bool ShowTaskView => IsRunning && !IsBackgrounded;
@@ -318,12 +434,15 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         var request = BuildRequest(runtime, output);
 
         RestrictionDisclosure = null;
-        DegradationSummary = "";
+        SearchSummaryText = "";
+        UploadDisclosure = BuildUploadDisclosure(runtime);
+        ClearArtifactError();
         StatusMessage = "正在启动整篇翻译…";
         StageText = "准备中";
         ProgressFraction = 0;
         Log.Clear();
         Artifacts.Clear();
+        Degradations.Clear();
         NotifyCollections();
 
         _userCancelled = false;
@@ -375,14 +494,61 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanReturnToTask))]
     private void ReturnToTask() => IsBackgrounded = false;
 
-    /// <summary>打开某产物（宿主开新标签，T20 接入）。</summary>
+    /// <summary>
+    /// 打开某产物（宿主开新标签）。产物不存在 / 已被移动时不静默打开空白标签：
+    /// 显示「产物不存在/已移动」态并提供「重新定位…」出口（T41）。
+    /// </summary>
     [RelayCommand]
     private void OpenArtifact(FullTranslationArtifactViewModel? artifact)
     {
-        if (artifact is not null)
+        if (artifact is null)
         {
-            OpenArtifactRequested?.Invoke(this, artifact);
+            return;
         }
+
+        if (!File.Exists(artifact.Path))
+        {
+            _missingArtifact = artifact;
+            ArtifactErrorMessage =
+                $"找不到产物文件「{artifact.FileName}」。该文件可能已被移动、重命名或所在磁盘已移除。源文件不受影响。";
+            return;
+        }
+
+        ClearArtifactError();
+        OpenArtifactRequested?.Invoke(this, artifact);
+    }
+
+    /// <summary>「重新定位…」：经宿主文件选择框指向新位置后打开；取消则保持错误态。</summary>
+    [RelayCommand]
+    private void RelocateArtifact()
+    {
+        if (_missingArtifact is null || RelocateArtifactHandler is null)
+        {
+            return;
+        }
+
+        var relocated = RelocateArtifactHandler(_missingArtifact);
+        if (string.IsNullOrWhiteSpace(relocated) || !File.Exists(relocated))
+        {
+            return;
+        }
+
+        var artifact = new FullTranslationArtifactViewModel(_missingArtifact.Kind, relocated);
+        ClearArtifactError();
+        OpenArtifactRequested?.Invoke(this, artifact);
+    }
+
+    /// <summary>关闭「产物不存在/已移动」态。</summary>
+    [RelayCommand]
+    private void DismissArtifactError() => ClearArtifactError();
+
+    /// <summary>是否显示「重新定位…」出口（宿主已注入处理器）。</summary>
+    public bool CanRelocateArtifact => RelocateArtifactHandler is not null;
+
+    private void ClearArtifactError()
+    {
+        _missingArtifact = null;
+        ArtifactErrorMessage = null;
     }
 
     // ---------- 内部 ----------
@@ -450,23 +616,41 @@ public sealed partial class FullTranslationViewModel : ObservableObject
                 : outcome.SourceProtection.Disclosure;
         }
 
-        DegradationSummary = BuildDegradationSummary(outcome.PageIssues);
+        foreach (var issue in outcome.PageIssues)
+        {
+            Degradations.Add(new FullTranslationDegradationViewModel(issue.Page, issue.Reasons, issue.Searchable));
+        }
+
+        SearchSummaryText = BuildSearchSummary(outcome.SearchSummary);
         StageText = "完成";
         ProgressFraction = 1;
         StatusMessage = $"翻译完成：{Artifacts.Count} 个产物 · 用时 {outcome.ElapsedSeconds:0.0}s";
         NotifyCollections();
     }
 
-    private static string BuildDegradationSummary(IReadOnlyList<FullTranslationPageIssue> issues)
+    /// <summary>可搜索校验行：`可搜索校验：通过 · n/total 页可提取文本 · m 页意外不可搜索`（规格 §8）。</summary>
+    private static string BuildSearchSummary(FullTranslationSearchSummary? summary)
     {
-        if (issues.Count == 0)
+        if (summary is null || summary.TotalPages <= 0)
         {
             return "";
         }
 
-        var details = string.Join(" · ", issues.Select(issue =>
-            $"p{issue.Page} {string.Join("/", issue.Reasons)}"));
-        return $"每页降级：{issues.Count} 页（{details}）";
+        return summary.UnsearchablePages == 0
+            ? $"可搜索校验：通过 · {summary.SearchablePages}/{summary.TotalPages} 页可提取文本 · 0 页意外不可搜索"
+            : $"可搜索校验：{summary.SearchablePages}/{summary.TotalPages} 页可提取文本 · {summary.UnsearchablePages} 页不可搜索（扫描叠加页会单独说明）";
+    }
+
+    /// <summary>
+    /// 聚合上传披露：本地引擎全文未离开本机；云端则明示「全文文本已分批发送至所选服务商」（非仅片段）。
+    /// 不夸大、不缩小（《需求总结.md》§安全边界）。
+    /// </summary>
+    private static string BuildUploadDisclosure(TranslationRuntimeConfig runtime)
+    {
+        var isCloud = !string.Equals(runtime.Provider, "local", StringComparison.OrdinalIgnoreCase);
+        return isCloud
+            ? "上传口径：本次使用云端服务商，整篇翻译会把全文文本分批发送至所配置的服务商（非仅片段）。请确认你有权发送该内容。"
+            : "上传口径：本次使用本地引擎，全文未离开本机。若改用云端，整篇翻译会把全文文本分批发送至所选服务商（非仅片段）。";
     }
 
     private void OnProgress(FullTranslationProgress progress)
@@ -490,6 +674,8 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(HasResults));
         OnPropertyChanged(nameof(HasLog));
+        OnPropertyChanged(nameof(HasDegradation));
+        OnPropertyChanged(nameof(DegradationHeader));
     }
 
     /// <summary>进度回调来自子进程读循环线程；WPF 要求 UI 线程，测试环境没有 Application（就地执行）。</summary>

@@ -97,6 +97,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // 产物页脚标记：跟随设置（默认开）；高风险模板由 VM + 引擎双重强制，忽略设置（§9.3）。
         _fullTranslation.FooterMarkerProvider = () => _settingsStore.Load().TranslationMarkerEnabled;
         _fullTranslation.OpenArtifactRequested += (_, artifact) => OpenDocumentTab(artifact.Path);
+        // T41：产物缺失时「重新定位…」→ 文件选择框 → 打开新位置（不静默打开空白标签）。
+        _fullTranslation.RelocateArtifactHandler = RelocateArtifactFile;
         TranslationFullPanel.DataContext = _fullTranslation;
 
         // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
@@ -716,6 +718,23 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         {
             _fullTranslation.OutputDir = Path.GetDirectoryName(path) ?? "";
         }
+    }
+
+    /// <summary>
+    /// T41：产物缺失时手动重新定位（文件选择框），返回新路径；取消 / 未选返回 null。
+    /// 仅作定位入口，不把路径写入设置、日志或历史。
+    /// </summary>
+    private string? RelocateArtifactFile(FullTranslationArtifactViewModel artifact)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = $"重新定位「{artifact.FileName}」",
+            CheckFileExists = true,
+            Filter = artifact.Kind == "markdown"
+                ? "Markdown (*.md)|*.md|所有文件 (*.*)|*.*"
+                : "PDF (*.pdf)|*.pdf|所有文件 (*.*)|*.*",
+        };
+        return dialog.ShowDialog(this) == true ? dialog.FileName : null;
     }
 
     /// <summary>
