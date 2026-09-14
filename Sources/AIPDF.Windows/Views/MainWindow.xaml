@@ -919,12 +919,8 @@
                                                TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
-                            <StackPanel x:Name="TranslationFullPlaceholder" Margin="14,14,14,12" Visibility="Collapsed">
-                                <TextBlock Text="整篇翻译" Style="{StaticResource SectionTitle}" />
-                                <TextBlock Margin="0,8,0,0"
-                                           Text="在此配置语言、领域模板与引擎，开始后可查看进度与结果。"
-                                           Style="{StaticResource FieldHint}" />
-                            </StackPanel>
+                            <!-- 整篇（T15）：配置 → 开始 → 进度 → 结果（内容/逻辑在 FullTranslationPanel + VM） -->
+                            <translation:FullTranslationPanel x:Name="TranslationFullPanel" Visibility="Collapsed" />
                         </Grid>
                     </Grid>
                 </Border>

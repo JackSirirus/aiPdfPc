@@ -158,6 +158,12 @@ public sealed class PdfiumRenderService : IDisposable
         public GCHandle Pin;                    // 文件字节固定，句柄生命周期内有效
         public byte[] Bytes = null!;
         public int PageCount;
+
+        /// <summary>
+        /// 打开时一次读取的权限位（<c>FPDF_GetDocPermissions</c>）。非加密文档为 0xFFFFFFFC（全位）；
+        /// 权限加密文档缺任一位即受限。仅供 T15 整篇翻译「受限文档确认」判定，不改变渲染语义。
+        /// </summary>
+        public uint Permissions;
         public PageSize[] PageSizes = null!;    // 打开时一次解析
         public int[] PageRotations = null!;     // /Rotate 度数（0/90/180/270），打开时一次解析（M-11 判定用）
         public readonly Dictionary<(int Page, int Dpi, int ZoomPct), BitmapSource> Cache = new();
@@ -326,11 +332,14 @@ public sealed class PdfiumRenderService : IDisposable
 
         // 打开时一次性解析全部页尺寸与旋转（后续零解析）
         int pageCount;
+        uint permissions;
         PageSize[] sizes;
         int[] rotations;
         lock (PdfiumLock.Global)
         {
             pageCount = fpdfview.FPDF_GetPageCount(handle);
+            // 权限位（T15）：非加密文档返回 0xFFFFFFFC；权限加密文档缺位 → 受限。一次读取，不随页变化。
+            permissions = unchecked((uint)fpdfview.FPDF_GetDocPermissions(handle));
             sizes = new PageSize[pageCount];
             rotations = new int[pageCount];
             for (var i = 0; i < pageCount; i++)
@@ -363,6 +372,7 @@ public sealed class PdfiumRenderService : IDisposable
             Pin = pin,
             Bytes = bytes,
             PageCount = pageCount,
+            Permissions = permissions,
             PageSizes = sizes,
             PageRotations = rotations,
             Generation = Interlocked.Increment(ref _generationCounter),
@@ -402,6 +412,37 @@ public sealed class PdfiumRenderService : IDisposable
         lock (_stateLock)
             return _documents.TryGetValue(docId, out var e) ? e.PageCount : -1;
     }
+
+    /// <summary>
+    /// 权限位掩码（<c>FPDF_GetDocPermissions</c>）。与 backend <c>translate/output.py</c> 的
+    /// <c>_PERMISSION_BITS</c> 对齐：print|modify|copy|annotate|form|accessibility|assemble|print_hq。
+    /// 非加密文档返回 0xFFFFFFFC（含全部位）；缺任一位即权限受限（可打开但禁止抽取/复制等）。
+    /// </summary>
+    public const uint PermissionRelevantBits = 0xF3C;
+
+    /// <summary>文档权限位；未打开返回 <see cref="uint.MaxValue"/>（视作不受限）。</summary>
+    public uint GetDocumentPermissions(string docId)
+    {
+        lock (_stateLock)
+            return _documents.TryGetValue(docId, out var e) && !e.Disposed ? e.Permissions : uint.MaxValue;
+    }
+
+    /// <summary>
+    /// 文档是否为「权限加密（受限）」。未打开返回 false；判定 = 权限位缺任一相关位。
+    /// 与引擎回填报告 <c>source_protection.restricted</c> 同源，保证翻译前确认与译后披露一致。
+    /// </summary>
+    public bool IsPermissionRestricted(string docId)
+    {
+        lock (_stateLock)
+        {
+            if (!_documents.TryGetValue(docId, out var e) || e.Disposed) return false;
+            return IsPermissionMaskRestricted(e.Permissions);
+        }
+    }
+
+    /// <summary>权限位是否受限（纯函数，单测直接覆盖）。</summary>
+    public static bool IsPermissionMaskRestricted(uint permissions)
+        => (permissions & PermissionRelevantBits) != PermissionRelevantBits;
 
     /// <summary>
     /// 内部访问器：取得持久文档句柄（T4 大纲解析等衍生服务复用同一持久句柄，不重复打开文件）。

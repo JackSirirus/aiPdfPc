@@ -1,0 +1,273 @@
+<UserControl x:Class="AIPDF.Windows.Views.Translation.FullTranslationPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:translation="clr-namespace:AIPDF.Windows.Views.Translation">
+
+    <!--
+      v1.1 T15 阅读器右栏「整篇」Tab：配置（复用 T13 TranslationConfigPanel）→ 开始 → 进度 → 结果。
+      DataContext = FullTranslationViewModel（宿主在 MainWindow 注入）。
+      取消 / 后台继续 / 受限文档确认 / 扫描页提示全部在此面板内闭环；
+      配色全部复用应用级 Brush.* token（DynamicResource），不新增主题 token。
+    -->
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,14,14,12">
+        <StackPanel>
+
+            <!-- 扫描页提示条（T05）：文档含无文本层页时常驻提示 -->
+            <Border Margin="0,0,0,10"
+                    Padding="10,8"
+                    CornerRadius="6"
+                    Background="{DynamicResource Brush.ConverterWarnBackground}"
+                    Visibility="{Binding ShowScanNotice, Converter={StaticResource BoolToVis}}">
+                <TextBlock FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.ConverterWarnText}"
+                           Text="{Binding ScanNoticeText}" />
+            </Border>
+
+            <!-- 受限文档前置提示：开始前会弹「确认你有权处理该文档」 -->
+            <Border Margin="0,0,0,10"
+                    Padding="10,8"
+                    CornerRadius="6"
+                    Background="{DynamicResource Brush.ConverterWarnBackground}"
+                    Visibility="{Binding IsRestrictedDocument, Converter={StaticResource BoolToVis}}">
+                <TextBlock FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.ConverterWarnText}"
+                           Text="该文档设置了权限限制（禁止复制/抽取）。开始前需确认你有权处理该文档。" />
+            </Border>
+
+            <!-- 配置：复用 T13 共享面板（语言 / 模板 / 引擎 / 成本 / 回填策略） -->
+            <translation:TranslationConfigPanel DataContext="{Binding Config}" />
+
+            <!-- 自定义 Prompt 尚未接入引擎：如实提示，不静默承诺 -->
+            <TextBlock Margin="0,8,0,0"
+                       Style="{StaticResource FieldHint}"
+                       TextWrapping="Wrap"
+                       Text="自定义 Prompt 尚未接入引擎，开始后按「通用」模板处理。"
+                       Visibility="{Binding Config.IsCustomTemplate, Converter={StaticResource BoolToVis}}" />
+
+            <!-- 输出文件夹 -->
+            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,14,0,0" Text="输出文件夹" />
+            <Grid Margin="0,5,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0"
+                         Style="{StaticResource FieldTextBox}"
+                         Text="{Binding OutputDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Grid.Column="1"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource SecondaryButton}"
+                        Content="浏览…"
+                        Click="OnBrowseOutputDirClick" />
+            </Grid>
+            <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
+                       Text="引擎会新建 AIPDF-日期-编号 任务目录，不覆盖源文件。" />
+
+            <!-- 开始 / 取消 / 后台继续 -->
+            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                <Button Style="{StaticResource PrimaryButton}"
+                        Content="开始翻译"
+                        Command="{Binding StartCommand}" />
+                <Button Margin="8,0,0,0"
+                        Style="{StaticResource SecondaryButton}"
+                        Content="取消"
+                        Command="{Binding CancelCommand}"
+                        Visibility="{Binding IsRunning, Converter={StaticResource BoolToVis}}" />
+                <Button Margin="8,0,0,0"
+                        Style="{StaticResource SecondaryButton}"
+                        Content="后台继续"
+                        Command="{Binding BackgroundContinueCommand}"
+                        Visibility="{Binding ShowTaskView, Converter={StaticResource BoolToVis}}" />
+            </StackPanel>
+            <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0" TextWrapping="Wrap">
+                <Run Text="「后台继续」" />
+                <Run Text="{Binding SessionScopeText, Mode=OneWay}" />
+            </TextBlock>
+
+            <!-- 已后台：任务继续，可回到任务视图 -->
+            <Border Margin="0,12,0,0"
+                    Padding="10,8"
+                    CornerRadius="6"
+                    Background="{DynamicResource Brush.AccentSoft}"
+                    Visibility="{Binding ShowBackgroundNotice, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                    <TextBlock FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Brush.AccentText}"
+                               Text="任务在后台继续" />
+                    <TextBlock Margin="0,4,0,0"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource Brush.TextSecondary}"
+                               Text="{Binding SessionScopeText}" />
+                    <Button Margin="0,8,0,0"
+                            HorizontalAlignment="Left"
+                            Style="{StaticResource SecondaryButton}"
+                            Content="回到任务视图"
+                            Command="{Binding ReturnToTaskCommand}" />
+                </StackPanel>
+            </Border>
+
+            <!-- 进度：阶段名 + 百分比 + 进度条 + 日志 -->
+            <StackPanel Margin="0,14,0,0"
+                        Visibility="{Binding ShowTaskView, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource Brush.TextPrimary}"
+                               Text="{Binding StageText}" />
+                    <TextBlock Grid.Column="1"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource Brush.AccentText}"
+                               Text="{Binding ProgressPercentText}" />
+                </Grid>
+                <ProgressBar Height="4"
+                             Margin="0,8,0,0"
+                             Minimum="0"
+                             Maximum="1"
+                             Value="{Binding ProgressFraction, Mode=OneWay}" />
+                <ItemsControl Margin="0,10,0,0"
+                              MaxHeight="120"
+                              ItemsSource="{Binding Log}"
+                              Visibility="{Binding HasLog, Converter={StaticResource BoolToVis}}">
+                    <ItemsControl.Template>
+                        <ControlTemplate TargetType="ItemsControl">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsPresenter />
+                            </ScrollViewer>
+                        </ControlTemplate>
+                    </ItemsControl.Template>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock FontFamily="Consolas"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Brush.TextTertiary}"
+                                       Text="{Binding}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <!-- 状态行 -->
+            <TextBlock Margin="0,12,0,0"
+                       TextWrapping="Wrap"
+                       FontSize="12"
+                       Text="{Binding StatusMessage}"
+                       Visibility="{Binding HasStatus, Converter={StaticResource BoolToVis}}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsErrorStatus}" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+
+            <!-- 结果：mono / dual + 披露 + 降级 -->
+            <StackPanel Margin="0,14,0,0"
+                        Visibility="{Binding HasResults, Converter={StaticResource BoolToVis}}">
+                <Grid>
+                    <TextBlock Style="{StaticResource SectionTitle}"
+                               VerticalAlignment="Center"
+                               Text="翻译结果" />
+                    <Border HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Padding="8,3"
+                            CornerRadius="6"
+                            Background="{DynamicResource Brush.ConverterWarnBackground}">
+                        <TextBlock FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="{DynamicResource Brush.ConverterWarnText}"
+                                   Text="机器翻译 · 请核对" />
+                    </Border>
+                </Grid>
+
+                <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Artifacts}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Margin="0,0,0,8"
+                                    Padding="10,8"
+                                    CornerRadius="6"
+                                    Background="{DynamicResource Brush.FieldBackground}"
+                                    BorderBrush="{DynamicResource Brush.Border}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0"
+                                            Padding="6,2"
+                                            CornerRadius="4"
+                                            VerticalAlignment="Center"
+                                            Background="{DynamicResource Brush.AccentSoft}">
+                                        <TextBlock FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource Brush.AccentText}"
+                                                   Text="{Binding Badge}" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="8,0,8,0">
+                                        <TextBlock FontSize="12"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource Brush.TextPrimary}"
+                                                   Text="{Binding FileName}" />
+                                        <TextBlock FontSize="11"
+                                                   Foreground="{DynamicResource Brush.TextTertiary}"
+                                                   Text="{Binding Description}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="2"
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Content="打开"
+                                            Command="{Binding DataContext.OpenArtifactCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- 受限披露：已绕过源文档抽取限制（经用户确认） -->
+                <Border Margin="0,4,0,0"
+                        Padding="10,7"
+                        CornerRadius="6"
+                        Background="{DynamicResource Brush.ConverterWarnBackground}"
+                        Visibility="{Binding ShowRestrictionDisclosure, Converter={StaticResource BoolToVis}}">
+                    <TextBlock FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource Brush.ConverterWarnText}"
+                               Text="{Binding RestrictionDisclosure}" />
+                </Border>
+
+                <!-- 每页降级报告摘要 -->
+                <TextBlock Margin="0,6,0,0"
+                           FontSize="11"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
+                           Text="{Binding DegradationSummary}"
+                           Visibility="{Binding HasDegradation, Converter={StaticResource BoolToVis}}" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

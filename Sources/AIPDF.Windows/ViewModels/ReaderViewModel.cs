@@ -505,6 +505,15 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>加密文档是否已解锁（加密且非锁定）。</summary>
     public bool IsUnlocked => IsEncrypted && !IsLocked;
 
+    /// <summary>
+    /// V1.1 T15：当前文档是否为「权限加密（受限）」——可打开（空用户密码）但 owner 权限禁止抽取/复制等。
+    /// 由 PDFium 权限位判定（<see cref="PdfiumRenderService.IsPermissionRestricted"/>），与引擎译后
+    /// <c>source_protection.restricted</c> 同源。整篇翻译开始前据此弹「确认你有权处理该文档」。
+    /// 未打开/锁定态为 false。
+    /// </summary>
+    [ObservableProperty]
+    private bool _isSourceRestricted;
+
     /// <summary>状态栏锁状态文案（仅当 <see cref="IsEncrypted"/> 时有意义）。</summary>
     public string LockStatusText => IsLocked ? ReaderStrings.LockedStatusLabel : ReaderStrings.UnlockedStatusLabel;
 
@@ -571,6 +580,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ErrorMessage = null;
         LoadRequiresPassword = false;
+        IsSourceRestricted = false;
         _sourcePath = Path.GetFullPath(path);
 
         try
@@ -584,6 +594,9 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             // V4 Option 3：带密码成功打开 = 加密文档；解除锁定（重开/解锁路径）。
             if (!string.IsNullOrEmpty(password)) IsEncrypted = true;
             IsLocked = false;
+
+            // V1.1 T15：权限加密（可打开但禁止抽取/复制）在打开成功后一次判定，供整篇翻译前置确认。
+            IsSourceRestricted = svc.IsPermissionRestricted(docId);
 
             // 重复加载：释放上一份文档（T1 句柄去重同路径，不同路径才真正关闭）
             if (_docId is not null && _docId != docId)

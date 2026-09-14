@@ -87,6 +87,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         _selectionTranslation.PropertyChanged += (_, _) => UpdateSelectionTranslationVisibility();
         UpdateSelectionTranslationVisibility();
 
+        // v1.1 T15：整篇翻译面板接线（配置复用 T13 共享面板；受限确认走模态；产物开新标签）。
+        _fullTranslation = new FullTranslationViewModel(
+            new EngineFullTranslationService((DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge()),
+            _translationConfig);
+        _fullTranslation.ConfirmRestrictedDocumentAsync = () => Task.FromResult(RestrictedDocumentDialog.Show(this));
+        _fullTranslation.OpenArtifactRequested += (_, artifact) => OpenDocumentTab(artifact.Path);
+        TranslationFullPanel.DataContext = _fullTranslation;
+
         // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
         QueueToast.MouseLeftButtonDown += OnWizardToastClick;
 
@@ -586,6 +594,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // v1.1 T12：翻译右栏随标签类型/窗口宽度联动（仅文档标签显示）
         ApplyTranslationSidebarState();
 
+        // v1.1 T15：整篇翻译的文档上下文随活动标签刷新（受限 / 扫描页 / 路径 / 默认输出目录）。
+        UpdateFullTranslationContext();
+
         // V3 T6：标签切换/文档加载完成会改变打印门禁 → 重新查询 Ctrl+P / 顶栏按钮可用性（AC-30.2）。
         CommandManager.InvalidateRequerySuggested();
     }
@@ -620,6 +631,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>替换标注 sidecar 存储（T19 接入前为明确「尚未接入」的占位）。</summary>
     private ISelectionSidecarStore _selectionSidecar = new NullSelectionSidecarStore();
 
+    // ---- v1.1 T15 整篇翻译 ----
+
+    /// <summary>「整篇」Tab 面板模型：配置 → 开始 → 进度 → 结果 + 取消 / 后台继续 + 受限确认。</summary>
+    private readonly FullTranslationViewModel _fullTranslation;
+
+    /// <summary>扫描页探测的页数上限（避免大文档打开即全量文本抽取阻塞 UI；超出上限保守不提示）。</summary>
+    private const int ScanProbePageLimit = 200;
+
     /// <summary>窗口尺寸变化 → 重算翻译右栏响应式模式（≥680 停靠 / 480–680 覆盖 / &lt;480 折叠）。</summary>
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e) => ApplyTranslationSidebarState();
 
@@ -632,7 +651,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
     }
 
-    /// <summary>互换「划词 / 整篇」面板可见性（整篇内容由 T15 填充）。</summary>
+    /// <summary>互换「划词 / 整篇」面板可见性；切到「整篇」时刷新活动文档上下文（路径 / 受限 / 扫描页）。</summary>
     private void ShowTranslationTab(string key)
     {
         if (TranslationSelectionHost is null)
@@ -642,7 +661,72 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         var selection = string.Equals(key, "selection", StringComparison.Ordinal);
         TranslationSelectionHost.Visibility = selection ? Visibility.Visible : Visibility.Collapsed;
-        TranslationFullPlaceholder.Visibility = selection ? Visibility.Collapsed : Visibility.Visible;
+        TranslationFullPanel.Visibility = selection ? Visibility.Collapsed : Visibility.Visible;
+        if (!selection)
+        {
+            UpdateFullTranslationContext();
+        }
+    }
+
+    /// <summary>
+    /// 刷新整篇翻译的文档上下文：活动文档路径 / 受限（权限加密）/ 扫描页数 / 会话密码 / 默认输出目录。
+    /// 非文档标签或锁定文档时给出「无文档」语义（禁止开始），绝不沿用上一个文档的上下文。
+    /// </summary>
+    private void UpdateFullTranslationContext()
+    {
+        if (TranslationFullPanel is null)
+        {
+            return;
+        }
+
+        var path = ActiveDocumentPath() ?? "";
+        var reader = ActiveReaderState()?.ViewModel;
+        var hasDocument = path.Length > 0 && reader is { HasDocument: true };
+
+        _fullTranslation.ActiveDocumentPath = hasDocument ? path : "";
+        _fullTranslation.IsRestrictedDocument = hasDocument && reader!.IsSourceRestricted;
+        _fullTranslation.TotalPageCount = hasDocument ? reader!.PageCount : 0;
+        _fullTranslation.DocumentPassword = hasDocument ? _credentials.Get(path) : null;
+
+        // 扫描页探测较贵（逐页文本层，阅读器侧有缓存）：仅在「整篇」Tab 可见时进行；无文档时清零。
+        if (hasDocument && TranslationFullPanel.Visibility == Visibility.Visible)
+        {
+            _fullTranslation.ScannedPageCount = CountScannedPages(reader!);
+        }
+        else if (!hasDocument)
+        {
+            _fullTranslation.ScannedPageCount = 0;
+        }
+
+        if (_fullTranslation.OutputDir.Trim().Length == 0 && hasDocument)
+        {
+            _fullTranslation.OutputDir = Path.GetDirectoryName(path) ?? "";
+        }
+    }
+
+    /// <summary>
+    /// 统计无文本层页数（扫描页提示条）。上限 <see cref="ScanProbePageLimit"/> 页，避免打开即全量抽取阻塞。
+    /// 仅当文档已打开时调用；每页判定复用阅读器既有缓存。
+    /// </summary>
+    private static int CountScannedPages(ReaderViewModel reader)
+    {
+        var total = reader.PageCount;
+        if (total <= 0)
+        {
+            return 0;
+        }
+
+        var limit = Math.Min(total, ScanProbePageLimit);
+        var scanned = 0;
+        for (var page = 0; page < limit; page++)
+        {
+            if (!reader.PageHasTextLayer(page))
+            {
+                scanned++;
+            }
+        }
+
+        return scanned;
     }
 
     /// <summary>紧凑态浮动「翻译」开关：唤出/收起覆盖模式的右栏。</summary>

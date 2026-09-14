@@ -1,0 +1,62 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<!-- v1.1 T15 受限文档确认（决策 #19 / §受限文档策略）：权限加密（可打开、禁止抽取/复制）文档
+     在整篇翻译前显式确认「你有权处理该文档」。确认框默认未勾选；未勾选时「确认并开始」禁用。
+     配色全部复用应用级 Brush.* token（DynamicResource），不新增 token。 -->
+<Window x:Class="AIPDF.Windows.Views.Translation.RestrictedDocumentDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="受限文档 · 请确认"
+        Width="460"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24,20,24,20">
+        <!-- 权限限制提示条 -->
+        <Border Padding="12,9"
+                CornerRadius="6"
+                Background="{DynamicResource Brush.ConverterWarnBackground}">
+            <TextBlock FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Brush.ConverterWarnText}"
+                       Text="⚠ 该文档设置了权限限制（禁止复制/抽取）。翻译会抽取其文本并在新文档中重排。" />
+        </Border>
+
+        <TextBlock Margin="0,14,0,0"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource Brush.TextPrimary}"
+                   Text="请确认你有权处理该文档" />
+
+        <TextBlock Margin="0,8,0,0"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Brush.TextSecondary}"
+                   Text="输出为新文档，不会继承原文的权限标记。请确认你有权处理该文档；未确认不会开始翻译。" />
+
+        <CheckBox x:Name="ConfirmCheck"
+                  Margin="0,14,0,0"
+                  FontSize="12"
+                  Cursor="Hand"
+                  Foreground="{DynamicResource Brush.TextPrimary}"
+                  VerticalContentAlignment="Center"
+                  Content="我有权处理该文档，并知悉输出不继承原限制" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button x:Name="ConfirmButton"
+                    Content="确认并开始"
+                    Style="{StaticResource PrimaryButton}"
+                    IsDefault="True"
+                    MinWidth="104"
+                    IsEnabled="{Binding IsChecked, ElementName=ConfirmCheck}"
+                    Click="OnConfirmClick" />
+            <Button Content="取消"
+                    Style="{StaticResource SecondaryButton}"
+                    IsCancel="True"
+                    MinWidth="88"
+                    Margin="8,0,0,0"
+                    Click="OnCancelClick" />
+        </StackPanel>
+    </StackPanel>
+</Window>
