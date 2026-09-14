@@ -781,7 +781,35 @@ def save_annotations_request(request, operation="save_annotations"):
 # 翻译是范围扩展后的专用操作：它在 BY_ID 之前处理（目录 id 为 translate_batch，
 # 请求 operation 为 translate），自建校验并新建任务输出目录。API Key 只从 stdin
 # JSON 的 options 读入并直接交给 LLMClient，绝不写入 argv / 环境变量 / 日志。
-_TRANSLATE_FORMATS = {"both": ("mono", "dual"), "mono": ("mono",), "dual": ("dual",)}
+_TRANSLATE_FORMATS = {
+    "both": ("mono", "dual"),
+    "mono": ("mono",),
+    "dual": ("dual",),
+    "md": ("markdown",),
+    "mono+md": ("mono", "markdown"),
+    "dual+md": ("dual", "markdown"),
+    "both+md": ("mono", "dual", "markdown"),
+}
+# 自定义模板：用户只填 system 指令，user 骨架由 prompt.build_custom_template 补齐。
+_CUSTOM_TEMPLATE_KEY = "custom"
+
+
+def _custom_translation_template(options, prompt_module):
+    """从 options 解析自定义模板：优先显式 system+user 字典，回退到 system 正文。
+
+    返回经 `prompt.build_custom_template` 校验的模板，供 `build_prompt(custom_template=...)`。
+    非法输入抛 `UserError`，绝不静默回退到通用模板。
+    """
+    raw = options.get("customTemplate")
+    try:
+        if isinstance(raw, dict):
+            return prompt_module.build_custom_template(raw.get("system"), raw.get("user"))
+        system = str(options.get("customPrompt") or "").strip()
+        if not system:
+            raise UserError("已选「自定义」模板，请填写 Prompt 内容。")
+        return prompt_module.build_custom_template(system)
+    except prompt_module.PromptError as error:
+        raise UserError(str(error)) from error
 
 
 def _parse_translation_json(content):
@@ -847,9 +875,14 @@ def _translate_one_segment(client, pair, source_text, page_no, report, source_la
     return ""
 
 
-def _translate_blocks(blocks, report, client, template_name, glossary_entries, source_lang, target_lang):
-    """按 token 分块逐段翻译，再按源块下标重组（chunk T4 + prompt T6 + LLM T5）。"""
-    from translate import chunk, prompt
+def _translate_blocks(blocks, report, client, template_name, glossary_entries, source_lang,
+                      target_lang, custom_template=None):
+    """按 token 分块逐段翻译，再按源块下标重组（chunk T4 + prompt T6 + LLM T5）。
+
+    发送前对每段源文调用 `prompt.scan_untrusted_instructions`：命中已知注入模式（决策 #18）
+    即**不发送该段**、保留原文，并在降级报告记 `suspicious_instruction`，绝不静默翻译。
+    """
+    from translate import chunk, prompt, verify
     chunks = chunk.chunk_blocks(blocks)
     progress(f"正在翻译，共 {len(chunks)} 个分块", 0.25)
     translations = []
@@ -858,8 +891,14 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
         if not core:
             continue
         pairs = prompt.build_prompt([block.text for block in core], template_name=template_name,
-                                    glossary=glossary_entries)
+                                    glossary=glossary_entries, custom_template=custom_template)
         for block, pair in zip(core, pairs):
+            hits = prompt.scan_untrusted_instructions(block.text)
+            if hits:
+                report.add(block.page_no, verify.SUSPICIOUS_INSTRUCTION,
+                           {"patterns": hits, "index": getattr(block, "index", None)})
+                translations.append("")
+                continue
             translations.append(_translate_one_segment(client, pair, block.text, block.page_no,
                                                        report, source_lang, target_lang))
     return chunk.reassemble_chunks(chunks, translations)
@@ -883,7 +922,8 @@ def _translate_document(source_doc, source_path, options, out, client, formats, 
     translations = _translate_blocks(extraction.blocks, report, client,
                                      str(options.get("template") or "generic"),
                                      options.get("_glossary"),
-                                     options.get("sourceLang"), options.get("targetLang"))
+                                     options.get("sourceLang"), options.get("targetLang"),
+                                     custom_template=options.get("_custom_template"))
     progress("正在回填排版", 0.85)
     result = output.write_outputs(source_doc, source_path, translations, report, out,
                                   marker=bool(options.get("marker", True)), high_risk=high_risk,
@@ -920,11 +960,17 @@ def translate_request(request):
     if not api_key:
         raise UserError("请先配置翻译服务 API Key。")
     template_name = str(options.get("template") or "generic")
-    if template_name not in prompt.PRESET_TEMPLATES:
+    custom_template = None
+    if template_name == _CUSTOM_TEMPLATE_KEY:
+        custom_template = _custom_translation_template(options, prompt)
+        high_risk = False
+    elif template_name in prompt.PRESET_TEMPLATES:
+        high_risk = prompt.PRESET_TEMPLATES[template_name].get("high_risk", False)
+    else:
         raise UserError(f"未知的翻译模板：{template_name}。")
     formats = _TRANSLATE_FORMATS.get(str(options.get("format") or "both"))
     if formats is None:
-        raise UserError("输出形态只能是 both、mono 或 dual。")
+        raise UserError("输出形态只能是 both、mono、dual、md 或其组合（如 both+md）。")
     cap = str(options.get("maxTokens", "") or "").strip()
     try:
         cost_cap = int(cap) if cap else None
@@ -937,7 +983,7 @@ def translate_request(request):
             glossary_entries = glossary_module.load_glossary(glossary_path)
         except glossary_module.GlossaryError as error:
             raise UserError(str(error)) from error
-    options = {**options, "_glossary": glossary_entries}
+    options = {**options, "_glossary": glossary_entries, "_custom_template": custom_template}
     parent = Path(request.get("outputDir", "")).expanduser()
     if not parent.is_absolute() or not parent.is_dir():
         raise UserError("请选择有效的输出文件夹。")
@@ -946,18 +992,18 @@ def translate_request(request):
     started = time.monotonic()
     try:
         client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
-        high_risk = prompt.PRESET_TEMPLATES[template_name].get("high_risk", False)
         outputs, results = [], []
         for index, path in enumerate(files):
             progress(f"正在翻译文件 {index + 1}/{len(files)}", index / len(files))
             with open_pdf(path, str(options.get("password", "") or "")) as source_doc:
                 result, report = _translate_document(source_doc, path, options, out, client,
                                                      formats, high_risk)
-            for kind in ("mono", "dual"):
+            for kind in ("mono", "dual", "markdown"):
                 if result.get(kind):
                     outputs.append(Path(result[kind]))
             results.append({"file": path, "taskDir": result["taskDir"],
                             "mono": result.get("mono"), "dual": result.get("dual"),
+                            "markdown": result.get("markdown"),
                             "report": report.to_dict()})
         progress("翻译完成", 1.0)
         return {"ok": True, "outputs": [str(p) for p in outputs], "outputDir": str(out),
@@ -996,7 +1042,10 @@ def translate_text_request(request):
     if not api_key:
         raise UserError("请先配置翻译服务 API Key。")
     template_name = str(options.get("template") or "generic")
-    if template_name not in prompt.PRESET_TEMPLATES:
+    custom_template = None
+    if template_name == _CUSTOM_TEMPLATE_KEY:
+        custom_template = _custom_translation_template(options, prompt)
+    elif template_name not in prompt.PRESET_TEMPLATES:
         raise UserError(f"未知的翻译模板：{template_name}。")
     source_lang = str(options.get("sourceLang") or "auto")
     target_lang = str(options.get("targetLang") or "zh")
@@ -1014,18 +1063,25 @@ def translate_text_request(request):
         raise UserError("单任务 token 上限必须是整数。")
 
     started = time.monotonic()
-    try:
-        client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
-        pair = prompt.build_prompt([text], template_name=template_name,
-                                   glossary=glossary_entries)[0]
-        report = verify.DegradationReport(task_id=uuid.uuid4().hex[:12], total_pages=1)
-        translated = _translate_one_segment(client, pair, text, 1, report,
-                                            source_lang, target_lang)
-    except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
-            llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
-        raise UserError(str(error)) from error
-    except llm.LLMError as error:
-        raise UserError(str(error)) from error
+    report = verify.DegradationReport(task_id=uuid.uuid4().hex[:12], total_pages=1)
+    translated = ""
+    hits = prompt.scan_untrusted_instructions(text)
+    if hits:
+        # 命中已知注入模式：拒绝发送该段、保留原文，并记降级原因（决策 #18）。
+        report.add(1, verify.SUSPICIOUS_INSTRUCTION, {"patterns": hits})
+    else:
+        try:
+            client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
+            pair = prompt.build_prompt([text], template_name=template_name,
+                                       glossary=glossary_entries,
+                                       custom_template=custom_template)[0]
+            translated = _translate_one_segment(client, pair, text, 1, report,
+                                                source_lang, target_lang)
+        except (llm.AbortedError, llm.OverBudgetError, llm.AuthError,
+                llm.NetworkError, llm.RateLimitError, llm.OverLimitError) as error:
+            raise UserError(str(error)) from error
+        except llm.LLMError as error:
+            raise UserError(str(error)) from error
 
     payload = report.to_dict()
     return {"ok": True, "translation": translated,

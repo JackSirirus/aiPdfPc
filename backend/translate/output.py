@@ -60,7 +60,9 @@ MARKER_BAND = 12.0                        # 页脚标记带高度（pt）
 TASK_PREFIX = "AIPDF-"
 MONO_SUFFIX = "-纯译文"
 DUAL_SUFFIX = "-对照"
-_SUFFIXES = {"mono": MONO_SUFFIX, "dual": DUAL_SUFFIX}
+MARKDOWN_SUFFIX = "-译文"
+_SUFFIXES = {"mono": MONO_SUFFIX, "dual": DUAL_SUFFIX, "markdown": MARKDOWN_SUFFIX}
+_EXTENSIONS = {"mono": ".pdf", "dual": ".pdf", "markdown": ".md"}
 
 # —— 受限文档披露（《需求总结.md》§受限文档策略） ---------------------------
 _RESTRICTED_DISCLOSURE = "已绕过源文档的抽取限制（经用户确认）"
@@ -286,6 +288,38 @@ def _flatten(pages, items):
     return result
 
 
+# —— Markdown 导出（决策 #4：可选文本产物） ---------------------------------
+
+def build_markdown(source_doc, translations, report, *, blocks_by_page=None, title=None):
+    """构建 Markdown 译文文本：逐页标题 + 段落。
+
+    每页一个 `## 第 N 页` 小节，块文本取该块译文；无译文（降级/未译/可疑指令）的块
+    回退原文，保证可读且不丢内容。标题缺省用「机器翻译译文」。只依赖翻译归一结果，
+    不额外抽取（可注入 `blocks_by_page` 复用 T3 结果）。
+    """
+    pages = blocks_by_page if blocks_by_page is not None else _extract_blocks(source_doc)
+    page_map = page_translations(source_doc, translations, blocks_by_page=pages)
+    lines = [f"# {(title or '机器翻译译文').strip() or '机器翻译译文'}", ""]
+    for page_index, blocks in enumerate(pages):
+        page_no = page_index + 1
+        lines.append(f"## 第 {page_no} 页")
+        lines.append("")
+        mapping = page_map.get(page_no, {})
+        for block_index, block in enumerate(blocks):
+            text = _text_of(mapping.get(block_index)) if block_index in mapping else ""
+            if not text.strip():
+                text = getattr(block, "text", "") or ""
+            if text.strip():
+                lines.append(text.strip())
+                lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def save_text(text, path):
+    """把 Markdown 文本原子写入 `path`（同目录 temp → `os.replace`），返回最终路径。"""
+    return bridge.atomic_write(Path(path), text)
+
+
 # —— mono / dual 组装 --------------------------------------------------------
 
 def _blank_pages(report, total_pages, explicit):
@@ -387,8 +421,9 @@ def output_filename(source_path, kind, directory=None):
     if kind not in _SUFFIXES:
         raise ValueError(f"未知的输出类型：{kind!r}。")
     suffix = _SUFFIXES[kind]
+    extension = _EXTENSIONS[kind]
     stem = Path(source_path).stem or "document"
-    name = f"{stem}{suffix}.pdf"
+    name = f"{stem}{suffix}{extension}"
     if directory is None:
         return name
     folder = Path(directory)
@@ -396,7 +431,7 @@ def output_filename(source_path, kind, directory=None):
         return name
     sequence = 2
     while True:
-        name = f"{stem} ({sequence}){suffix}.pdf"
+        name = f"{stem} ({sequence}){suffix}{extension}"
         if not (folder / name).exists():
             return name
         sequence += 1
@@ -440,9 +475,9 @@ def new_task_dir(parent, *, token=None, when=None):
 def write_outputs(source_doc, source_path, translations, report, output_dir, *,
                   marker=True, high_risk=False, formats=("mono", "dual"),
                   blocks_by_page=None, task_dir=None):
-    """构建并原子保存 mono/dual，落入任务目录；返回各产物路径。
+    """构建并原子保存 mono/dual（可选 markdown），落入任务目录；返回各产物路径。
 
-    返回 `{"taskDir": str, "mono": str?, "dual": str?}`；受限文档额外带
+    返回 `{"taskDir": str, "mono": str?, "dual": str?, "markdown": str?}`；受限文档额外带
     `"sourceProtection"`。单份失败时已保存的产物保留、临时文件被清理。
     """
     parent = Path(output_dir)
@@ -453,6 +488,11 @@ def write_outputs(source_doc, source_path, translations, report, output_dir, *,
     builders = {"mono": build_mono, "dual": build_dual}
     result = {"taskDir": str(folder)}
     for kind in formats:
+        if kind == "markdown":
+            text = build_markdown(source_doc, translations, report,
+                                  blocks_by_page=pages, title=Path(source_path).stem)
+            result["markdown"] = str(save_text(text, folder / output_filename(source_path, kind, folder)))
+            continue
         builder = builders.get(kind)
         if builder is None:
             raise _user_error(f"不支持的输出格式：{kind}")
@@ -471,7 +511,7 @@ def write_outputs(source_doc, source_path, translations, report, output_dir, *,
 
 __all__ = [
     "MARKER_TEXT", "MARKER_SIZE", "MARKER_COLOR", "MARKER_FONT", "TASK_PREFIX",
-    "MONO_SUFFIX", "DUAL_SUFFIX", "add_marker", "describe_source_protection",
-    "page_translations", "build_mono", "build_dual", "output_filename",
-    "save_document", "new_task_dir", "write_outputs",
+    "MONO_SUFFIX", "DUAL_SUFFIX", "MARKDOWN_SUFFIX", "add_marker", "describe_source_protection",
+    "page_translations", "build_mono", "build_dual", "build_markdown", "output_filename",
+    "save_document", "save_text", "new_task_dir", "write_outputs",
 ]

@@ -848,9 +848,8 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
     /// <summary>组装引擎 translate options（值一律字符串；密钥经此进入子进程 stdin）。</summary>
     private Dictionary<string, object?> BuildEngineOptions(TranslationRuntimeConfig runtime)
     {
-        var format = Config.GenerateMono && Config.GenerateDual
-            ? "both"
-            : Config.GenerateMono ? "mono" : "dual";
+        var format = TranslationOutputFormats.ToEngineFormat(
+            Config.GenerateMono, Config.GenerateDual, Config.ExportMarkdown);
 
         var options = new Dictionary<string, object?>
         {
@@ -868,6 +867,12 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         if (!string.IsNullOrWhiteSpace(Config.GlossaryPath))
         {
             options["glossary"] = Config.GlossaryPath.Trim();
+        }
+
+        // 自定义模板正文（决策 #10）：用户填写的 system 指令，随请求发往引擎。
+        if (Config.IsCustomTemplate && !string.IsNullOrWhiteSpace(Config.CustomPrompt))
+        {
+            options["customPrompt"] = Config.CustomPrompt.Trim();
         }
 
         if (Config.CostLimitEnabled)

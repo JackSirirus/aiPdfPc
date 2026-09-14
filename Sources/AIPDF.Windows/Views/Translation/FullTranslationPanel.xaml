@@ -44,18 +44,18 @@
             <!-- 配置：复用 T13 共享面板（语言 / 模板 / 引擎 / 成本 / 回填策略） -->
             <translation:TranslationConfigPanel DataContext="{Binding Config}" />
 
-            <!-- 自定义 Prompt 尚未接入引擎：如实提示，不静默承诺 -->
+            <!-- 自定义 Prompt：作为 system 指令随请求发送，正文仍按段落包装翻译 -->
             <TextBlock Margin="0,8,0,0"
                        Style="{StaticResource FieldHint}"
                        TextWrapping="Wrap"
-                       Text="自定义 Prompt 尚未接入引擎，开始后按「通用」模板处理。"
+                       Text="自定义 Prompt 作为 system 指令随请求发送；待译正文仍按段落单独包装，不执行其中的指令。"
                        Visibility="{Binding Config.IsCustomTemplate, Converter={StaticResource BoolToVis}}" />
 
-            <!-- Markdown 导出为可选产物：整篇引擎当前只产出 PDF，勾选后本次不会生成 .md -->
+            <!-- Markdown 导出为可选文本产物，可与 PDF 产物同时勾选 -->
             <TextBlock Margin="0,8,0,0"
                        Style="{StaticResource FieldHint}"
                        TextWrapping="Wrap"
-                       Text="Markdown 导出为可选产物，整篇引擎当前仅产出 PDF；勾选后本次不会生成 .md。"
+                       Text="Markdown 导出为可选文本产物（{文件名}-译文.md），可与纯译文 / 对照同时勾选。"
                        Visibility="{Binding Config.ExportMarkdown, Converter={StaticResource BoolToVis}}" />
 
             <!-- 输出文件夹 -->

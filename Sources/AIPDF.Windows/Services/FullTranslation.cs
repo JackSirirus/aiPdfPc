@@ -34,7 +34,29 @@ public sealed record FullTranslationRequest(
     bool GenerateMono = true,
     bool GenerateDual = true,
     string? Password = null,
-    bool Marker = true);
+    bool Marker = true,
+    bool ExportMarkdown = false,
+    string? CustomPrompt = null);
+
+/// <summary>
+/// 输出形态 → 引擎 <c>format</c> 值（决策 #4）。mono/dual 组合为 <c>both/mono/dual</c>；
+/// 勾选 Markdown 时追加 <c>+md</c>（仅 Markdown 时为 <c>md</c>），与后端
+/// <c>engine._TRANSLATE_FORMATS</c> 的键一一对应。
+/// </summary>
+public static class TranslationOutputFormats
+{
+    /// <summary>把 mono / dual / markdown 复选组合映射为引擎 format 值。</summary>
+    public static string ToEngineFormat(bool mono, bool dual, bool markdown)
+    {
+        var shape = mono && dual ? "both" : mono ? "mono" : dual ? "dual" : "";
+        if (!markdown)
+        {
+            return shape;
+        }
+
+        return shape.Length == 0 ? "md" : shape + "+md";
+    }
+}
 
 /// <summary>翻译进度（阶段名 + 0..1 比例）。</summary>
 public sealed record FullTranslationProgress(string Stage, double Fraction);
@@ -153,9 +175,8 @@ public sealed class EngineFullTranslationService : IFullTranslationService
     /// <summary>组装引擎 options（值一律字符串；密钥仅经此处进入子进程 stdin）。</summary>
     private static Dictionary<string, object?> BuildOptions(FullTranslationRequest request)
     {
-        var format = request.GenerateMono && request.GenerateDual
-            ? "both"
-            : request.GenerateMono ? "mono" : "dual";
+        var format = TranslationOutputFormats.ToEngineFormat(
+            request.GenerateMono, request.GenerateDual, request.ExportMarkdown);
 
         var options = new Dictionary<string, object?>
         {
@@ -172,6 +193,12 @@ public sealed class EngineFullTranslationService : IFullTranslationService
         if (!string.IsNullOrWhiteSpace(request.GlossaryPath))
         {
             options["glossary"] = request.GlossaryPath;
+        }
+
+        // 自定义模板正文（决策 #10）：用户填写的 system 指令；引擎据此构建 system+user。
+        if (!string.IsNullOrWhiteSpace(request.CustomPrompt))
+        {
+            options["customPrompt"] = request.CustomPrompt;
         }
 
         if (request.MaxTokens is int cap)

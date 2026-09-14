@@ -49,6 +49,11 @@ class ReasonEnumTests(unittest.TestCase):
         for reason in verify.UNSEARCHABLE_REASONS:
             self.assertIn(reason, verify.DEGRADATION_REASONS)
 
+    def test_suspicious_instruction_is_registered_with_label(self):
+        self.assertEqual(verify.SUSPICIOUS_INSTRUCTION, "suspicious_instruction")
+        self.assertIn(verify.SUSPICIOUS_INSTRUCTION, verify.DEGRADATION_REASONS)
+        self.assertIn("已保留原文", verify.REASON_LABELS[verify.SUSPICIOUS_INSTRUCTION])
+
 
 class SplitSegmentsTests(unittest.TestCase):
     def test_empty_and_blank(self):

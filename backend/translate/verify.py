@@ -54,6 +54,7 @@ RASTER_OVERLAY = "raster_overlay"            # 扫描页原文不可移除
 SEGMENT_SPLIT = "segment_split"              # 超长段落被切分
 SEARCH_VERIFY_FAIL = "search_verify_fail"    # 导出后校验未过
 UNTRANSLATED_ECHO = "untranslated_echo"      # 译文与原文相同/高度相似或返回非译文内容
+SUSPICIOUS_INSTRUCTION = "suspicious_instruction"  # 源段命中已知注入模式，拒绝翻译并保留原文
 
 # 唯一枚举：规格 §9.1 的全部原因，外加抽取阶段（T3 `extract.py`）沿用、与
 # `no_text_block` 同义的 `empty_page`，使抽取与回填共用同一份报告。
@@ -62,7 +63,7 @@ DEGRADATION_REASONS = (
     FORMULA_FAIL, TABLE_FAIL, REASSEMBLY_MISMATCH, EXTRACTION_LOW_CONF,
     ROTATION_CROP, UNSUPPORTED_SCRIPT, NO_TEXT_BLOCK, EMPTY_PAGE, SKIP_PAGE,
     PAGE_FAILED, RASTER_OVERLAY, SEGMENT_SPLIT, SEARCH_VERIFY_FAIL,
-    UNTRANSLATED_ECHO,
+    UNTRANSLATED_ECHO, SUSPICIOUS_INSTRUCTION,
 )
 
 # 天然不可搜索的页（规格 §8.5 / §9.2）：扫描光栅叠加、导出校验未过、无文本块。
@@ -96,6 +97,7 @@ REASON_LABELS = {
     SEGMENT_SPLIT: "该页有超长段落被切分",
     SEARCH_VERIFY_FAIL: "该页译文可能不可搜索",
     UNTRANSLATED_ECHO: "该段疑似未翻译/回显",
+    SUSPICIOUS_INSTRUCTION: "该段含可疑指令，已保留原文",
 }
 
 # 元描述/解释性语句：只在**开头**匹配，避免误伤正文中恰好出现这些词组的正常译文。
@@ -346,7 +348,7 @@ __all__ = [
     "FORMULA_FAIL", "TABLE_FAIL", "REASSEMBLY_MISMATCH", "EXTRACTION_LOW_CONF",
     "ROTATION_CROP", "UNSUPPORTED_SCRIPT", "NO_TEXT_BLOCK", "EMPTY_PAGE",
     "SKIP_PAGE", "PAGE_FAILED", "RASTER_OVERLAY", "SEGMENT_SPLIT",
-    "SEARCH_VERIFY_FAIL", "UNTRANSLATED_ECHO",
+    "SEARCH_VERIFY_FAIL", "UNTRANSLATED_ECHO", "SUSPICIOUS_INSTRUCTION",
     "DEGRADATION_REASONS", "UNSEARCHABLE_REASONS", "REASON_LABELS",
     # 函数与类型
     "verify_translation", "split_segments", "text_similarity",

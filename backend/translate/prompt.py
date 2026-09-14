@@ -41,6 +41,9 @@ _USER_TEMPLATE = (
     "{source_text}"
 )
 
+# 公开别名：自定义模板缺省复用同一 user 骨架，只需提供 system 指令。
+USER_TEMPLATE = _USER_TEMPLATE
+
 # 5 类预置模板。legal/medical 标记为高风险（选中时 UI 需弹确认、产物页脚标记不可关）。
 PRESET_TEMPLATES = {
     "academic": {
@@ -124,6 +127,16 @@ def available_templates():
     """预置模板元数据，供配置面板展示（含高风险标记）。"""
     return [{"name": name, "label": item["label"], "high_risk": item["high_risk"]}
             for name, item in PRESET_TEMPLATES.items()]
+
+
+def build_custom_template(system, user=None):
+    """把用户填写的自定义指令组装成 `build_prompt` 可用的 system+user 模板。
+
+    `system` 必填（用户在配置面板填写的指令正文）；`user` 缺省复用内置 user 骨架
+    （含 `{source_text}` 占位符，正文仍会被 nonce 包裹）。返回值经 `_validate_custom`
+    校验，非法输入抛 `PromptError`。
+    """
+    return _validate_custom({"system": system, "user": USER_TEMPLATE if user is None else user})
 
 
 def build_prompt(texts, template_name="generic", glossary=None, custom_template=None):

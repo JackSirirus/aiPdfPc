@@ -132,6 +132,24 @@ class CustomTemplateTests(unittest.TestCase):
         with self.assertRaises(prompt.PromptError):
             prompt.build_prompt(["hi"], custom_template="nope")
 
+    def test_build_custom_template_from_system_only_uses_user_skeleton(self):
+        template = prompt.build_custom_template("Translate casually and concisely.")
+        self.assertEqual(template["system"], "Translate casually and concisely.")
+        self.assertIn("{source_text}", template["user"])
+        pair = prompt.build_prompt(["hi"], custom_template=template)[0]
+        self.assertIn("Translate casually and concisely.", pair["system"])
+        self.assertIn("hi", pair["user"])
+
+    def test_build_custom_template_accepts_explicit_user(self):
+        template = prompt.build_custom_template("S", "请翻译：{source_text}")
+        self.assertEqual(template["user"], "请翻译：{source_text}")
+        pair = prompt.build_prompt(["hi"], custom_template=template)[0]
+        self.assertIn("请翻译：<untrusted ", pair["user"])
+
+    def test_build_custom_template_requires_non_empty_system(self):
+        with self.assertRaises(prompt.PromptError):
+            prompt.build_custom_template("   ")
+
 
 class GlossaryInjectionTests(unittest.TestCase):
     def test_glossary_terms_go_into_system(self):

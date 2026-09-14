@@ -482,8 +482,39 @@ public sealed class FullTranslationViewModelTests
         Assert.Equal("academic", FullTranslationViewModel.ToEngineTemplate("academic"));
         Assert.Equal("legal", FullTranslationViewModel.ToEngineTemplate("legal"));
         Assert.Equal("generic", FullTranslationViewModel.ToEngineTemplate("general"));
-        Assert.Equal("generic", FullTranslationViewModel.ToEngineTemplate("custom"));
+        Assert.Equal("custom", FullTranslationViewModel.ToEngineTemplate("custom"));
         Assert.Equal("generic", FullTranslationViewModel.ToEngineTemplate(null));
+    }
+
+    [Fact]
+    public async Task Start_CustomTemplate_SendsCustomPromptAndMarkdown()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.SelectedTemplate = vm.Config.TemplateOptions.First(t => t.IsCustom);
+        vm.Config.CustomPrompt = "把下文翻译为简洁的商务中文，保留数字与专名。";
+        vm.Config.ExportMarkdown = true;
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.LastRequest);
+        Assert.Equal("custom", service.LastRequest!.Template);
+        Assert.Equal("把下文翻译为简洁的商务中文，保留数字与专名。", service.LastRequest.CustomPrompt);
+        Assert.True(service.LastRequest.ExportMarkdown);
+    }
+
+    [Fact]
+    public async Task Start_NonCustomTemplate_OmitsCustomPrompt()
+    {
+        var service = new FakeFullTranslationService();
+        var vm = NewViewModel(service);
+        vm.Config.CustomPrompt = "这段不应被发送。"; // 模板非自定义时忽略
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.LastRequest);
+        Assert.Null(service.LastRequest!.CustomPrompt);
+        Assert.False(service.LastRequest.ExportMarkdown);
     }
 
     [Fact]

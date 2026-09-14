@@ -35,11 +35,12 @@ public sealed class FullTranslationArtifactViewModel
     /// <summary>产物展示名。</summary>
     public string FileName => System.IO.Path.GetFileName(Path);
 
-    /// <summary>产物徽标文案（MONO / DUAL）。</summary>
+    /// <summary>产物徽标文案（MONO / DUAL / MD）。</summary>
     public string Badge => Kind switch
     {
         "mono" => "MONO",
         "dual" => "DUAL",
+        "markdown" => "MD",
         _ => "产物",
     };
 
@@ -137,6 +138,7 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         ["segment_split"] = "该页有超长段落被切分",
         ["search_verify_fail"] = "该页译文可能不可搜索",
         ["untranslated_echo"] = "该段疑似未翻译/回显",
+        ["suspicious_instruction"] = "该段含可疑指令，已保留原文",
     };
 
     /// <summary>降级原因标记 → 用户可见文案（未知标记原样返回）。</summary>
@@ -577,18 +579,20 @@ public sealed partial class FullTranslationViewModel : ObservableObject
             Password: DocumentPassword,
             // 页脚标记：设置开关；高风险模板（法律 / 医学）强制开启，忽略设置（§9.3，
             // 与 backend output.add_marker(high_risk=True) 的强制口径一致）。
-            Marker: FooterMarkerProvider() || Config.IsHighRiskTemplate);
+            Marker: FooterMarkerProvider() || Config.IsHighRiskTemplate,
+            // 可选 Markdown 导出（决策 #4）；自定义 prompt（决策 #10）随请求发往引擎。
+            ExportMarkdown: Config.ExportMarkdown,
+            CustomPrompt: Config.IsCustomTemplate ? Config.CustomPrompt : null);
 
     /// <summary>
-    /// T13 模板标识 → 引擎 <c>prompt.PRESET_TEMPLATES</c> 键名。
-    /// T13 的「通用」为 <c>general</c>，引擎为 <c>generic</c>；自定义模板引擎暂不支持，回退 <c>generic</c>
-    /// （面板同时展示「自定义 Prompt 尚未接入引擎」提示，不静默承诺）。
+    /// T13 模板标识 → 引擎模板键名。
+    /// T13 的「通用」为 <c>general</c>，引擎为 <c>generic</c>；「自定义」保留 <c>custom</c>，
+    /// 由引擎结合请求里的 <see cref="FullTranslationRequest.CustomPrompt"/> 构建 system+user。
     /// </summary>
     internal static string ToEngineTemplate(string? id) => id switch
     {
         null or "" => "generic",
         "general" => "generic",
-        "custom" => "generic",
         _ => id,
     };
 

@@ -79,6 +79,36 @@ public class FullTranslationServiceTests
     }
 
     [Fact]
+    public async Task TranslateAsync_MarkdownAndCustomPrompt_InOptions()
+    {
+        var bridge = new StubBridge(new EngineResult { Ok = true });
+        var service = new EngineFullTranslationService(bridge);
+        var request = Request(mono: true, dual: false) with
+        {
+            ExportMarkdown = true,
+            CustomPrompt = "用极简风格翻译。",
+        };
+
+        await service.TranslateAsync(request, progress: null);
+
+        Assert.Equal("mono+md", bridge.LastRequest!.Options["format"]);
+        Assert.Equal("用极简风格翻译。", bridge.LastRequest.Options["customPrompt"]);
+    }
+
+    [Theory]
+    [InlineData(true, true, false, "both")]
+    [InlineData(true, false, false, "mono")]
+    [InlineData(false, true, false, "dual")]
+    [InlineData(false, false, true, "md")]
+    [InlineData(true, false, true, "mono+md")]
+    [InlineData(true, true, true, "both+md")]
+    public void ToEngineFormat_MapsSelectionCombinations(
+        bool mono, bool dual, bool markdown, string expected)
+    {
+        Assert.Equal(expected, TranslationOutputFormats.ToEngineFormat(mono, dual, markdown));
+    }
+
+    [Fact]
     public async Task TranslateAsync_EngineFailure_SurfacesError()
     {
         var bridge = new StubBridge(new EngineResult { Ok = false, Error = "请先配置翻译服务端点。" });

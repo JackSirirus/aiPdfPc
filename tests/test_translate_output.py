@@ -278,6 +278,13 @@ class FilenameTests(OutputTestCase):
         with self.assertRaises(ValueError):
             output.output_filename(self.tmp / "报告.pdf", "side")
 
+    def test_markdown_name_uses_md_extension(self):
+        src_path = self.tmp / "报告.pdf"
+        self.assertEqual(output.output_filename(src_path, "markdown"), "报告-译文.md")
+        (self.tmp / "报告-译文.md").write_text("x", encoding="utf-8")
+        self.assertEqual(output.output_filename(src_path, "markdown", self.tmp),
+                         "报告 (2)-译文.md")
+
 
 class SaveDocumentTests(OutputTestCase):
     def test_atomic_save_leaves_no_temp_and_outputs_unencrypted(self):
@@ -359,6 +366,44 @@ class WriteOutputsTests(OutputTestCase):
                                           self.tmp, formats=("mono",), marker=False)
         self.assertIn("mono", result)
         self.assertNotIn("dual", result)
+
+
+class MarkdownOutputTests(OutputTestCase):
+    def test_build_markdown_uses_translation_and_falls_back_to_original(self):
+        src_path = self.source("报告.pdf", ["Page one body", "Page two body"])
+        report = DegradationReport(task_id="t")
+        with fitz.open(str(src_path)) as src:
+            text = output.build_markdown(src, {1: {0: "第一页译文"}}, report, title="报告")
+        self.assertIn("# 报告", text)
+        self.assertIn("## 第 1 页", text)
+        self.assertIn("## 第 2 页", text)
+        self.assertIn("第一页译文", text)
+        self.assertIn("Page two body", text)  # 无译文块回退原文，不丢内容
+
+    def test_write_outputs_produces_markdown_file(self):
+        src_path = self.source("报告.pdf", ["Page one body"])
+        report = DegradationReport(task_id="t")
+        with fitz.open(str(src_path)) as src:
+            result = output.write_outputs(
+                src, src_path, {1: {0: "第一页译文"}}, report, self.tmp,
+                formats=("markdown",), marker=False)
+        md = Path(result["markdown"])
+        self.assertTrue(md.is_file())
+        self.assertEqual(md.name, "报告-译文.md")
+        self.assertIn("第一页译文", md.read_text(encoding="utf-8"))
+
+    def test_write_outputs_pdf_plus_markdown(self):
+        src_path = self.source("报告.pdf", ["Page one body"])
+        report = DegradationReport(task_id="t")
+        with fitz.open(str(src_path)) as src:
+            result = output.write_outputs(
+                src, src_path, {1: {0: "第一页译文"}}, report, self.tmp,
+                formats=("mono", "markdown"), marker=False)
+        self.assertIn("mono", result)
+        self.assertIn("markdown", result)
+        self.assertTrue(Path(result["mono"]).name.endswith("-纯译文.pdf"))
+        self.assertTrue(Path(result["markdown"]).name.endswith("-译文.md"))
+        self.assertEqual(self.leftovers(), [])  # 原子写不留临时文件
 
 
 class SourceImmutableTests(OutputTestCase):
