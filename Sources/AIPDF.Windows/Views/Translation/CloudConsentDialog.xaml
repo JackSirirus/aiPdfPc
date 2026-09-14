@@ -1,0 +1,118 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 AIPDF contributors -->
+<!-- v1.1 F5 云端首次同意模态（决策 #14/#15；T24 §8-①）：在首次调用某 provider + endpoint 的云端翻译前显式征求同意。
+     同意勾选默认未勾选（须用户主动勾选才能继续）；「记住我的选择」默认不勾（未勾 → 仅本次会话有效）。
+     列出服务商 + endpoint / 上传范围 / 传输 / 密钥存储；「改用本地引擎」回退本地，「取消」不发任何请求。
+     配色全部复用应用级 Brush.* token（DynamicResource），不新增 token。 -->
+<Window x:Class="AIPDF.Windows.Views.Translation.CloudConsentDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="启用云端翻译"
+        Width="500"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner">
+    <StackPanel Margin="24,20,24,20">
+        <TextBlock FontSize="14"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource Brush.TextPrimary}"
+                   Text="启用云端翻译" />
+
+        <TextBlock x:Name="LeadText"
+                   Margin="0,8,0,0"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Brush.TextSecondary}" />
+
+        <!-- 目的地与影响范围（仅展示，不含任何密钥） -->
+        <Border Margin="0,12,0,0"
+                Padding="12,10"
+                CornerRadius="6"
+                Background="{DynamicResource Brush.FieldBackground}"
+                BorderBrush="{DynamicResource Brush.Border}"
+                BorderThickness="1">
+            <StackPanel>
+                <TextBlock FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
+                           Text="服务商 + endpoint" />
+                <TextBlock x:Name="ProviderText"
+                           Margin="0,2,0,0"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.TextPrimary}" />
+
+                <TextBlock Margin="0,10,0,0"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
+                           Text="上传范围" />
+                <TextBlock Margin="0,2,0,0"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.TextPrimary}"
+                           Text="整篇翻译会把全文文本分批发送至该服务商（不是只发片段）；页面图片、批注、密码不发送。" />
+
+                <TextBlock Margin="0,10,0,0"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
+                           Text="传输" />
+                <TextBlock Margin="0,2,0,0"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.TextPrimary}"
+                           Text="HTTPS 加密直达所选服务商，不经过 AIPDF 中转；本地引擎不联网。" />
+
+                <TextBlock Margin="0,10,0,0"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource Brush.TextSecondary}"
+                           Text="密钥存储" />
+                <TextBlock Margin="0,2,0,0"
+                           FontSize="12"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource Brush.TextPrimary}"
+                           Text="系统凭据管理器（OS 加密，跨会话读回）；仅经 stdin 传递；不写明文配置、不写日志、不进命令行参数、不写入子进程环境变量、不进崩溃转储 / 会话恢复 / 流程预设。" />
+            </StackPanel>
+        </Border>
+
+        <CheckBox x:Name="ConsentCheck"
+                  Margin="0,14,0,0"
+                  FontSize="12"
+                  Cursor="Hand"
+                  Foreground="{DynamicResource Brush.TextPrimary}"
+                  VerticalContentAlignment="Center"
+                  Content="我理解并同意将待译文本分批发送至上述服务商" />
+
+        <CheckBox x:Name="RememberCheck"
+                  Margin="0,8,0,0"
+                  FontSize="12"
+                  Cursor="Hand"
+                  Foreground="{DynamicResource Brush.TextPrimary}"
+                  VerticalContentAlignment="Center"
+                  Content="记住我的选择（按「服务商 + endpoint」记住；可在设置中更改或撤销）" />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button Content="改用本地引擎"
+                    Style="{StaticResource SecondaryButton}"
+                    MinWidth="104"
+                    Click="OnUseLocalClick" />
+            <Button Content="取消"
+                    Style="{StaticResource SecondaryButton}"
+                    IsCancel="True"
+                    MinWidth="88"
+                    Margin="8,0,0,0"
+                    Click="OnCancelClick" />
+            <Button x:Name="ConfirmButton"
+                    Content="同意并继续"
+                    Style="{StaticResource PrimaryButton}"
+                    IsDefault="True"
+                    MinWidth="104"
+                    Margin="8,0,0,0"
+                    IsEnabled="{Binding IsChecked, ElementName=ConsentCheck}"
+                    Click="OnConfirmClick" />
+        </StackPanel>
+    </StackPanel>
+</Window>

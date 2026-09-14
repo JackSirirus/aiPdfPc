@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
+using AIPDF.Windows.Services;
 using AIPDF.Windows.ViewModels;
 
 namespace AIPDF.Windows.Views.Translation;
@@ -15,10 +16,14 @@ public partial class TranslationBatchPage : UserControl
 {
     public TranslationBatchViewModel ViewModel { get; }
 
-    public TranslationBatchPage(EngineBridge? bridge, Tool tool)
+    public TranslationBatchPage(
+        EngineBridge? bridge,
+        Tool tool,
+        ITranslationRuntimeConfigProvider? configProvider = null,
+        Func<TranslationConsentRequest, Task<bool>>? confirmCloudConsentAsync = null)
     {
         InitializeComponent();
-        ViewModel = new TranslationBatchViewModel(bridge, tool);
+        ViewModel = new TranslationBatchViewModel(bridge, tool, configProvider, confirmCloudConsentAsync: confirmCloudConsentAsync);
         DataContext = ViewModel;
     }
 

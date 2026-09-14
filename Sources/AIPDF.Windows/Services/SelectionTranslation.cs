@@ -40,14 +40,77 @@ public sealed record TranslationRuntimeConfig(
     string? GlossaryPath = null,
     int? MaxTokens = null);
 
-/// <summary>翻译运行时配置来源（T13/T17 接入设置与凭据管理器后填充）。</summary>
-public interface ITranslationRuntimeConfigProvider
+/// <summary>运行时配置「未就绪」的具体原因（供 UI 给出可操作的引导，不把不同缺口混为一谈）。</summary>
+public enum TranslationRuntimeConfigStatus
 {
-    /// <summary>返回当前配置；未配置返回 null。</summary>
-    TranslationRuntimeConfig? Get();
+    /// <summary>服务商 / 端点 / 凭据 / 同意均已就绪，配置可用。</summary>
+    Configured,
+
+    /// <summary>尚未配置任何服务商。</summary>
+    NoProvider,
+
+    /// <summary>服务商缺少端点地址。</summary>
+    NoEndpoint,
+
+    /// <summary>标记为「本地」但端点不是 loopback（拒绝，防绕过云端同意）。</summary>
+    NotLoopback,
+
+    /// <summary>云端服务商尚未保存密钥。</summary>
+    NoCredential,
+
+    /// <summary>云端服务商尚未获得明确同意。</summary>
+    NoConsent,
 }
 
-/// <summary>默认提供者：尚未接入设置/凭据（T13/T17 之前）→ 恒为未配置。</summary>
+/// <summary>
+/// 运行时配置解析结果：<see cref="Config"/> 非空即可用；否则 <see cref="Status"/> 指明具体缺口、
+/// <see cref="Message"/> 为可直接展示的引导文案，<see cref="Provider"/> / <see cref="Endpoint"/> 供同意弹窗等定位目的地。
+/// </summary>
+public sealed record TranslationRuntimeConfigResolution(
+    TranslationRuntimeConfigStatus Status,
+    TranslationRuntimeConfig? Config,
+    string Provider,
+    string Endpoint,
+    bool IsCloud,
+    string Message)
+{
+    /// <summary>配置是否可用。</summary>
+    public bool IsConfigured => Config is not null;
+
+    /// <summary>是否因「云端未同意」而阻塞（宿主据此弹 F5 同意模态）。</summary>
+    public bool NeedsConsent => Status == TranslationRuntimeConfigStatus.NoConsent;
+
+    /// <summary>未配置的通用回退文案（保留既有措辞，兼容既有调用方与测试）。</summary>
+    public const string NotConfiguredMessage = "翻译服务尚未配置，请在「设置 → 翻译」中配置服务商与语言后重试。";
+}
+
+/// <summary>
+/// 一次云端首次同意请求（F5 模态展示用）。只含目的地标识，<b>不含密钥</b>；
+/// 同意后由宿主从凭据管理器读取密钥并按指纹授予同意。
+/// </summary>
+public sealed record TranslationConsentRequest(string Provider, string Endpoint, string Model = "");
+
+/// <summary>翻译运行时配置来源（生产实现读取设置 + 系统凭据管理器 + 同意记录）。</summary>
+public interface ITranslationRuntimeConfigProvider
+{
+    /// <summary>返回当前配置；未配置返回 null（等价于 <see cref="Resolve"/> 未就绪）。</summary>
+    TranslationRuntimeConfig? Get();
+
+    /// <summary>
+    /// 解析运行时配置，并区分「未就绪」的具体原因。默认实现仅区分「可用 / 未配置」，
+    /// 生产实现（<c>SettingsTranslationRuntimeConfigProvider</c>）覆盖为细分原因。
+    /// </summary>
+    TranslationRuntimeConfigResolution Resolve()
+        => Get() is { } config
+            ? new TranslationRuntimeConfigResolution(
+                TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint,
+                !TranslationProviderConfig.IsLocalProvider(config.Provider), "")
+            : new TranslationRuntimeConfigResolution(
+                TranslationRuntimeConfigStatus.NoProvider, null, "", "", false,
+                TranslationRuntimeConfigResolution.NotConfiguredMessage);
+}
+
+/// <summary>默认提供者：尚未接入设置/凭据 → 恒为未配置。</summary>
 public sealed class NullTranslationRuntimeConfigProvider : ITranslationRuntimeConfigProvider
 {
     /// <inheritdoc />
@@ -77,11 +140,10 @@ public sealed class EngineSelectionTranslationService : ISelectionTranslationSer
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var config = _configProvider.Get();
-        if (config is null)
+        var resolution = _configProvider.Resolve();
+        if (resolution.Config is not { } config)
         {
-            return new SelectionTranslationResult(
-                false, "", "翻译服务尚未配置，请在「设置 → 翻译」中配置服务商与语言后重试。", 0);
+            return new SelectionTranslationResult(false, "", resolution.Message, 0);
         }
 
         var options = new Dictionary<string, object?>

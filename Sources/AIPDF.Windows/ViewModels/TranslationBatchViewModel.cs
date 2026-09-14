@@ -202,11 +202,13 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         EngineBridge? bridge,
         Tool tool,
         ITranslationRuntimeConfigProvider? configProvider = null,
-        TranslationConfigViewModel? config = null)
+        TranslationConfigViewModel? config = null,
+        Func<TranslationConsentRequest, Task<bool>>? confirmCloudConsentAsync = null)
     {
         ArgumentNullException.ThrowIfNull(tool);
         _bridge = bridge;
         _configProvider = configProvider ?? new NullTranslationRuntimeConfigProvider();
+        ConfirmCloudConsentAsync = confirmCloudConsentAsync;
         Tool = tool;
         Config = config ?? new TranslationConfigViewModel();
 
@@ -224,6 +226,12 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
     /// <summary>共享翻译配置面板（T13）——整篇 Tab 与批量页同源。</summary>
     public TranslationConfigViewModel Config { get; }
+
+    /// <summary>
+    /// 云端首次同意委托（宿主接 F5 模态）；未注入则未同意即阻塞，不发起任何云端请求。
+    /// 仅直接「开始」路径可弹模态；向导参数步为同步校验，未同意会在该步给出可读原因。
+    /// </summary>
+    public Func<TranslationConsentRequest, Task<bool>>? ConfirmCloudConsentAsync { get; set; }
 
     /// <summary>输入文件（顺序即处理顺序）。</summary>
     public ObservableCollection<BatchTranslationFileItem> Files { get; } = [];
@@ -375,7 +383,15 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var runtime = _configProvider.Get()!; // Validate 已保证非 null
+        // 云端未同意时先弹同意模态（宿主注入）；未同意 / 取消 → 不发起任何请求。
+        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync);
+        if (resolution.Config is not { } runtime)
+        {
+            _cts = null;
+            StatusMessage = resolution.Message;
+            return;
+        }
+
         var options = BuildEngineOptions(runtime);
 
         foreach (var file in Files)
@@ -765,9 +781,8 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return "请选择有效的输出文件夹。";
         }
 
-        return _configProvider.Get() is null
-            ? "翻译服务尚未配置，请在「设置 → 翻译」中配置服务商与语言后重试。"
-            : null;
+        // 运行时配置（含云端同意）在 StartAsync 里经 EnsureAsync 解析/征求同意，故不在此同步校验。
+        return null;
     }
 
     /// <summary>按给定文件【串行】执行，UI 不阻塞；任一文件失败不中断其余。</summary>

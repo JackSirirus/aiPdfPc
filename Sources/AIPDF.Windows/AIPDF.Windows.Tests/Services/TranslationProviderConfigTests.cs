@@ -63,4 +63,37 @@ public sealed class TranslationProviderConfigTests
             || string.Equals(p.Name, "key", StringComparison.OrdinalIgnoreCase)
             || string.Equals(p.Name, "apiKey", StringComparison.OrdinalIgnoreCase));
     }
+
+    // ---------------------------------------------------------------- loopback（防同意绕过）
+
+    [Theory]
+    [InlineData("http://127.0.0.1:11434/v1", true)]
+    [InlineData("https://localhost/v1", true)]
+    [InlineData("http://[::1]:8080/v1", true)]
+    [InlineData("https://api.deepseek.com/v1", false)]
+    [InlineData("http://192.168.1.10:11434/v1", false)] // 局域网地址≠loopback
+    [InlineData("api.deepseek.com/v1", false)]          // 非绝对 URL
+    [InlineData("", false)]
+    public void IsLoopbackEndpoint_OnlyAcceptsLoopback(string endpoint, bool expected)
+        => Assert.Equal(expected, TranslationProviderConfig.IsLoopbackEndpoint(endpoint));
+
+    [Theory]
+    [InlineData("local", true)]
+    [InlineData("LOCAL", true)]
+    [InlineData(" local ", true)]
+    [InlineData("deepseek", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsLocalProvider_MatchesLocalCaseInsensitively(string? provider, bool expected)
+        => Assert.Equal(expected, TranslationProviderConfig.IsLocalProvider(provider));
+
+    [Fact]
+    public void LoopbackViolationMessage_ListsHostAndAllowedAddresses()
+    {
+        // 用非默认端口，确保 Authority 带上端口（默认端口 Uri.Authority 会省略）。
+        var message = TranslationProviderConfig.LoopbackViolationMessage("https://remote.example.com:8443/v1");
+
+        Assert.Contains("remote.example.com:8443", message);
+        Assert.Contains("127.0.0.1 / ::1 / localhost", message);
+    }
 }

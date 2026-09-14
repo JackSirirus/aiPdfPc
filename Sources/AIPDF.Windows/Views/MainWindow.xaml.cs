@@ -66,7 +66,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         Security.SecurityPages.Register(); // T18：安全保护组（解锁 / 加密 / 签名 / 遮盖 / 比较）
         Editor.EditorPages.Register(); // T17：编辑内容组（旋转 / 页码 / 水印 / 裁剪框选 / 编辑 / 表单）
         Workflow.WorkflowPages.Register(); // T19：工作流程组（步骤串联 / 预设 / 批量 / 记录）
-        TranslationToolPages.Register(); // v1.1 T21：批量翻译工具页（translate_batch）
+        // v1.1 T21：批量翻译工具页（translate_batch）；注入生产运行时配置来源与云端同意委托（F5）。
+        TranslationToolPages.Register(() => TranslationConfigProvider, ConfirmCloudConsentAsync);
 
         // 标签条与标签宿主共用 TabHostViewModel；其余区域仍用 MainViewModel（窗口 DataContext）。
         TabStrip.DataContext = TabHost;
@@ -91,10 +92,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // v1.1 T15：整篇翻译面板接线（配置复用 T13 共享面板；受限确认走模态；产物开新标签）。
         _fullTranslation = new FullTranslationViewModel(
             new EngineFullTranslationService((DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge()),
-            _translationConfig);
+            TranslationConfigProvider);
         _fullTranslation.ConfirmRestrictedDocumentAsync = () => Task.FromResult(RestrictedDocumentDialog.Show(this));
         // 高风险模板（法律 / 医学）确认门禁：默认未勾选，必须显式确认才可开始（F2b）。
         _fullTranslation.ConfirmHighRiskTemplateAsync = label => Task.FromResult(HighRiskTemplateDialog.Show(this, label));
+        // 云端首次同意门禁（F5）：未同意时开始前先弹模态，宿主 GrantConsent；未同意绝不发云端请求。
+        _fullTranslation.ConfirmCloudConsentAsync = ConfirmCloudConsentAsync;
         // 产物页脚标记：跟随设置（默认开）；高风险模板由 VM + 引擎双重强制，忽略设置（§9.3）。
         _fullTranslation.FooterMarkerProvider = () => _settingsStore.Load().TranslationMarkerEnabled;
         _fullTranslation.OpenArtifactRequested += (_, artifact) => OpenDocumentTab(artifact.Path);
@@ -648,8 +651,15 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>「划词」Tab 面板模型：卡片堆叠（≤20）+ 无文本层态；绑定到 TranslationCardsList。</summary>
     private readonly SelectionTranslationPanelViewModel _selectionTranslation = new();
 
-    /// <summary>划词翻译运行时配置来源（T13/T17 接入设置与凭据前恒为未配置）。</summary>
-    private readonly ITranslationRuntimeConfigProvider _translationConfig = new NullTranslationRuntimeConfigProvider();
+    /// <summary>
+    /// 翻译运行时配置来源（生产实现：读设置 + 系统凭据管理器 + 同意记录；懒建并与 <see cref="TranslationConsent"/>
+    /// 共享同一同意服务实例，使「宿主授予同意」与「提供者校验同意」看到同一份会话态）。
+    /// </summary>
+    private ITranslationRuntimeConfigProvider? _translationConfigProvider;
+
+    private ITranslationRuntimeConfigProvider TranslationConfigProvider
+        => _translationConfigProvider ??= new SettingsTranslationRuntimeConfigProvider(
+            _settingsStore, _translationCredentials, TranslationConsent);
 
     /// <summary>云端翻译凭据存储（T16；长期密钥交系统凭据管理器，与文档会话密码分离）。</summary>
     private readonly TranslationCredentialStore _translationCredentials = new();
@@ -666,7 +676,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private ISelectionTranslationService SelectionTranslationService
         => _selectionTranslationService ??= new EngineSelectionTranslationService(
             (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge(),
-            _translationConfig);
+            TranslationConfigProvider);
 
     /// <summary>替换标注 sidecar 存储（T19 真实实现：源目录隐藏文件 + %TEMP% 回退；仅会话内有效）。</summary>
     private ISelectionSidecarStore _selectionSidecar = new SelectionSidecarStore();
@@ -933,8 +943,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         EnsureTranslationSidebarVisible();
         ShowTranslationTab("selection");
 
-        var config = _translationConfig.Get();
-        var engineLabel = config is null ? "未配置" : (IsCloudProvider(config.Provider) ? "云端" : "本地");
+        var resolution = TranslationConfigProvider.Resolve();
+        var engineLabel = resolution.Config is { } resolved
+            ? (IsCloudProvider(resolved.Provider) ? "云端" : "本地")
+            : "未配置";
         var card = _selectionTranslation.AddCard(e.Text, "auto", "zh", "generic", engineLabel, e.PageIndex, e.Rect);
         _ = RunSelectionTranslationAsync(card);
         SetStatus($"正在翻译选中文字（{e.Text.Length} 字）");
@@ -953,6 +965,15 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private async Task RunSelectionTranslationAsync(SelectionTranslationCardViewModel card)
     {
         card.BeginLoading();
+
+        // 云端首次使用：先弹 F5 征求同意；未同意 / 取消 → 卡片显示可读原因，不发任何请求。
+        var resolution = await EnsureTranslationRuntimeAsync();
+        if (!resolution.IsConfigured)
+        {
+            card.Fail(resolution.Message);
+            return;
+        }
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var request = new SelectionTranslationRequest(
             card.SourceText, card.SourceLang, card.TargetLang, card.TemplateCode);
@@ -964,6 +985,49 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         else
         {
             card.Fail(result.Error ?? "翻译失败，请稍后重试。");
+        }
+    }
+
+    /// <summary>解析运行时配置，并在云端未同意时弹 F5 征求同意（同意后重新解析）。</summary>
+    private Task<TranslationRuntimeConfigResolution> EnsureTranslationRuntimeAsync()
+        => TranslationRuntimeConsentFlow.EnsureAsync(TranslationConfigProvider, ConfirmCloudConsentAsync);
+
+    /// <summary>
+    /// F5 同意委托（划词 + 整篇共用）：弹模态 → 用户同意则从凭据管理器读密钥并按指纹授予同意
+    /// （记住与否随勾选）；「改用本地引擎」把整篇配置切回本地；取消 / 未同意 / 无密钥返回 false，
+    /// 调用方据此不发起任何云端请求（决策 #14/#15）。
+    /// </summary>
+    private Task<bool> ConfirmCloudConsentAsync(TranslationConsentRequest request)
+    {
+        var decision = CloudConsentDialog.Show(this, request);
+        if (decision.Choice == CloudConsentChoice.UseLocal)
+        {
+            _fullTranslation.Config.Engine = TranslationEngineKind.Local;
+            SetStatus("已改用本地引擎；若尚未配置本地运行时，请在「设置 → 翻译」中配置。");
+            return Task.FromResult(false);
+        }
+
+        if (decision.Choice != CloudConsentChoice.Accepted)
+        {
+            return Task.FromResult(false);
+        }
+
+        try
+        {
+            var key = _translationCredentials.Get(request.Provider, request.Endpoint);
+            if (string.IsNullOrEmpty(key))
+            {
+                SetStatus("未找到该服务商的密钥，请在「设置 → 翻译」中填写 API Key 后重试。");
+                return Task.FromResult(false);
+            }
+
+            TranslationConsent.GrantConsent(request.Provider, request.Endpoint, key, remember: decision.Remember);
+            return Task.FromResult(true);
+        }
+        catch (Exception ex) when (ex is CredentialStoreUnavailableException or ArgumentException)
+        {
+            SetStatus($"无法记录云端同意：{ex.Message}");
+            return Task.FromResult(false);
         }
     }
 

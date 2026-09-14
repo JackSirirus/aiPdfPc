@@ -178,6 +178,12 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     public Func<string, Task<bool>>? ConfirmHighRiskTemplateAsync { get; set; }
 
     /// <summary>
+    /// 云端首次同意委托（宿主接 F5 模态：勾选同意并确认后由宿主 <c>GrantConsent</c> 并返回 true）。
+    /// 未注入 / 未同意 → 运行时配置仍为「未同意」，<b>不发起任何云端请求</b>（决策 #14）。
+    /// </summary>
+    public Func<TranslationConsentRequest, Task<bool>>? ConfirmCloudConsentAsync { get; set; }
+
+    /// <summary>
     /// 产物 PDF 页脚「机器翻译 · 请核对」标记策略（映射设置 <c>TranslationMarkerEnabled</c>）。默认开。
     /// 高风险模板（法律 / 医学）时无论该值如何都强制写标记，与 backend
     /// <c>output.add_marker(high_risk=True)</c> 的强制口径一致（§9.3）。
@@ -401,10 +407,11 @@ public sealed partial class FullTranslationViewModel : ObservableObject
             return;
         }
 
-        var runtime = _configProvider.Get();
-        if (runtime is null)
+        // 云端未同意时先弹同意模态（宿主注入）；确认后重新解析拿到配置，未确认则不发任何请求。
+        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync);
+        if (resolution.Config is not { } runtime)
         {
-            StatusMessage = "翻译服务尚未配置，请在「设置 → 翻译」中配置服务商与语言后重试。";
+            StatusMessage = resolution.Message;
             return;
         }
 
