@@ -66,6 +66,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         Security.SecurityPages.Register(); // T18：安全保护组（解锁 / 加密 / 签名 / 遮盖 / 比较）
         Editor.EditorPages.Register(); // T17：编辑内容组（旋转 / 页码 / 水印 / 裁剪框选 / 编辑 / 表单）
         Workflow.WorkflowPages.Register(); // T19：工作流程组（步骤串联 / 预设 / 批量 / 记录）
+        TranslationToolPages.Register(); // v1.1 T21：批量翻译工具页（translate_batch）
 
         // 标签条与标签宿主共用 TabHostViewModel；其余区域仍用 MainViewModel（窗口 DataContext）。
         TabStrip.DataContext = TabHost;
@@ -276,6 +277,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // 门禁接线（review M1）：文档上下文 + IToolStartGated.StartGate（编辑组直调引擎）；队列型经 Queue.BeforeStart。
         ApplyDocumentContext(page, activeDocument);
 
+        // v1.1 T21：批量翻译结果由工具页结果列表【按需打开】，把打开请求接到宿主标签宿主。
+        if (page?.DataContext is TranslationBatchViewModel batch)
+        {
+            batch.OpenDocumentRequested += (_, path) => OpenDocumentTab(path);
+        }
+
         var adapter = page?.DataContext as IWizardToolAdapter;
         var queue = (DataContext as ViewModels.MainViewModel)?.Queue ?? ToolTaskQueue.Shared;
         var viewModel = new WizardViewModel(tool, adapter, queue)
@@ -310,6 +317,23 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             }
 
             ShowWizardFailureToast($"「{tool.Name}」未执行：{reason}");
+            return;
+        }
+
+        // v1.1 T21：批量翻译一份文件产出 mono + dual 两个 PDF，逐项开标签会造成 20×2 的标签爆炸；
+        // 设计 F6b 要求结果为列表、按需打开，故这里只给「打开输出目录」出口，绝不自动开标签。
+        if (string.Equals(tool.Id, "translate_batch", StringComparison.Ordinal))
+        {
+            var batchFolder = results.FirstOrDefault(r => r.Ok && !string.IsNullOrEmpty(r.OutputDir))?.OutputDir
+                ?? outputs.Select(Path.GetDirectoryName).FirstOrDefault(d => !string.IsNullOrEmpty(d));
+            ShowWizardFolderToast(batchFolder);
+            if (DataContext is ViewModels.MainViewModel batchDone)
+            {
+                batchDone.StatusText = anyFailed
+                    ? $"「{tool.Name}」部分任务失败：结果请在输出目录查看。"
+                    : $"「{tool.Name}」完成：结果请在输出目录查看。";
+            }
+
             return;
         }
 

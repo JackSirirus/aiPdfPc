@@ -8,6 +8,7 @@ using AIPDF.Windows.Bridge;
 using AIPDF.Windows.Models;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.Tools;
+using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.Views.Wizard;
 using Xunit;
 
@@ -20,9 +21,6 @@ public sealed class WizardToolAdapterTests
     [Fact]
     public void AllWizardTools_ExposeIWizardToolAdapter_AndChannelIsWizard()
     {
-        // translate_batch 尚未实现 ViewModel 适配器，通道回归仅校验路由与数量
-        var skipAdapterIds = new HashSet<string>(StringComparer.Ordinal) { "translate_batch" };
-
         var wizardIds = ToolCatalog.Load()
             .Where(tool => ToolChannels.ChannelFor(tool) == ToolChannel.Wizard)
             .Select(tool => tool.Id)
@@ -34,7 +32,6 @@ public sealed class WizardToolAdapterTests
         foreach (var id in wizardIds)
         {
             Assert.Equal(ToolChannel.Wizard, ToolChannels.ChannelFor(ToolOf(id)));
-            if (skipAdapterIds.Contains(id)) continue; // 待 ViewModel 实现后移除
             var adapter = CreateAdapter(id, new RecordingBridge());
             Assert.NotNull(adapter);
         }
@@ -397,6 +394,7 @@ public sealed class WizardToolAdapterTests
             "sign" => new SignViewModel(bridge, tool),
             "redact" => new RedactViewModel(bridge, tool),
             "compare" => new CompareViewModel(bridge, tool),
+            "translate_batch" => new TranslationBatchViewModel(bridge, tool),
             "workflow" => new WorkflowToolViewModel(bridge, ToolCatalog.Load(), catalogTool: tool),
             _ => throw new ArgumentOutOfRangeException(nameof(id), id, "非向导工具"),
         };
