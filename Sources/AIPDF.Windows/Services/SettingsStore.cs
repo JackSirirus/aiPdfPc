@@ -5,6 +5,8 @@
 //   - 沿袭 SessionStore 持久化范式：schema 版本 / UTF-8 无 BOM / 临时文件→原子替换 /
 //     缺文件·损坏·不可读→默认值（AC-39.2：不崩、不提示）/ 测试可注入文件路径；
 //   - 7 项设置（FR-38 三项 net-new + 裁决 Q6 四项）在 Load 与 Save 双向归一化 / 钳制；
+//   - v1.1 翻译：schema 升到 2，新增 translationConsents（只存 provider+endpoint+密钥指纹+时间+TTL，
+//     绝不存密钥 / 正文）；Load 接受旧 schema（1..Current），缺失列表即空 = 全部未同意（决策 #14/#15/#21）；
 //   - DefaultRenderDpi 仅覆盖渲染基准 DPI，不改「zoom ≥150% → HighDpi=150」阈值阶梯
 //     （PageLayoutCalculator.DpiForZoom 语义不变，注入方式见 T5）；
 //   - DefaultOutputDir 仅作工具 VM 的 OutputDir 初始种子，不改变引擎「输出任务目录 + 不覆盖源文件」语义。
@@ -18,13 +20,17 @@ using System.Text.Json.Serialization;
 namespace AIPDF.Windows.Services;
 
 /// <summary>
-/// 应用设置文档（schema 沿袭 SessionStore；无密码字段）。
-/// 字段与 PRD FR-38 / 裁决 Q6 的 7 项设置一一对应；属性缺省值即规范化后的默认值。
+/// 应用设置文档（schema 沿袭 SessionStore；无密码 / 密钥字段）。
+/// 字段与 PRD FR-38 / 裁决 Q6 的 7 项设置一一对应；另含 v1.1 云端翻译同意记录 <see cref="TranslationConsents"/>。
+/// 属性缺省值即规范化后的默认值。
 /// </summary>
 public sealed class AppSettings
 {
-    /// <summary>当前 schema 版本；不识别时整体回退默认（FR-39）。</summary>
-    public const int CurrentSchema = 1;
+    /// <summary>
+    /// 当前 schema 版本；不识别时整体回退默认（FR-39）。
+    /// v1 → v2（v1.1 翻译）：仅新增 <see cref="TranslationConsents"/>，缺失即空列表，故 Load 兼容旧 schema。
+    /// </summary>
+    public const int CurrentSchema = 2;
 
     // ------------------------------------------------------------------ 默认缩放（FR-38 项 1）
 
@@ -129,6 +135,16 @@ public sealed class AppSettings
     /// <summary>默认渲染基准 DPI，钳制到 [36,600]；仅覆盖基准，不改 150% 高 DPI 阈值阶梯。缺省 96。</summary>
     [JsonPropertyName("defaultRenderDpi")]
     public double DefaultRenderDpi { get; set; } = RenderDpiDefault;
+
+    // ------------------------------------------------------------------ v1.1 云端翻译同意（决策 #14/#21）
+
+    /// <summary>
+    /// 云端翻译同意记录（每项 = provider + endpoint origin + 密钥指纹 + 授予时间 + TTL）。
+    /// <b>绝不存密钥本体与文档正文</b>；密钥交 <see cref="TranslationCredentialStore"/>（系统凭据管理器）。
+    /// 缺省空列表 = 全部未同意（决策 #15：同意默认未勾选）。
+    /// </summary>
+    [JsonPropertyName("translationConsents")]
+    public List<TranslationConsent> TranslationConsents { get; set; } = [];
 }
 
 /// <summary>
@@ -177,7 +193,9 @@ public sealed class SettingsStore
                 }
 
                 var state = JsonSerializer.Deserialize<AppSettings>(bytes, JsonOptions);
-                if (state is null || state.Schema != AppSettings.CurrentSchema) return new AppSettings();
+                // schema 迁移：接受 [1, CurrentSchema]（v1→v2 仅追加 translationConsents，缺失即空列表）；
+                // 未识别（未来版本 / 0 / 负值）整体回退默认（FR-39）。
+                if (state is null || state.Schema < 1 || state.Schema > AppSettings.CurrentSchema) return new AppSettings();
 
                 return Normalize(state);
             }
@@ -249,7 +267,9 @@ public sealed class SettingsStore
 
     // ------------------------------------------------------------------ 归一化 / 钳制（Load 与 Save 共用）
 
-    /// <summary>设置归一化：schema 收敛 + 7 项字段各自回退/钳制（Load 与 Save 双向一致）。</summary>
+    /// <summary>
+    /// 设置归一化：schema 收敛 + 7 项字段各自回退/钳制 + 同意记录清洗（Load 与 Save 双向一致）。
+    /// </summary>
     internal static AppSettings Normalize(AppSettings settings)
     {
         settings.Schema = AppSettings.CurrentSchema;
@@ -260,7 +280,40 @@ public sealed class SettingsStore
         settings.PrintDpi = NormalizePrintDpi(settings.PrintDpi);
         settings.DefaultOutputDir = NormalizeOutputDir(settings.DefaultOutputDir);
         settings.DefaultRenderDpi = NormalizeRenderDpi(settings.DefaultRenderDpi);
+        settings.TranslationConsents = NormalizeConsents(settings.TranslationConsents);
         return settings;
+    }
+
+    /// <summary>
+    /// 同意记录归一化：丢弃 provider / endpoint / 指纹缺项的损坏记录；endpoint 归一为 origin；
+    /// TTL 钳制；同一目的地保留最近授予的一条（防手工编辑产生重复导致行为歧义）。
+    /// </summary>
+    internal static List<TranslationConsent> NormalizeConsents(List<TranslationConsent>? consents)
+    {
+        var result = new List<TranslationConsent>();
+        if (consents is null) return result;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var consent in consents.OrderByDescending(c => c?.GrantedAt ?? DateTimeOffset.MinValue))
+        {
+            if (consent is null) continue;
+
+            var provider = consent.Provider?.Trim() ?? "";
+            var endpoint = TranslationConsent.NormalizeEndpoint(consent.Endpoint);
+            var fingerprint = consent.KeyFingerprint?.Trim() ?? "";
+            if (provider.Length == 0 || endpoint.Length == 0 || fingerprint.Length == 0) continue;
+
+            var destination = provider + "\n" + endpoint;
+            if (!seen.Add(destination)) continue;
+
+            consent.Provider = provider;
+            consent.Endpoint = endpoint;
+            consent.KeyFingerprint = fingerprint;
+            consent.TtlDays = TranslationConsent.NormalizeTtlDays(consent.TtlDays);
+            result.Add(consent);
+        }
+
+        return result;
     }
 
     /// <summary>缩放归一化：适配两档保留，九档阶梯取规范十进制形式，其余（含未知）回退 100%。</summary>

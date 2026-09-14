@@ -234,6 +234,8 @@ public sealed class SettingsDialog : Window
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
+        // v1.1：本对话框不编辑云端同意；保存其余设置时必须保留已有同意记录，否则会被整体覆盖清空（T17 域）。
+        var existing = _store.Load();
         var settings = new AppSettings
         {
             DefaultZoom = SelectedValue(_zoomBox),
@@ -243,6 +245,7 @@ public sealed class SettingsDialog : Window
             PrintDpi = ParseInt(_printDpiBox.Text, AppSettings.PrintDpiDefault),
             DefaultOutputDir = _outputDirBox.Text,
             DefaultRenderDpi = ParseDouble(_renderDpiBox.Text, AppSettings.RenderDpiDefault),
+            TranslationConsents = existing.TranslationConsents,
         };
 
         try
