@@ -620,6 +620,15 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>划词翻译运行时配置来源（T13/T17 接入设置与凭据前恒为未配置）。</summary>
     private readonly ITranslationRuntimeConfigProvider _translationConfig = new NullTranslationRuntimeConfigProvider();
 
+    /// <summary>云端翻译凭据存储（T16；长期密钥交系统凭据管理器，与文档会话密码分离）。</summary>
+    private readonly TranslationCredentialStore _translationCredentials = new();
+
+    /// <summary>云端翻译同意服务（T16；懒建并共享会话同意状态；设置对话框消费）。</summary>
+    private TranslationConsentService? _translationConsentService;
+
+    private TranslationConsentService TranslationConsent
+        => _translationConsentService ??= new TranslationConsentService(_settingsStore, _translationCredentials);
+
     /// <summary>划词翻译执行器（懒建：经 EngineBridge 的 translate_text 轻量 op）。</summary>
     private ISelectionTranslationService? _selectionTranslationService;
 
@@ -1033,7 +1042,7 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// </summary>
     private void OnSettingsMenuItemClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new SettingsDialog(_settingsStore, _themeManager);
+        var dialog = new SettingsDialog(_settingsStore, _themeManager, TranslationConsent, _translationCredentials);
         if (IsLoaded)
         {
             dialog.Owner = this;
