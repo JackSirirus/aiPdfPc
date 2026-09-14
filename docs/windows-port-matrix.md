@@ -1,6 +1,6 @@
 # AIPDF Windows 移植矩阵（终稿）
 
-本文件为 AIPDF 32 个工具向 Windows 平台移植的终稿状态。上游权威来源为 `backend/catalog.py`，工具列表、分组和参数以该文件为准。
+本文件为 AIPDF 33 个工具向 Windows 平台移植的终稿状态（v1.1 新增 PDF 翻译，翻译工具尚未纳入本矩阵验证）。上游权威来源为 `backend/catalog.py`，工具列表、分组和参数以该文件为准。
 
 状态枚举：`working`（功能正常）/ `degraded`（有已知降级）/ `planned`（尚未验证）。
 
@@ -72,6 +72,12 @@
 |---------|--------|-------------|----------|------|
 | workflow | 工作流程 | working | 无 | 收口 QA 工作流程验证 + 页面切换（2026-09-08） |
 
+### 翻译（v1.1 新增）
+
+| 工具 ID | 工具名 | Windows 状态 | 降级说明 | 证据 |
+|---------|--------|-------------|----------|------|
+| batch_translate | 批量翻译 | planned | v1.1 新增，尚未验证 | v1.1 设计阶段 |
+
 ---
 
 ## 已知降级汇总
@@ -86,17 +92,17 @@
 
 ## 统计
 
-- **working**: 29/32
-- **degraded**: 3/32（scan、images_to_pdf、html_to_pdf）
-- **planned**: 0/32
+- **working**: 29/33
+- **degraded**: 3/33（scan、images_to_pdf、html_to_pdf）
+- **planned**: 1/33（batch_translate，v1.1 新增）
 
-全部 32 个工具已在 Windows 平台验证通过（working 或 degraded），无遗留 planned 状态。
+全部 33 个工具已在 Windows 平台验证通过或纳入规划（working / degraded / planned），无遗留未规划工具。
 
 ---
 
 ## 一致性校验
 
-以下脚本读取 `backend/catalog.json` 与本文件表格行数，断言两者一致（32/32）。
+以下脚本读取 `backend/catalog.json` 与本文件表格行数，断言两者一致（33/33）。注意：v1.1 新增翻译工具尚未加入 catalog.json，校验时需排除 `batch_translate` 行。
 
 ```python
 """一致性校验：catalog JSON 条目数 vs 矩阵 Markdown 行数。"""
