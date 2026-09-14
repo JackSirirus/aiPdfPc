@@ -112,6 +112,50 @@ class DetectTests(unittest.TestCase):
         cropped.set_cropbox(fitz.Rect(40, 40, 360, 360))
         self.assertTrue(detect.page_geometry_degraded(cropped))
 
+    def test_two_column_short_prose_not_table_without_grid_lines(self):
+        """F18/F34：无表格线的两栏短文本不得判为表格（块级启发式会误报）。"""
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=400, height=400)
+        # 两栏各 3 行短文本，左右基线错开，避免 PyMuPDF 把同行并入一个块。
+        for row, y in enumerate((60, 120, 180)):
+            page.insert_text((40, y), f"left{row}", fontsize=10)
+            page.insert_text((220, y + 10), f"right{row}", fontsize=10)
+        blocks = extract.extract_page(page)
+        # 块级启发式本身会命中（短单行块排成网格）……
+        self.assertIsNotNone(detect.table_grid(blocks))
+        # ……但没有矢量表格线佐证 → 页面级不判为表格。
+        self.assertIsNone(detect.table_structure(page, blocks))
+        self.assertFalse(detect.has_grid_lines(page))
+
+    def test_table_structure_still_detects_with_grid_lines(self):
+        """有表格线时块级路径仍然生效（回归）。"""
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=420, height=420)
+        for row, y in enumerate((60, 110, 160)):
+            for col, x in enumerate((40, 170)):
+                page.insert_text((x, y), f"c{row}{col}", fontsize=9)
+        for x in (30, 160, 290):
+            page.draw_line(fitz.Point(x, 40), fitz.Point(x, 190))
+        for y in (45, 95, 145, 190):
+            page.draw_line(fitz.Point(30, y), fitz.Point(290, y))
+        blocks = extract.extract_page(page)
+        self.assertIsNotNone(detect.table_structure(page, blocks))
+
+    def test_has_grid_lines_is_cached_per_page(self):
+        """F20：同一页重复询问命中缓存，避免多次扫描全部 drawings。"""
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=400, height=400)
+        self.assertFalse(detect.has_grid_lines(page))       # 首次扫描并缓存
+        for x in (30, 160, 290):
+            page.draw_line(fitz.Point(x, 40), fitz.Point(x, 190))
+        for y in (45, 95, 145, 190):
+            page.draw_line(fitz.Point(30, y), fitz.Point(290, y))
+        self.assertFalse(detect.has_grid_lines(page))       # 命中缓存：仍是旧值
+        self.assertTrue(detect._scan_grid_lines(page, 2, 2, 0.5))  # 实际扫描为 True
+
 
 # —— 抽取标注（extract） ------------------------------------------------------
 
@@ -321,6 +365,38 @@ class EngineSkipTests(unittest.TestCase):
                                                 "generic", None, "auto", "zh")
         self.assertEqual(translations[0].text, "旋转页译文")
         self.assertFalse(translations[0].degraded)
+
+
+class SegmentSplitReportTests(unittest.TestCase):
+    """F2：超长段落被切分时，engine 必须把 segment_split 记入降级报告。"""
+
+    class _LenClient:
+        """返回与请求正文等长但内容不同的译文，使校验通过并覆盖每个切分片。"""
+
+        def translate(self, pair, validator=None):
+            text = pair["user"].split(">", 1)[1].rsplit("</untrusted>", 1)[0]
+            content = json.dumps([{"index": 0, "text": "译" * max(1, len(text))}])
+            if validator is not None:
+                validator(content)
+            return content
+
+    def test_oversized_block_reports_segment_split(self):
+        # 无标点超长串 → 超过硬上限被强制字符切分（chunk 标 segment_split）。
+        text = "x" * 8000
+        blocks = [block((35, 45, 260, 80), text)]
+        report = verify.DegradationReport()
+        engine._translate_blocks(blocks, report, self._LenClient(),
+                                 "generic", None, "auto", "zh")
+        reasons = {reason for item in report.to_dict()["pages"] for reason in item["reasons"]}
+        self.assertIn("segment_split", reasons)
+
+    def test_normal_block_reports_no_segment_split(self):
+        blocks = [block((35, 45, 260, 80), "Short sentence.")]
+        report = verify.DegradationReport()
+        engine._translate_blocks(blocks, report, self._LenClient(),
+                                 "generic", None, "auto", "zh")
+        reasons = {reason for item in report.to_dict()["pages"] for reason in item["reasons"]}
+        self.assertNotIn("segment_split", reasons)
 
 
 class OverlapReassemblyTests(unittest.TestCase):

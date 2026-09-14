@@ -126,8 +126,14 @@ class ChunkBlocksTests(unittest.TestCase):
         for item in chunks:
             self.assertLessEqual(item.token_estimate, 20)
             self.assertIn("segment_split", item.reasons)
+            self.assertEqual(item.split_indices, [0])   # F2：切分块下标可上报
             for segment in item.core_segments:
                 self.assertEqual(len(segment), 20)
+
+    def test_normal_chunk_has_no_split_indices(self):
+        chunks = chunk.chunk_blocks([block("Hello world.")])
+        self.assertEqual(chunks[0].split_indices, [])
+        self.assertFalse(chunks[0].degraded)
 
     def test_overlap_carries_last_sentence_only(self):
         blocks = [block("Alpha one. Alpha two."), block("Beta one.")]

@@ -111,12 +111,15 @@ class _Placement:
 
     `degraded` 表示未能在 S0（原框原字号）一次容纳，`overflow` 表示走到了 S2/S3
     （溢出页边或裁切）。结构化检测据此判定公式/表格是否已无法忠实回填。
+    `rect` 为该段实际写入所用的矩形（规范坐标），供可搜索性抽检在**本段范围内**核验
+    （F12），避免整页子串检查把别处的相同文字误当成本段已写入。
     """
 
     text: str
     clipped: bool = False
     degraded: bool = False
     overflow: bool = False
+    rect: "fitz.Rect" = None
 
 
 # —— 规格 §5：字体候选、fsType 与缺字形 ---------------------------------------
@@ -334,7 +337,7 @@ def _try_write(page, rect, text, font, size, lineheight=None):
     if not fits:
         return None
     _write(writer, page)
-    return _Placement(text=text, clipped=False)
+    return _Placement(text=text, clipped=False, rect=rect)
 
 
 def _shrink_scales():
@@ -428,7 +431,8 @@ def _place_block(page, block, text, occupied, report, page_no, *,
     _fits, writer = _attempt(page, expanded, text, choice.font, min_size)
     _write(writer, page)
     report.add(page_no, CLIP)
-    return _Placement(text=text, clipped=True, degraded=True, overflow=True)
+    return _Placement(text=text, clipped=True, degraded=True, overflow=True,
+                      rect=expanded)
 
 
 # —— 页面处理 -----------------------------------------------------------------
@@ -482,21 +486,48 @@ def _is_raster(block):
     return font in ("ocr", "raster", "scan")
 
 
-def _occupied_rects(page, blocks):
-    """块框（前 len(blocks) 项与 blocks 对齐）+ 图像块框，作为溢出相交判定区。"""
-    rects = [block.rect.rect for block in blocks]
+def _occupied_rects(page, blocks, keep=None):
+    """参与重排的块框（下标→矩形）+ 图像块框，作为溢出相交判定区。
+
+    `keep` 为实际参与重排（有译文且非不支持脚本）的块下标集合；为 None 时包含全部块。
+    F11：跳过不支持脚本 / 无译文的块——它们不进入重排，其原框不应无谓地把相邻译文的
+    溢出/裁切边界压小。返回 `(pairs, images)`，`pairs` 保留下标以便放置时排除自身。
+    """
+    pairs = [(index, block.rect.rect) for index, block in enumerate(blocks)
+             if keep is None or index in keep]
+    images = []
     for raw in page.get_text("dict").get("blocks", []) or []:
         if raw.get("type", 0) == 1:
-            rects.append(fitz.Rect(raw["bbox"]))
-    return rects
+            images.append(fitz.Rect(raw["bbox"]))
+    return pairs, images
 
 
 def _normalize(text):
     return re.sub(r"\s+", "", text or "").lower()
 
 
+def _rect_searchable(page, probe, rect):
+    """在 `rect` 范围内确认 `probe` 可被提取（F12：整页子串检查会因页脚/重复词误报）。
+
+    先用 `page.search_for(probe, clip=rect)` 做范围限定检索；规范化后的探针（去空白）
+    对拉丁文本可能无法被按短语检索，再回退到 `rect` 内的文本提取做子串判定。两者都
+    限定在本段矩形内，因此别处出现的相同文字不会造成假阳性。
+    """
+    if rect is None:
+        return probe in _normalize(page.get_text())
+    try:
+        if page.search_for(probe, clip=rect):
+            return True
+    except Exception:
+        pass
+    try:
+        return probe in _normalize(page.get_text("text", clip=rect))
+    except Exception:
+        return probe in _normalize(page.get_text())
+
+
 def _verify_searchable(page, placements, report, page_no):
-    """ToUnicode 抽检：写入的译文应能被 get_text() 提取（规格 §8）。"""
+    """ToUnicode 抽检：写入的译文应能在**其自身矩形内**被 get_text() 提取（规格 §8）。"""
     if not placements:
         return
     extracted = _normalize(page.get_text())
@@ -509,7 +540,7 @@ def _verify_searchable(page, placements, report, page_no):
             continue
         if placement.clipped:
             probe = probe[:8]  # 裁切后只写入前缀，抽检开头字符即可确认 ToUnicode
-        if probe and probe not in extracted:
+        if probe and not _rect_searchable(page, probe, placement.rect):
             report.add(page_no, SEARCH_VERIFY_FAIL)
             return
 
@@ -586,13 +617,17 @@ def backfill_page(page, blocks, translations, report, *, font_provider=None,
                                   graphics=fitz.PDF_REDACT_LINE_ART_NONE,
                                   text=fitz.PDF_REDACT_TEXT_REMOVE)
 
-        occupied = _occupied_rects(page, blocks)
+        # F11：障碍区只含实际参与重排的块（有译文的可编辑/光栅块）+ 图像，跳过
+        # 不支持脚本 / 无译文的块，避免它们的原框无谓地把相邻译文挤压到裁切。
+        keep = {index for index, _block, _text in raster + editable}
+        occupied_pairs, occupied_images = _occupied_rects(page, blocks, keep)
         placements = []
         table_hits = []
         formula_hits = []
         for index, block, text in raster + editable:
-            others = [rect for other, rect in enumerate(occupied) if other != index]
-            placement = _place_block(page, block, text, others, report, page_no,
+            others = [rect for other, rect in occupied_pairs if other != index]
+            placement = _place_block(page, block, text, others + occupied_images,
+                                     report, page_no,
                                      font_provider=font_provider,
                                      system_files=system_files)
             if placement is None:

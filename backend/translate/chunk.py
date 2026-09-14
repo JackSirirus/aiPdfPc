@@ -46,6 +46,9 @@ class Chunk:
     一一对应（同一源块被切分时会重复出现）。`text` 为拼接后的请求正文。
     `overlap_indices` 记录仅作上下文、不参与回填的源块下标。`chunk_id` 供
     `bridge` 按块拼装响应（规格 §3.2.3）。
+
+    `split_indices` 列出本块核心段里因超长被切分的源块下标（去重升序），供编排层把
+    `segment_split` 降级原因按页记入报告（F2）。
     """
 
     chunks: list = field(default_factory=list)
@@ -56,6 +59,7 @@ class Chunk:
     overlap_indices: list = field(default_factory=list)
     degraded: bool = False
     reasons: list = field(default_factory=list)
+    split_indices: list = field(default_factory=list)
 
     @property
     def overlap_count(self):
@@ -308,10 +312,13 @@ def _build_chunk(chunk_id, overlap_atoms, overlap_indices, core_atoms):
     reasons = []
     if any(atom.over_limit for atom in core_atoms):
         reasons.append("segment_split")
+    # F2：被切分的源块下标（同一块可能切成多片），供编排层按页记 segment_split。
+    split_indices = sorted({atom.index for atom in core_atoms if atom.over_limit})
     return Chunk(chunks=segments, text=text, source_indices=source_indices,
                  token_estimate=estimate_tokens(text), chunk_id=chunk_id,
                  overlap_indices=list(overlap_indices),
-                 degraded=bool(reasons), reasons=reasons)
+                 degraded=bool(reasons), reasons=reasons,
+                 split_indices=split_indices)
 
 
 __all__ = [

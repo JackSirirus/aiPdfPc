@@ -122,6 +122,41 @@ class ReflowTests(unittest.TestCase):
         self.assertTrue(page.get_text().strip())  # 部分译文已真实写入
         self.assertNotIn("SOURCE", page.get_text())
 
+    def test_skipped_block_is_not_overflow_obstacle(self):
+        """F11：无译文的块不参与重排，不该把相邻译文的溢出逼成裁切。"""
+        page = self.make_page(width=300, height=400)
+        page.insert_text((40, 55), "SOURCE", fontsize=13)
+        page.insert_text((40, 80), "KEEP B", fontsize=13)
+        blocks = [block((35, 40, 150, 60), "SOURCE", size=13),
+                  block((35, 65, 150, 85), "KEEP B", size=13)]
+        report = reflow.DegradationReport()
+        long_text = "The translated version is considerably longer than the source text"
+        reflow.backfill_page(page, blocks, {0: long_text}, report)
+        self.assertIn("overflow_margin", self.reasons(report))   # 可下扩到页边
+        self.assertNotIn("clip", self.reasons(report))           # 不再被无译文块逼到裁切
+        self.assertIn("KEEP B", page.get_text())                 # 无译文块原样保留
+
+    # --- §8 可搜索性抽检范围（F12） ----------------------------------------
+
+    def test_search_check_scoped_to_placement_rect(self):
+        """F12/F39：别处出现的相同前缀不得掩盖本段缺失 → 报 search_verify_fail。"""
+        page = self.make_page(width=400, height=400)
+        page.insert_text((40, 300), "ABCDEFGH", fontsize=12)   # 别处相同前缀
+        placement = reflow._Placement(text="ABCDEFGHIJK", clipped=True,
+                                      rect=fitz.Rect(40, 40, 200, 70))
+        report = reflow.DegradationReport()
+        reflow._verify_searchable(page, [placement], report, 1)
+        self.assertIn("search_verify_fail", self.reasons(report))
+
+    def test_search_check_passes_when_written_in_rect(self):
+        page = self.make_page(width=400, height=400)
+        page.insert_text((40, 60), "ABCDEFGHIJK", fontsize=12)
+        placement = reflow._Placement(text="ABCDEFGHIJK", clipped=True,
+                                      rect=fitz.Rect(35, 45, 200, 75))
+        report = reflow.DegradationReport()
+        reflow._verify_searchable(page, [placement], report, 1)
+        self.assertNotIn("search_verify_fail", self.reasons(report))
+
     # --- §6 真实移除 / 图像 / z-order / 光栅 --------------------------------
 
     def test_redaction_preserves_images_and_text_lands_on_top(self):

@@ -904,6 +904,15 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
     """
     from translate import chunk, prompt, verify
     chunks = chunk.chunk_blocks(blocks)
+    # F2：超长段落被切分时，chunk 只标记 Chunk.degraded/reasons，编排层必须把
+    # `segment_split` 按受影响页记入降级报告，否则用户无从得知该页被切段。
+    for item in chunks:
+        if not item.degraded:
+            continue
+        for index in item.split_indices:
+            block = blocks[index]
+            report.add(block.page_no, verify.SEGMENT_SPLIT,
+                       {"index": getattr(block, "index", None)})
     progress(f"正在翻译，共 {len(chunks)} 个分块", 0.25)
     translations = []
     for item in chunks:
@@ -1082,7 +1091,7 @@ _TRANSLATE_TEXT_LIMIT = 20000  # 单次划词字符上限，远低于桥接单�
 def translate_text_request(request):
     """划词翻译 dispatch：返回 `{ok, translation, degraded?, elapsed}`（不产出文件）。"""
     from translate import glossary as glossary_module
-    from translate import llm, prompt, verify
+    from translate import detect, llm, prompt, verify
 
     options = request.get("options", {}) or {}
     text = str(options.get("text", "") or "")
@@ -1124,11 +1133,18 @@ def translate_text_request(request):
     started = time.monotonic()
     report = verify.DegradationReport(task_id=uuid.uuid4().hex[:12], total_pages=1)
     translated = ""
-    hits = prompt.scan_untrusted_instructions(text)
+    # F16：划词同样做 RTL/竖排检测（规格 §2.4）；命中即不发送、保留原文并记降级，
+    # 与整篇翻译 `_translate_blocks` 的处置一致（不静默按 LTR 回填）。
+    unsupported = detect.classify_unsupported(text)
+    if unsupported:
+        report.add(1, verify.UNSUPPORTED_SCRIPT, {"script": unsupported})
+        hits = []
+    else:
+        hits = prompt.scan_untrusted_instructions(text)
     if hits:
         # 命中已知注入模式：拒绝发送该段、保留原文，并记降级原因（决策 #18）。
         report.add(1, verify.SUSPICIOUS_INSTRUCTION, {"patterns": hits})
-    else:
+    elif not unsupported:
         try:
             client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
             pair = prompt.build_prompt([text], template_name=template_name,

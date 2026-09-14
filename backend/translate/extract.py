@@ -12,8 +12,9 @@
 坐标事实：PyMuPDF `page.get_text("dict")` 的 bbox 本就是「未旋转 + 相对 CropBox」
 的规范坐标（已在 PyMuPDF 1.28 实测：`bbox == bbox * rotation_matrix * derotation_matrix`），
 因此文本块直接封装为 RectNorm，不再乘 derotation_matrix；只有来自可见页面图像
-（OCR 结果）的坐标才经 `geometry.rect_normalize` 转换。本模块不修改任何输入文件，
-文档正文按不可信输入处理，仅返回内存结构。
+（OCR 结果）的坐标才经 `geometry.rect_normalize` 转换。该假设在 `_bbox_needs_normalization`
+里做运行时校验（F5）：回环不一致时改写 bbox 为显式归一化结果，绝不把错坐标静默当成
+规范坐标。本模块不修改任何输入文件，文档正文按不可信输入处理，仅返回内存结构。
 """
 from __future__ import annotations
 
@@ -50,6 +51,8 @@ _PUA_RE = re.compile(r"[\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]
 _CID_RE = re.compile(r"\(cid:\d+\)")
 # CJK / 假名 / 谚文没有词间空格，拼接时不插空格。
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]")
+# bbox 回环一致性容差（pt）：矩阵乘积的浮点噪声远小于此值，语义不符则远大于。
+_BBOX_EPS = 0.01
 
 
 @dataclass
@@ -154,6 +157,28 @@ def _style_flags(spans):
     return bold, italic
 
 
+def _bbox_needs_normalization(page, bbox):
+    """`get_text("dict")` 的 bbox 是否**不在**规范坐标系（F5 运行时守卫）。
+
+    本模块依赖「dict bbox 已是未旋转 + 相对 CropBox」这一事实；实现上用
+    `bbox * rotation_matrix * derotation_matrix` 是否回到原值来验证。两个矩阵互逆，
+    正常构建下回环恒等（仅浮点噪声）；一旦某个 PyMuPDF 版本/构建返回的是可见页坐标，
+    回环将明显偏离，调用方据此改用 `geometry.rect_normalize(page, bbox * rotation_matrix)`
+    显式归一化，而不是把错的坐标当规范坐标使用。
+
+    矩阵不可用或形状异常时返回 False（保持既有行为，不因守卫本身失败而中断抽取）。
+    """
+    try:
+        roundtrip = bbox * page.rotation_matrix * page.derotation_matrix
+    except Exception:
+        return False
+    try:
+        return any(abs(getattr(roundtrip, name) - getattr(bbox, name)) > _BBOX_EPS
+                   for name in ("x0", "y0", "x1", "y1"))
+    except Exception:
+        return False
+
+
 def _text_blocks_from_dict(page, dehyphenate):
     """由 `page.get_text("dict")` 构造内部块；bbox 已在规范坐标系内。"""
     rotation = geometry.page_rotation(page)
@@ -166,6 +191,9 @@ def _text_blocks_from_dict(page, dehyphenate):
         if not text.strip():
             continue
         bbox = fitz.Rect(raw["bbox"])
+        if _bbox_needs_normalization(page, bbox):
+            # F5：dict bbox 不是规范坐标（回环不一致）→ 当作可见页坐标显式归一化。
+            bbox = geometry.rect_normalize(page, bbox * page.rotation_matrix).rect
         spans = [span for line in lines for span in line.get("spans", []) or []]
         size = max((float(span.get("size", 0.0)) for span in spans), default=0.0)
         font = ""

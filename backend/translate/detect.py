@@ -215,8 +215,8 @@ def table_grid(blocks, *, min_rows=TABLE_MIN_ROWS, min_cols=TABLE_MIN_COLS,
     }
 
 
-def has_grid_lines(page, *, min_vertical=2, min_horizontal=2, tolerance=0.5):
-    """页面是否含矢量线段网格（表格线的辅助信号，§4.4）。"""
+def _scan_grid_lines(page, min_vertical, min_horizontal, tolerance):
+    """实际扫描页面矢量线段网格（无缓存）；见 `has_grid_lines`。"""
     vertical, horizontal = set(), set()
     for drawing in page.get_drawings():
         for item in drawing.get("items", []) or []:
@@ -230,6 +230,29 @@ def has_grid_lines(page, *, min_vertical=2, min_horizontal=2, tolerance=0.5):
     return len(vertical) >= min_vertical and len(horizontal) >= min_horizontal
 
 
+def has_grid_lines(page, *, min_vertical=2, min_horizontal=2, tolerance=0.5):
+    """页面是否含矢量线段网格（表格线的辅助信号，§4.4）。
+
+    F20：`get_drawings()` 代价高且同一页会被多次询问，这里把结果按页缓存（存于页面对象
+    的私有属性）。同一页在重排流程里只扫描一次；页面被复制到新文档时是新对象，因此缓存
+    不会跨构建串味。
+    """
+    key = (min_vertical, min_horizontal, round(float(tolerance), 3))
+    cache = getattr(page, "_aipdf_grid_lines_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        try:
+            page._aipdf_grid_lines_cache = cache
+        except Exception:
+            cache = None
+    if cache is not None and key in cache:
+        return cache[key]
+    result = _scan_grid_lines(page, min_vertical, min_horizontal, tolerance)
+    if cache is not None:
+        cache[key] = result
+    return result
+
+
 def _is_short_single_line(block):
     text = (getattr(block, "text", "") or "").strip()
     return bool(text) and "\n" not in text and len(text) <= TABLE_MAX_CELL_CHARS
@@ -241,7 +264,12 @@ def table_structure(page, blocks):
     PyMuPDF 常把同一行的多个单元格并进一个文本块，块级 `table_grid` 未必命中；
     此时若页面存在矢量线段网格、且有 ≥`TABLE_MIN_ROWS` 个短单行块，仍判为表格。
     返回结构字典（含 `source` 字段：`"blocks"` / `"lines"`）；无表格返回 None。
+
+    F18：块级 `table_grid` 单独使用会在「两栏短文本」这类版面误报表格；这里要求两条
+    路径都必须有矢量网格线佐证，两栏散文（无表格线）不再被判为表格。
     """
+    if not has_grid_lines(page):
+        return None
     grid = table_grid(blocks)
     if grid is not None:
         grid["source"] = "blocks"
@@ -249,8 +277,6 @@ def table_structure(page, blocks):
     short = {index for index, block in enumerate(blocks or [])
              if _is_short_single_line(block)}
     if len(short) < TABLE_MIN_ROWS:
-        return None
-    if not has_grid_lines(page):
         return None
     return {"rows": len(short), "cols": 0, "cells": short, "fill": 1.0,
             "irregular": False, "source": "lines"}
@@ -263,6 +289,11 @@ def page_geometry_degraded(page):
 
     `page.rotation` 需在临时归零旋转**之前**读取；`cropbox` / `mediabox` 不受
     旋转影响，随时可读。
+
+    F19：比较用 `GEOMETRY_EPS`（0.5pt）容差——小于该值的 CropBox 偏移视为噪声，
+    不触发 `rotation_crop`。这与 `geometry.to_page_rect` 一致：后者只使用 CropBox 的
+    宽高（`_visible_matrix` 以规范化坐标为准，原点是 CropBox 相对量，不参与变换），
+    因此亚阈值偏移不会造成回填错位。
     """
     rotation = int(getattr(page, "rotation", 0) or 0) % 360
     if rotation != 0:

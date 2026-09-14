@@ -7,7 +7,6 @@
 import io
 import json
 import sys
-import threading
 import unittest
 import unittest.mock
 import urllib.error
@@ -15,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
-from translate import llm, prompt
+from translate import chunk, llm, prompt
 
 ENDPOINT = "https://api.example.test/v1"
 API_KEY = "sk-super-secret-test-key-123456"
@@ -68,7 +67,7 @@ class RequestShapeTests(unittest.TestCase):
         request, timeout = opened.call_args.args
         self.assertEqual(request.full_url, URL)
         self.assertEqual(request.method, "POST")
-        self.assertEqual(timeout, 60)
+        self.assertEqual(timeout, llm.DEFAULT_TIMEOUT)
         sent = json.loads(request.data.decode("utf-8"))
         self.assertEqual(sent["model"], MODEL)
         self.assertEqual(sent["messages"], [{"role": "system", "content": "S"},
@@ -330,42 +329,36 @@ class OverLimitAndProtocolTests(unittest.TestCase):
             self.assertEqual(make_client().translate({"system": "S", "user": "U"}), "上下")
 
 
-class CancellationTests(unittest.TestCase):
-    def test_cancel_before_request_aborts_without_calling_transport(self):
-        event = threading.Event()
-        event.set()
-        client = make_client(cancel_event=event)
-        with unittest.mock.patch.object(llm, "_open") as opened:
-            with self.assertRaises(llm.AbortedError):
-                client.translate({"system": "S", "user": "U"})
-        opened.assert_not_called()
-
-    def test_cancel_during_backoff_aborts_promptly(self):
-        event = threading.Event()
-        calls = []
-
-        def fake_open(request, timeout):
-            calls.append(request)
-            event.set()
-            raise urllib.error.URLError("down")
-
-        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
-            with self.assertRaises(llm.AbortedError):
-                make_client().translate({"system": "S", "user": "U"}, cancel_event=event)
-        self.assertEqual(len(calls), 1)
+class TokenUsageTests(unittest.TestCase):
+    def test_missing_usage_estimates_prompt_and_completion_separately(self):
+        """F10：无 usage 时分别估算 prompt 与 completion 再相加，不拼接摊薄。"""
+        completion = "一段较长的译文内容"
+        client = make_client()
+        with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(ok(completion))):
+            client.translate({"system": "S", "user": "U"})
+        sent = [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
+        expected = llm.prompt_tokens(sent) + chunk.estimate_tokens(completion)
+        self.assertEqual(client.cost.used_tokens, expected)
+        self.assertGreater(client.cost.used_tokens, llm.prompt_tokens(sent))
 
 
 class CostCapTests(unittest.TestCase):
-    def test_cap_stops_after_exceeding(self):
-        payload = ok("译文", usage={"prompt_tokens": 3, "completion_tokens": 3, "total_tokens": 6})
-        client = make_client(cost_cap=llm.CostCap(max_tokens=10))
+    def test_preflight_refuses_request_that_would_exceed(self):
+        """F7：预检在发送前拦住会超上限的请求，绝不先发一次再多花一个请求。"""
+        payload = ok("译文", usage={"total_tokens": 6})
+        messages = {"system": "S", "user": "x" * 100}
+        estimate = llm.prompt_tokens([{"role": "system", "content": "S"},
+                                      {"role": "user", "content": "x" * 100}])
+        # 首请求放行（estimate ≤ cap），其用量 6 使第二次预检超限。
+        cap = llm.CostCap(max_tokens=6 + estimate - 1)
+        client = make_client(cost_cap=cap)
         with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(payload)) as opened:
-            self.assertEqual(client.translate({"system": "S", "user": "U"}), "译文")
+            self.assertEqual(client.translate(messages), "译文")
             with self.assertRaises(llm.OverBudgetError):
-                client.translate({"system": "S", "user": "U"})
-        self.assertEqual(opened.call_count, 2)
-        self.assertEqual(client.cost.used_tokens, 12)
-        self.assertTrue(client.cost.exhausted)
+                client.translate(messages)
+        self.assertEqual(opened.call_count, 1)          # 第二次未发出
+        self.assertEqual(client.cost.used_tokens, 6)    # 无超支（旧行为会到 12）
+        self.assertLessEqual(client.cost.used_tokens, cap.max_tokens)
 
     def test_exhausted_cap_blocks_before_next_request(self):
         payload = ok("译文", usage={"total_tokens": 5})
@@ -376,6 +369,15 @@ class CostCapTests(unittest.TestCase):
                 client.translate({"system": "S", "user": "U"})
         self.assertEqual(opened.call_count, 1)
         self.assertEqual(client.cost.remaining, 0)
+
+    def test_prompt_estimate_alone_can_refuse_first_request(self):
+        """prompt 预估值本身超过上限时，首个请求即被拒绝、不触网。"""
+        client = make_client(cost_cap=llm.CostCap(max_tokens=5))
+        with unittest.mock.patch.object(llm, "_open") as opened:
+            with self.assertRaises(llm.OverBudgetError):
+                client.translate({"system": "S", "user": "x" * 200})
+        opened.assert_not_called()
+        self.assertEqual(client.cost.used_tokens, 0)
 
     def test_integer_cap_is_wrapped(self):
         client = make_client(cost_cap=100)

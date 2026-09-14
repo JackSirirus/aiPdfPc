@@ -9,13 +9,17 @@
   一个异常类型，让编排层（T10）与界面能给出正确处置（见《需求总结》§错误分类与重试策略）。
 - **统一重试**：网络退避 1s、4s（最多 2 次重试，共 3 次尝试）；429 用更长退避；空响应与
   校验失败各只重试 1 次；拒译、超上下文、中止、成本超限一律不重试。
-- **成本硬上限**：累计估算 prompt + completion token，超过 `CostCap.max_tokens` 立即抛
-  `OverBudgetError`，绝不静默继续。
+- **成本硬上限**：每次请求前用保守估算**预检** prompt token，`已用量 + 估算 > 上限` 即抛
+  `OverBudgetError`，因此不会先发一次再超支一个请求（F7）。用量优先取服务商 `usage`，
+  缺失时分别估算 prompt 与 completion 再相加（F10），绝不静默继续。
 - **密钥卫生**：`api_key` 只从构造参数进入；本模块不读环境变量 / argv / 文件，不写日志，
   不落盘，不把密钥放进异常信息；诊断用 `redact_headers` / `redact_secret` 脱敏。
+- **取消**：本层不做 Python 级取消。应用以**进程终止**（SIGTERM/SIGINT，宿主
+  `engine.stop()`）取消整次任务，并给每个 HTTP 请求设 `DEFAULT_TIMEOUT` 秒的 socket
+  超时兜底，避免服务端不响应时无限挂起。`AbortedError` 仅为宿主显式中止保留，本层
+  自身不再设置取消事件（F6）。
 
-仅依赖标准库（`urllib.request`），不引入 httpx/requests。取消通过 `threading.Event` 在每次
-请求前与退避等待中检查，触发即抛 `AbortedError`（不重试）。
+仅依赖标准库（`urllib.request`），不引入 httpx/requests。
 """
 from __future__ import annotations
 
@@ -62,7 +66,12 @@ class OverLimitError(LLMError):
 
 
 class AbortedError(LLMError):
-    """用户取消 / 撤销同意。不可重试。"""
+    """用户取消 / 撤销同意。不可重试。
+
+    本层自身不再设置 Python 级取消事件（F6）：应用以进程终止取消整次任务，宿主
+    `engine.stop()` 会直接抛出可辨识的 `CancelledError` 中断链路。保留该类型供宿主
+    显式中止与既有异常分类使用。
+    """
 
 
 class ValidationError(LLMError, ValueError):
@@ -90,11 +99,14 @@ _RETRY_POLICY = {
     ValidationError: (len(VALIDATION_BACKOFFS), VALIDATION_BACKOFFS),
 }
 
+# 单次 HTTP 请求的 socket 超时（秒，连接 + 读取）。F6：进程终止取消之外的必要兜底，
+# 避免服务端不响应时无界挂起；一次 translate 最多尝试 3 次，最坏约 3×此值。
+DEFAULT_TIMEOUT = 30.0
+
 _NETWORK_MESSAGE = "无法连接翻译服务，请检查网络或服务端点后重试。"
 _RATE_LIMIT_MESSAGE = "翻译服务限流（HTTP 429），请稍后重试或更换服务商。"
 _REFUSAL_MESSAGE = "模型拒绝翻译这段内容。请更换 prompt 模板或模型后重试。"
 _EMPTY_MESSAGE = "翻译服务返回了空内容。"
-_ABORTED_MESSAGE = "翻译已取消。"
 _BUDGET_MESSAGE = "已达成本硬上限（{limit} tokens），停止后续翻译请求。"
 _OVER_LIMIT_MESSAGE = "请求超出模型上下文上限，请减小分段或更换模型。"
 _AUTH_MESSAGE = "翻译服务拒绝了凭据（HTTP {status}）。请在设置中检查 API Key。"
@@ -152,8 +164,9 @@ def redact_secret(text, secret):
 class CostCap:
     """单任务 token 硬上限。`max_tokens=None` 表示不限额。
 
-    `ensure_available()` 在每次请求前调用，已耗尽即拒绝继续；`record()` 在请求后累加实际
-    用量，一旦超过上限立即抛 `OverBudgetError`。调用方据此停止后续请求并转「成本超限」。
+    `ensure_available(estimated)` 在每次请求前调用：`已用量 + 估算 > 上限` 即拒绝，
+    因此不会先发一次再超支一个请求（F7，预检）。`record()` 在请求后累加实际用量，
+    一旦超过上限立即抛 `OverBudgetError`。调用方据此停止后续请求并转「成本超限」。
     """
 
     def __init__(self, max_tokens=None):
@@ -170,8 +183,12 @@ class CostCap:
             return None
         return max(0, self.max_tokens - self.used_tokens)
 
-    def ensure_available(self):
+    def ensure_available(self, estimated=0):
+        """请求前预检：已用量已达上限，或再加上本次估算会超上限，即拒绝。"""
         if self.exhausted:
+            raise OverBudgetError(_BUDGET_MESSAGE.format(limit=self.max_tokens))
+        if (self.max_tokens is not None
+                and self.used_tokens + max(0, int(estimated or 0)) > self.max_tokens):
             raise OverBudgetError(_BUDGET_MESSAGE.format(limit=self.max_tokens))
 
     def record(self, tokens):
@@ -195,8 +212,8 @@ class LLMClient:
     `cost_cap` 可传 `CostCap` 实例或直接传一个整数 token 上限。
     """
 
-    def __init__(self, endpoint, api_key, model, timeout=60, cost_cap=None,
-                 cancel_event=None, sleep=time.sleep):
+    def __init__(self, endpoint, api_key, model, timeout=DEFAULT_TIMEOUT, cost_cap=None,
+                 sleep=time.sleep):
         if not str(endpoint or "").strip():
             raise LLMError("未配置翻译服务端点。")
         if not str(model or "").strip():
@@ -206,7 +223,6 @@ class LLMClient:
         self.model = str(model).strip()
         self.timeout = timeout
         self.cost = cost_cap if isinstance(cost_cap, CostCap) else CostCap(cost_cap)
-        self.cancel_event = cancel_event
         self._sleep = sleep
 
     def __repr__(self):
@@ -214,22 +230,20 @@ class LLMClient:
         return (f"LLMClient(endpoint={self.endpoint!r}, model={self.model!r}, "
                 f"api_key={_REDACTED})")
 
-    def translate(self, prompt_messages, cancel_event=None, validator=None):
+    def translate(self, prompt_messages, validator=None):
         """翻译一组消息，返回 `choices[0].message.content`。
 
         `prompt_messages` 接受 `prompt.build_prompt()` 产出的 `{"system", "user"}` 对，或
         OpenAI 风格的 `[{"role", "content"}, ...]` 列表。`validator` 可选：收到结果后调用，
-        发现 schema 不符应抛 `ValidationError`（本层会重试 1 次）。取消经 `cancel_event`
-        （缺省用构造时的）在每次请求前与退避等待中检查。
+        发现 schema 不符应抛 `ValidationError`（本层会重试 1 次）。每个请求发送前先做
+        成本预检（F7）。取消由宿主进程终止完成，见模块 docstring（F6）。
         """
         messages = _normalize_messages(prompt_messages)
-        cancel = cancel_event if cancel_event is not None else self.cancel_event
         retries = {}
         while True:
-            _raise_if_cancelled(cancel)
-            self.cost.ensure_available()
+            self.cost.ensure_available(prompt_tokens(messages))
             try:
-                payload = self._post(messages, cancel)
+                payload = self._post(messages)
                 self.cost.record(_token_usage(payload, messages))
                 content = _extract_content(payload)
                 if validator is not None:
@@ -239,11 +253,10 @@ class LLMClient:
                 delay = _next_delay(error, retries)
                 if delay is None:
                     raise
-                self._wait(delay, cancel)
+                self._sleep(delay)
 
-    def _post(self, messages, cancel_event):
+    def _post(self, messages):
         """POST 一次请求并返回解析后的 JSON；失败按类别抛出对应异常。"""
-        _raise_if_cancelled(cancel_event)
         body = json.dumps({"model": self.model, "messages": messages},
                           ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
@@ -269,14 +282,6 @@ class LLMClient:
         except ValueError as error:
             raise LLMError(self._redact(_MALFORMED_MESSAGE)) from error
 
-    def _wait(self, delay, cancel_event):
-        """退避等待；带取消事件时用可中断的 `Event.wait`，触发即中止。"""
-        if cancel_event is not None:
-            if cancel_event.wait(delay):
-                raise AbortedError(_ABORTED_MESSAGE)
-            return
-        self._sleep(delay)
-
     def _redact(self, message):
         return redact_secret(message, self.api_key)
 
@@ -286,11 +291,6 @@ class LLMClient:
 
 
 # —— 内部工具 ---------------------------------------------------------------
-
-def _raise_if_cancelled(cancel_event):
-    if cancel_event is not None and cancel_event.is_set():
-        raise AbortedError(_ABORTED_MESSAGE)
-
 
 def _next_delay(error, retries):
     """返回本次应退避的秒数；该类重试次数用尽则返回 None（调用方抛出）。"""
@@ -379,21 +379,35 @@ def _looks_like_refusal(text):
     return any(pattern.match(text) for pattern in _REFUSAL_PATTERNS)
 
 
+def prompt_tokens(messages):
+    """保守估算一次请求的 prompt token 数（成本预检用，F7）。
+
+    与 `chunk.estimate_tokens` 同一口径：CJK 记 1 token/字，拉丁约 4 字符/token，
+    混合取更保守值。仅统计发送的 prompt，不含补全。
+    """
+    text = "\n".join(str(item.get("content", "")) for item in messages)
+    return estimate_tokens(text)
+
+
 def _token_usage(payload, messages):
-    """优先用服务商返回的 `usage.total_tokens`，缺失时用保守估算（prompt + completion）。"""
+    """请求后用量：优先取服务商 `usage.total_tokens`，缺失时分开估算 prompt 与补全（F10）。
+
+    分开估算（而不是把 prompt 与补全拼成一个字符串再估）避免混合脚本下 `len // 2`
+    下界把两部分互相摊薄；得到的是保守上界，方向是**不低估**用量。
+    """
     usage = payload.get("usage") if isinstance(payload, dict) else None
     if isinstance(usage, dict):
         total = usage.get("total_tokens")
         if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             return total
-    text = "\n".join(str(item.get("content", "")) for item in messages)
+    completion = ""
     if isinstance(payload, dict):
         choices = payload.get("choices")
         if isinstance(choices, list) and choices and isinstance(choices[0], dict):
             message = choices[0].get("message")
             if isinstance(message, dict) and isinstance(message.get("content"), str):
-                text += message["content"]
-    return estimate_tokens(text)
+                completion = message["content"]
+    return prompt_tokens(messages) + estimate_tokens(completion)
 
 
 def _http_error_detail(error):
@@ -427,10 +441,10 @@ def _classify_http_error(error):
 
 
 __all__ = [
-    "LLMClient", "CostCap",
+    "LLMClient", "CostCap", "DEFAULT_TIMEOUT",
     "LLMError", "NetworkError", "RateLimitError", "AuthError", "RefusalError",
     "EmptyResponseError", "OverLimitError", "AbortedError", "ValidationError",
     "OverBudgetError",
     "NETWORK_BACKOFFS", "RATE_LIMIT_BACKOFFS", "EMPTY_BACKOFFS", "VALIDATION_BACKOFFS",
-    "redact_headers", "redact_secret",
+    "redact_headers", "redact_secret", "prompt_tokens",
 ]

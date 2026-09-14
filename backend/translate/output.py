@@ -93,12 +93,21 @@ def add_marker(page, *, text=MARKER_TEXT, size=MARKER_SIZE, color=MARKER_COLOR,
 
     使用未旋转 + CropBox 相对坐标定位页脚，旋转页也能落在正确位置；不写入正文区、
     不改动正文内容。CJK 字体不可用时退回内置拉丁字体（宁缺清晰，不抛异常）。
+
+    F13：写入前先检查页脚带内是否已有正文（短页/大字号的正文可能落到页脚）。若有，
+    则**跳过标记**而不是覆盖正文——宁可少一个标记，也不能毁掉原文。返回 False 表示
+    未写入（调用方可据此记录）。
     """
     crop = page.cropbox
     rect = fitz.Rect(MARKER_MARGIN, crop.height - MARKER_BAND,
                      crop.width - MARKER_MARGIN, crop.height - 2.0)
     if rect.width <= 0 or rect.height <= 0:
         return False
+    try:
+        if page.get_text("text", clip=rect).strip():
+            return False  # 页脚带已被正文占用，不覆盖（F13）
+    except Exception:
+        pass
     for name in (font, "helv"):
         try:
             page.insert_textbox(rect, text, fontsize=size, fontname=name,
@@ -350,8 +359,11 @@ def _build_translated(source_doc, pages, page_map, report, *, marker, high_risk,
             page_no = index + 1
             source = source_doc[index]
             if page_no in blank_pages:
-                blank = output.new_page(width=source.cropbox.width,
-                                        height=source.cropbox.height)
+                # F14：空白页用源页 MediaBox 建页再套源 CropBox，保留 CropBox 偏移
+                # （仅用 CropBox 宽高建页会丢掉非零原点，导致页面对不齐）。
+                blank = output.new_page(width=source.mediabox.width,
+                                        height=source.mediabox.height)
+                blank.set_cropbox(source.cropbox)
                 blank.set_rotation(source.rotation)
                 if marker_on:
                     add_marker(blank)

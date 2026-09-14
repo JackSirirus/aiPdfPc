@@ -168,6 +168,27 @@ class DualOutputTests(OutputTestCase):
         self.assertIn(2, pages)
         self.assertNotIn(4, pages)
 
+    def test_dual_blank_page_keeps_cropbox_offset(self):
+        """F14/F38：补空白页保留源页 CropBox 原点偏移，与源页几何一致。"""
+        path = self.tmp / "crop.pdf"
+        doc = fitz.open()
+        for text in ("Page one", "Page two"):
+            page = doc.new_page(width=595, height=842)
+            page.set_cropbox(fitz.Rect(50, 100, 545, 600))
+            page.insert_text((120, 260), text, fontsize=12)
+        doc.save(str(path))
+        doc.close()
+
+        report = DegradationReport(task_id="t")
+        report.add(1, SKIP_PAGE)   # 第 1 页补空白占位
+        with fitz.open(str(path)) as src:
+            dual = output.build_dual(src, {2: {0: "第二页译文"}}, report, marker=False)
+        self.addCleanup(dual.close)
+        self.assertEqual(len(dual), 4)
+        self.assertEqual(dual[1].cropbox, dual[0].cropbox)
+        self.assertAlmostEqual(dual[1].cropbox.x0, 50, places=1)
+        self.assertAlmostEqual(dual[1].cropbox.y0, 100, places=1)
+
 
 class MarkerTests(OutputTestCase):
     def test_marker_default_on_for_mono_and_dual(self):
@@ -212,6 +233,16 @@ class MarkerTests(OutputTestCase):
         crop = mono[0].cropbox
         self.assertLess(hits[0].y0, crop.y1)
         self.assertGreater(hits[0].y0, crop.y1 * 0.9)   # 页脚带
+
+    def test_marker_does_not_overwrite_footer_body_text(self):
+        """F13：正文落到页脚带时跳过标记，绝不覆盖正文。"""
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=400, height=500)
+        page.insert_text((40, 495), "FOOTER CONTENT", fontsize=9)
+        self.assertFalse(output.add_marker(page))
+        self.assertIn("FOOTER CONTENT", page.get_text())
+        self.assertFalse(page.search_for(output.MARKER_TEXT))
 
 
 class TranslationFormsTests(OutputTestCase):

@@ -8,6 +8,7 @@
 """
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -227,6 +228,50 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(result.report["summary"]["total_pages"], 2)
         self.assertEqual(result.report["summary"]["degraded_pages"], 0)
         self.assertTrue(all(not item["degraded"] for item in result.report["pages"]))
+
+
+class BBoxGuardTests(unittest.TestCase):
+    """F5：dict bbox 规范坐标假设的运行时守卫与回退。"""
+
+    def make_doc(self):
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        return doc
+
+    def test_guard_holds_on_real_rotated_page(self):
+        """真实旋转页上回环恒等（仅浮点噪声）→ 不触发回退。"""
+        doc = self.make_doc()
+        page = doc.new_page(width=300, height=400)
+        page.insert_text((50, 100), "Hello world", fontsize=12)
+        page.set_rotation(90)
+        raw = fitz.Rect(page.get_text("dict")["blocks"][0]["bbox"])
+        self.assertFalse(extract._bbox_needs_normalization(page, raw))
+
+    def test_guard_detects_inconsistent_matrices(self):
+        """矩阵回环明显偏离（模拟另类构建返回可见坐标）→ 触发回退。"""
+        class Fake:
+            rotation_matrix = fitz.Matrix(2, 0, 0, 2, 0, 0)   # 非恒等缩放
+            derotation_matrix = fitz.Matrix(1, 0, 0, 1, 0, 0)
+
+        self.assertTrue(extract._bbox_needs_normalization(Fake(), fitz.Rect(0, 0, 10, 10)))
+        ok = type("Ok", (), {"rotation_matrix": fitz.Matrix(1, 0, 0, 1, 0, 0),
+                             "derotation_matrix": fitz.Matrix(1, 0, 0, 1, 0, 0)})()
+        self.assertFalse(extract._bbox_needs_normalization(ok, fitz.Rect(0, 0, 10, 10)))
+
+    def test_fallback_invokes_rect_normalize(self):
+        """守卫判为不一致时，`_text_blocks_from_dict` 改用 rect_normalize 归一化。"""
+        doc = self.make_doc()
+        page = doc.new_page(width=300, height=400)
+        page.insert_text((50, 100), "Hello world", fontsize=12)
+        page.set_rotation(90)
+        with unittest.mock.patch.object(extract, "_bbox_needs_normalization",
+                                        return_value=True), \
+                unittest.mock.patch.object(extract.geometry, "rect_normalize",
+                                           wraps=extract.geometry.rect_normalize) as normalize:
+            blocks = extract._text_blocks_from_dict(page, True)
+        self.assertTrue(blocks)
+        normalize.assert_called_once()
+        self.assertIs(normalize.call_args.args[0], page)
 
 
 if __name__ == "__main__":
