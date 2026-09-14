@@ -114,8 +114,18 @@ public sealed class TranslationCredentialStoreTests
     {
         var target = TranslationCredentialStore.TargetName(Provider, Endpoint);
 
-        Assert.Matches(new Regex("^AIPDF-Translate-deepseek-[0-9a-f]{8}$"), target);
+        Assert.Matches(new Regex("^AIPDF-Translate-deepseek-[0-9a-f]{16}$"), target);
         Assert.Equal(target, TranslationCredentialStore.TargetName(Provider, Endpoint)); // 稳定
+    }
+
+    [Fact]
+    public void TargetName_HashLength_MatchesConsentFingerprintLength()
+    {
+        var target = TranslationCredentialStore.TargetName(Provider, Endpoint);
+        var hashPart = target[(TranslationCredentialStore.TargetPrefix + Provider + "-").Length..];
+
+        Assert.Equal(TranslationConsent.FingerprintLength, hashPart.Length); // 凭据目标与同意指纹统一 16 位
+        Assert.Matches("^[0-9a-f]{16}$", hashPart);
     }
 
     [Fact]

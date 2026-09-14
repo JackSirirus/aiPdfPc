@@ -590,4 +590,64 @@ public sealed class FullTranslationViewModelTests
         Assert.Equal(0, service.Calls);
         Assert.Contains("输出文件夹", vm.StatusMessage);
     }
+
+    // ---------------------------------------------------------------- F26：运行结束后资源清理（无泄漏）
+
+    [Fact]
+    public async Task Start_CompletingRun_ReleasesCancellationAndConsentWatch()
+    {
+        var service = new FakeFullTranslationService();
+        // 云端 provider ⇒ 运行期会启动同意代次监视，用其验证收尾时监视任务被清空。
+        var provider = new RevocableConfigProvider(new TranslationRuntimeConfig(
+            "deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic"));
+        var vm = new FullTranslationViewModel(service, provider)
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+        };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, service.Calls);
+        Assert.False(vm.HasActiveCancellation); // CTS 已释放
+        Assert.False(vm.HasConsentWatch);        // 同意监视已收尾
+    }
+
+    [Fact]
+    public async Task Start_CancelledRun_ReleasesCancellationAndConsentWatch()
+    {
+        var service = new FakeFullTranslationService();
+        var provider = new RevocableConfigProvider(new TranslationRuntimeConfig(
+            "deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic"));
+        var vm = new FullTranslationViewModel(service, provider)
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+        };
+        service.Handler = async (_, _, token) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.Infinite, token);
+            }
+            catch (OperationCanceledException)
+            {
+                // 真实服务把取消转成 Cancelled 结果。
+            }
+
+            return FullTranslationOutcome.Cancelled_;
+        };
+
+        var start = vm.StartCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => vm.IsRunning);
+        Assert.True(vm.HasActiveCancellation); // 运行中确实持有 CTS（钩子有效）
+        Assert.True(vm.HasConsentWatch);        // 运行中确实在监视同意代次
+
+        vm.CancelCommand.Execute(null);
+        await start;
+
+        Assert.False(vm.HasActiveCancellation); // 取消后 CTS 已释放
+        Assert.False(vm.HasConsentWatch);        // 取消后监视已收尾
+        Assert.False(vm.IsRunning);
+    }
 }

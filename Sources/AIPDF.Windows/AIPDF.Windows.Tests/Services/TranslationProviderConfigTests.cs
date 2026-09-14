@@ -3,6 +3,7 @@
 // v1.1 翻译 · 云端连接配置模型测试（决策 (a)(d)(j)；T23 设置→翻译→云端服务商）：
 //   - 端点必须为 http(s) 绝对地址；拒绝 userinfo / key·token 查询参数（防设置漫游泄漏密钥）；
 //   - 连接配置只含 provider + endpoint + model，模型名可为空；结构层不得出现密钥属性。
+using System.Net;
 using AIPDF.Windows.Services;
 using Xunit;
 
@@ -112,4 +113,77 @@ public sealed class TranslationProviderConfigTests
         Assert.Contains("remote.example.com:8443", message);
         Assert.Contains("127.0.0.1 / ::1 / localhost", message);
     }
+
+    // ---------------------------------------------------------------- F30：主机名必须解析为 loopback
+
+    [Theory]
+    [InlineData("http://localhost:11434/v1", new[] { "10.0.0.5" }, false)]              // localhost 被解析到非本机
+    [InlineData("http://localhost:11434/v1", new[] { "127.0.0.1" }, true)]
+    [InlineData("http://localhost:11434/v1", new[] { "127.0.0.1", "::1" }, true)]
+    [InlineData("http://localhost:11434/v1", new[] { "127.0.0.1", "10.0.0.5" }, false)] // 混入非本机 → false
+    [InlineData("http://localma.ch:8080/v1", new[] { "127.0.0.1" }, true)]              // 任意本机名
+    public void IsLoopbackEndpoint_ResolvesHostName_AllAddressesMustBeLoopback(
+        string endpoint, string[] resolved, bool expected)
+    {
+        var resolvedIps = resolved.Select(IPAddress.Parse).ToArray();
+
+        var actual = TranslationProviderConfig.IsLoopbackEndpoint(endpoint, _ => resolvedIps);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void IsLoopbackEndpoint_ResolverThrows_ReturnsFalse()
+        => Assert.False(TranslationProviderConfig.IsLoopbackEndpoint(
+            "http://localhost:11434/v1", _ => throw new InvalidOperationException("dns down"))); // fail-closed
+
+    [Fact]
+    public void IsLoopbackEndpoint_LiteralIp_DoesNotCallResolver()
+    {
+        var called = false;
+
+        var actual = TranslationProviderConfig.IsLoopbackEndpoint("http://127.0.0.1:11434/v1", _ =>
+        {
+            called = true;
+            return [IPAddress.Loopback];
+        });
+
+        Assert.True(actual);
+        Assert.False(called); // 字面量 IP 直接判定，不解析
+    }
+
+    // ---------------------------------------------------------------- F31：URL 片段内嵌密钥
+
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1#key=sk-abc")]
+    [InlineData("https://api.deepseek.com/v1#access_token=sk-abc")]
+    [InlineData("https://api.deepseek.com/v1#api_key=sk-abc")]
+    public void ValidateEndpoint_RejectsSecretInFragment(string endpoint)
+        => Assert.Equal(TranslationProviderConfig.EmbeddedSecretMessage, TranslationProviderConfig.ValidateEndpoint(endpoint));
+
+    // ---------------------------------------------------------------- F32：路径段疑似内嵌密钥
+
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1/sk-abcdefgh12345678")]
+    [InlineData("https://api.deepseek.com/v1/key=sk-abcdefgh")]
+    [InlineData("https://api.deepseek.com/v1/token:abcdefgh1234")]
+    [InlineData("https://api.deepseek.com/v1/api_key-abcdefgh1234")]
+    public void ValidateEndpoint_RejectsSecretLookingPath(string endpoint)
+        => Assert.Equal(TranslationProviderConfig.EmbeddedSecretInPathMessage, TranslationProviderConfig.ValidateEndpoint(endpoint));
+
+    [Theory]
+    [InlineData("https://api.deepseek.com/v1/chat")]
+    [InlineData("https://api.deepseek.com/v1/chat/completions")]
+    public void ValidateEndpoint_AcceptsNormalPath(string endpoint)
+        => Assert.Null(TranslationProviderConfig.ValidateEndpoint(endpoint));
+
+    [Theory]
+    [InlineData("sk-abcdefgh12345678", true)]
+    [InlineData("/v1/sk-abcdefgh12345678", true)]
+    [InlineData("v1/token=abcdefgh1234", true)]
+    [InlineData("/v1/chat", false)]
+    [InlineData("/v1/chat/completions", false)]
+    [InlineData("", false)]
+    public void LooksLikeSecretInPath_DetectsKeyLookingSegments(string path, bool expected)
+        => Assert.Equal(expected, TranslationProviderConfig.LooksLikeSecretInPath(path));
 }

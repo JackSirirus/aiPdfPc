@@ -36,6 +36,10 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // F24：启动即清扫上次硬崩溃残留在 %TEMP%\AIPDF-Sidecar 的划词 sidecar / 半成品 temp 文件。
+        // 源目录旁的 sidecar 故意不清扫（任意用户目录），且新会话绝不自动加载，残留不影响功能与隐私。
+        SelectionSidecarStore.SweepStaleTempFiles();
+
         var startupPaths = StartupPathParser.Collect(e.Args, File.Exists);
         _pipeName = SingleInstanceNames.CurrentUserPipeName();
 

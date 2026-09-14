@@ -3,6 +3,7 @@
 // V2 T6 会话恢复测试：round-trip、损坏回退（AC-28.2）、失效过滤（AC-29.1/29.2）、
 // 恢复顺序（FR-29）、窗口钳制（M-6）、无密码红线。
 using System.IO;
+using System.Reflection;
 using AIPDF.Windows.Services;
 using Xunit;
 
@@ -334,5 +335,21 @@ public sealed class SessionStoreTests
         Assert.Equal(34, y);
         Assert.Equal(860, w);
         Assert.Equal(560, h);
+    }
+
+    // ---------------------------------------------------------------- F25：翻译任务状态刻意不持久化
+
+    [Fact]
+    public void SessionState_HasNoTranslationOrSidecarMembers_TaskStateIsSessionOnly()
+    {
+        var members = typeof(SessionState)
+            .GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .Select(m => m.Name)
+            .ToArray();
+
+        // 翻译任务状态（整篇/批量进度与产物、划词 sidecar）刻意不写进会话：类型不得有相关成员。
+        Assert.DoesNotContain(members, name =>
+            name.Contains("translation", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("sidecar", StringComparison.OrdinalIgnoreCase));
     }
 }

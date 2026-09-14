@@ -399,8 +399,6 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var options = BuildEngineOptions(runtime);
-
         foreach (var file in Files)
         {
             file.ResetToPending();
@@ -409,7 +407,6 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         RefreshSummary();
         await RunTranslationAsync(
             [.. Files],
-            options,
             token,
             $"正在批量翻译 {Files.Count} 份文件…",
             () => $"完成：{SummaryText}。结果在下方按需打开。",
@@ -495,20 +492,19 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var runtime = _configProvider.Get();
-        if (runtime is null)
+        // F23：用 Resolve() 区分「无服务商 / 未同意 / 无凭据 / 非 loopback」，直接展示具体原因，
+        // 不再用笼统的「尚未配置或同意已撤销」把不同缺口混为一谈。
+        var resolution = _configProvider.Resolve();
+        if (resolution.Config is not { } runtime)
         {
-            StatusMessage = "翻译服务尚未配置或同意已撤销，请重新配置后重试。";
+            StatusMessage = resolution.Message;
             return;
         }
-
-        var options = BuildEngineOptions(runtime);
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
         await RunTranslationAsync(
             [item],
-            options,
             cts.Token,
             $"正在重试 {item.Name}…",
             () => item.IsDone ? $"重试成功：{item.Name}。" : $"重试失败：{item.ResultText}",
@@ -545,20 +541,18 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return;
         }
 
-        var runtime = _configProvider.Get();
-        if (runtime is null)
+        // F23：同单文件重试，用 Resolve() 暴露具体未就绪原因。
+        var resolution = _configProvider.Resolve();
+        if (resolution.Config is not { } runtime)
         {
-            StatusMessage = "翻译服务尚未配置或同意已撤销，请重新配置后重试。";
+            StatusMessage = resolution.Message;
             return;
         }
-
-        var options = BuildEngineOptions(runtime);
 
         using var cts = new CancellationTokenSource();
         _cts = cts;
         await RunTranslationAsync(
             failures,
-            options,
             cts.Token,
             $"正在重试 {failures.Count} 个失败项…",
             () => $"重试完成：{SummaryText}。",
@@ -765,7 +759,6 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
     /// </summary>
     private async Task RunTranslationAsync(
         IReadOnlyList<BatchTranslationFileItem> files,
-        IReadOnlyDictionary<string, object?> options,
         CancellationToken token,
         string runningMessage,
         Func<string> completionMessage,
@@ -791,11 +784,19 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         _bridge!.Progress += OnBridgeProgress;
         try
         {
-            await RunFilesAsync(files, options, token);
-            StatusMessage = token.IsCancellationRequested ? cancelledMessage : completionMessage();
-            if (_consentRevoked)
+            var stopMessage = await RunFilesAsync(files, token);
+            if (stopMessage is not null)
             {
-                StatusMessage = ConsentRevokedMessage;
+                // F22：某文件执行前配置已失效（中途改端点 / 换凭据 / 撤销同意）→ 停止剩余文件并展示具体原因。
+                StatusMessage = stopMessage;
+            }
+            else
+            {
+                StatusMessage = token.IsCancellationRequested ? cancelledMessage : completionMessage();
+                if (_consentRevoked)
+                {
+                    StatusMessage = ConsentRevokedMessage;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -820,8 +821,12 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         }
     }
 
-    /// <summary>按给定文件【串行】执行，UI 不阻塞；任一文件失败不中断其余。</summary>
-    private async Task RunFilesAsync(IReadOnlyList<BatchTranslationFileItem> files, IReadOnlyDictionary<string, object?> options, CancellationToken token)
+    /// <summary>
+    /// 按给定文件【串行】执行，UI 不阻塞；任一文件失败不中断其余。
+    /// 返回 null 表示全部处理完毕；返回非 null 表示在某个文件前运行时配置已失效，
+    /// 值为可直接展示的具体原因（剩余文件不再发送）。
+    /// </summary>
+    private async Task<string?> RunFilesAsync(IReadOnlyList<BatchTranslationFileItem> files, CancellationToken token)
     {
         _totalFiles = files.Count;
         _completedFiles = 0;
@@ -830,12 +835,24 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         foreach (var file in files)
         {
             token.ThrowIfCancellationRequested();
+
+            // F22：每个文件执行前重新解析运行时配置——批量运行中途改端点 / 换凭据 / 撤销同意即时生效，
+            // 不让后续文件沿用启动瞬间的旧配置。未就绪则停止剩余文件并返回具体原因（不静默发送）。
+            var resolution = _configProvider.Resolve();
+            if (resolution.Config is not { } runtime)
+            {
+                return resolution.Message;
+            }
+
+            var options = BuildEngineOptions(runtime);
             _currentFileFraction = 0;
             ProgressMessage = $"正在翻译 {_completedFiles + 1}/{_totalFiles}：{file.Name}";
             await RunOneAsync(file, options, token);
             _completedFiles++;
             ProgressFraction = _totalFiles == 0 ? 0 : (double)_completedFiles / _totalFiles;
         }
+
+        return null;
     }
 
     /// <summary>翻译单个文件：请求 translate op，解析逐文件产物；失败记录原因不抛。</summary>

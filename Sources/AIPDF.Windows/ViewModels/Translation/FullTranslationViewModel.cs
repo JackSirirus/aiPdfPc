@@ -376,6 +376,14 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     /// <summary>会话内边界文案（绑定展示）。</summary>
     public string SessionScopeText => SessionScopeNotice;
 
+    // ---------- 测试钩子（仅用于断言资源已释放，不改变行为） ----------
+
+    /// <summary>测试钩子：是否仍持有活动取消令牌源（运行结束后应为 false，验证 CTS 已清理、无泄漏）。</summary>
+    internal bool HasActiveCancellation => _cts is not null;
+
+    /// <summary>测试钩子：是否仍在监视同意代次（运行结束后应为 false，验证监视任务已收尾、无泄漏）。</summary>
+    internal bool HasConsentWatch => _consentWatch is not null;
+
     // ---------- 命令 ----------
 
     private bool CanStart => !IsRunning && HasDocument && !string.IsNullOrWhiteSpace(OutputDir);

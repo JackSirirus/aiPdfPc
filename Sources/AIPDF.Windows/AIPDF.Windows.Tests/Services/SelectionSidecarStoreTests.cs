@@ -225,4 +225,48 @@ public sealed class SelectionSidecarStoreTests : IDisposable
 
         Assert.Empty(second.GetAll()); // 仅会话内有效：新实例不自动加载旧 sidecar
     }
+
+    // ---------------------------------------------------------------- F24：启动清理回退目录残留
+
+    [Fact]
+    public void SweepStaleTempFiles_RemovesSidecarAndTempFiles_KeepsUnrelated()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "aipdf-sidecar-sweep-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var staleSidecar = Path.Combine(root, "abc" + SelectionSidecarStore.FileSuffix);
+            var staleTemp = Path.Combine(
+                root, "abc" + SelectionSidecarStore.FileSuffix + "." + Guid.NewGuid().ToString("N") + ".tmp");
+            var unrelatedJson = Path.Combine(root, "keep.json");
+            var unrelatedTxt = Path.Combine(root, "notes.txt");
+            File.WriteAllText(staleSidecar, "{}");
+            File.WriteAllText(staleTemp, "{}");
+            File.WriteAllText(unrelatedJson, "{}");
+            File.WriteAllText(unrelatedTxt, "hello");
+
+            var removed = SelectionSidecarStore.SweepStaleTempFiles(root);
+
+            Assert.Equal(2, removed);
+            Assert.False(File.Exists(staleSidecar));
+            Assert.False(File.Exists(staleTemp));
+            Assert.True(File.Exists(unrelatedJson)); // 无关文件保留
+            Assert.True(File.Exists(unrelatedTxt));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public void SweepStaleTempFiles_MissingDir_IsNoOp_AndDoesNotThrow()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "aipdf-sidecar-missing-" + Guid.NewGuid().ToString("N"));
+
+        var removed = SelectionSidecarStore.SweepStaleTempFiles(root); // 不抛
+
+        Assert.Equal(0, removed);
+        Assert.False(Directory.Exists(root));
+    }
 }

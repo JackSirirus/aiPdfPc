@@ -7,6 +7,9 @@
 //   - 恢复顺序（FR-29）：窗口几何 → 左栏状态 → 标签集合（异步加载，激活态标记最后激活）；
 //   - 失效文件跳过（AC-29.1）、全部失效进起始页空态（AC-29.2）、session 损坏走默认（AC-28.2）；
 //   - 显示器拓扑变化后把恢复窗口钳制到虚拟屏范围（M-6）。
+//   - 翻译任务状态（整篇 / 批量的进度与产物、划词「替换标注」sidecar）【故意不持久化】：仅会话内有效，
+//     应用退出即丢弃；session.json 不含任何 translation / sidecar 字段。整篇「后台继续」亦仅限本次会话
+//     （与 FullTranslationViewModel.SessionScopeNotice 口径一致），恢复会话不会重跑或复原翻译任务。
 // 红线：本文件不含任何密码字段（4.3.3；加密文档每次启动后首次打开仍需输入密码）。
 using System.IO;
 using System.Text;
@@ -60,6 +63,11 @@ public sealed class SessionLeftPanel
 /// <summary>
 /// 会话文档（schema 沿袭 WorkflowPresetStore；无密码字段）。
 /// 字段与 PRD 3.7.1 代码块一一对应。
+/// <para>
+/// 翻译任务状态（整篇 / 批量进度与产物、划词 sidecar）【故意不纳入】：这些是纯会话内状态，
+/// 应用退出即丢弃，不写进 session.json（见 <c>FullTranslationViewModel.SessionScopeNotice</c>）。
+/// 本类型不得新增任何 translation / sidecar 成员。
+/// </para>
 /// </summary>
 public sealed class SessionState
 {

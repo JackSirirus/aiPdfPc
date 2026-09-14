@@ -2,7 +2,7 @@
 // Copyright (C) 2026 AIPDF contributors
 // v1.1 翻译 · 云端 API Key 存储（决策 #9 / #14 / #21；云端配置复用 (b)(g)(i)）：
 //   - 密钥交 Windows 凭据管理器（advapi32 CredRead/CredWrite/CredDelete/CredEnumerate + CredFree）加密保存；
-//   - 命名空间 AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 8 位 hex}，不同目的地互不覆盖；
+//   - 命名空间 AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 16 位 hex}，不同目的地互不覆盖；
 //   - 后端 ICredentialBackend 可注入：生产为 Win32CredentialBackend，测试用内存替身（不碰真实凭据管理器）；
 //   - DeleteAll 只清理 AIPDF-Translate-* 前缀（卸载清理），不影响用户其他凭据。
 //
@@ -250,14 +250,15 @@ public sealed class TranslationCredentialStore
     }
 
     /// <summary>
-    /// 凭据目标名：<c>AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 8 位 hex}</c>。
+    /// 凭据目标名：<c>AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 16 位 hex}</c>。
     /// endpoint 归一为 origin，使同一目的地的密钥不被路径 / 查询串差异切成多条。
+    /// 指纹长度与 <see cref="TranslationConsent.FingerprintLength"/> 统一为 16 位，避免凭据目标与同意指纹长度不一致。
     /// </summary>
     internal static string TargetName(string provider, string endpoint)
     {
         var origin = TranslationConsent.NormalizeEndpoint(endpoint);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(origin));
-        var shortHash = Convert.ToHexString(hash).ToLowerInvariant()[..8];
+        var shortHash = Convert.ToHexString(hash).ToLowerInvariant()[..TranslationConsent.FingerprintLength];
         return $"{TargetPrefix}{provider.Trim()}-{shortHash}";
     }
 }

@@ -8,6 +8,9 @@
 //     （Windows 上点号前缀不等于隐藏，必须设置系统属性）；
 //   - 回退：源目录不可写（CD-ROM / 只读 / 网络盘）时落到 %TEMP%\AIPDF-Sidecar\{hash}.json；
 //   - 生命周期：仅会话内有效——应用退出 Clear() 删文件；下次打开同一文档不自动加载旧 sidecar；
+//   - 启动清理：SweepStaleTempFiles() 清 %TEMP%\AIPDF-Sidecar 下的残留 sidecar 与 *.tmp 半成品
+//     （上次硬崩溃遗留）。写在【源目录】旁的 sidecar 故意不在此清理——源目录是任意用户目录，
+//     应用无权也不应代用户删除；该文件仅会话内有效，新会话【不会自动加载】，残留不影响功能与隐私。
 //   - 内容：仅 {页码, 坐标, 译文, 语言对, 时间戳}，不存原文全文、不写日志/正文；
 //   - 原子写：temp → rename，避免半成品被读取。
 using System.Globalization;
@@ -190,6 +193,58 @@ public sealed class SelectionSidecarStore : ISelectionSidecarStore
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /// <summary>
+    /// 启动时清理回退目录（默认 <c>%TEMP%\AIPDF-Sidecar</c>，测试可注入 <paramref name="tempRoot"/>）中
+    /// 残留的 sidecar（<c>*<see cref="FileSuffix"/></c>）与半成品临时文件（<c>*.tmp</c>），返回删除数量。
+    /// <para>
+    /// 场景：上次进程硬崩溃（未走 <see cref="Clear"/>）时 <c>%TEMP%</c> 回退目录里可能留下 sidecar 或原子写的
+    /// <c>*.tmp</c>。回退目录归应用所有，可在启动时安全清扫。
+    /// </para>
+    /// <para>
+    /// <b>故意不清扫</b>写在【源目录】旁的 sidecar：源目录是用户的任意目录，应用无权代用户删除其文件；
+    /// 且该 sidecar 仅会话内有效、新会话<b>绝不自动加载</b>，残留既不影响功能也不泄露内容。
+    /// </para>
+    /// <para>绝不抛异常：目录缺失、不可枚举、文件被占用 / 杀软锁时跳过，不影响启动。</para>
+    /// </summary>
+    /// <returns>实际删除的文件数（含 sidecar 与 <c>*.tmp</c>）。</returns>
+    public static int SweepStaleTempFiles(string? tempRoot = null)
+    {
+        var root = string.IsNullOrWhiteSpace(tempRoot)
+            ? Path.Combine(Path.GetTempPath(), TempFolderName)
+            : tempRoot!;
+
+        try
+        {
+            if (!Directory.Exists(root)) return 0;
+
+            var removed = 0;
+            foreach (var pattern in new[] { "*" + FileSuffix, "*.tmp" })
+            {
+                foreach (var file in Directory.EnumerateFiles(root, pattern, SearchOption.TopDirectoryOnly))
+                {
+                    try
+                    {
+                        TryClearAttributes(file);
+                        File.Delete(file);
+                        removed++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // 文件被占用 / 杀软锁：跳过该文件，继续清理其余，不阻断启动。
+                    }
+                }
+            }
+
+            return removed;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException
+                                       or ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // 目录不可枚举等异常：清理是尽力而为，静默返回 0，绝不因清理失败阻断启动。
+            return 0;
+        }
+    }
 
     private DocumentSidecar GetOrCreateLocked(string documentPath)
     {

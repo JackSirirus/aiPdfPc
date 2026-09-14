@@ -30,6 +30,41 @@ public sealed class TranslationBatchViewModelTests
         public int ConsentGeneration => Generation;
     }
 
+    /// <summary>
+    /// 可变更配置 / 解析结果的提供者：模拟批量运行中途改端点（F22）或变为未就绪（F22/F23）。
+    /// </summary>
+    private sealed class MutableConfigProvider : ITranslationRuntimeConfigProvider
+    {
+        private Func<TranslationRuntimeConfigResolution> _resolution;
+
+        public MutableConfigProvider(TranslationRuntimeConfig? config)
+            => _resolution = () => ResolutionOf(config);
+
+        public void SetConfig(TranslationRuntimeConfig? config)
+            => _resolution = () => ResolutionOf(config);
+
+        public void SetResolution(Func<TranslationRuntimeConfigResolution> resolution)
+            => _resolution = resolution;
+
+        public TranslationRuntimeConfig? Get() => Resolve().Config;
+
+        public TranslationRuntimeConfigResolution Resolve() => _resolution();
+
+        private static TranslationRuntimeConfigResolution ResolutionOf(TranslationRuntimeConfig? config)
+            => config is null
+                ? new TranslationRuntimeConfigResolution(
+                    TranslationRuntimeConfigStatus.NoProvider, null, "", "", false,
+                    TranslationRuntimeConfigResolution.NotConfiguredMessage)
+                : new TranslationRuntimeConfigResolution(
+                    TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint, false, "");
+    }
+
+    /// <summary>带具体原因的「云端未同意」解析结果（F23 断言其 Message 被原样展示）。</summary>
+    private static TranslationRuntimeConfigResolution NoConsentResolution()
+        => new(
+            TranslationRuntimeConfigStatus.NoConsent, null, "deepseek", "https://api.deepseek.com/v1", IsCloud: true,
+            "云端翻译需要你的明确同意（服务商：deepseek）。");
+
     private static TranslationRuntimeConfig RuntimeConfig()
         => new("local", "http://127.0.0.1:11434/v1", "qwen", "sk-test", "auto", "zh", "academic");
 
@@ -244,6 +279,111 @@ public sealed class TranslationBatchViewModelTests
         Assert.Equal(2, items.Count); // 逐文件一项：某份失败不中断其余
         Assert.All(items, item => Assert.Single(item.Files));
         Assert.Null(vm.ValidateParameters([temp.CreatePdf("a.pdf")]));
+    }
+
+    // ---------------------------------------------------------------- F22：批量中途重新解析配置
+
+    [Fact]
+    public async Task Start_EndpointChangedMidBatch_RemainingFilesUseNewEndpoint()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        var provider = new MutableConfigProvider(RuntimeConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        const string newEndpoint = "http://127.0.0.1:9999/v1";
+        bridge.Handler = request =>
+        {
+            if (Path.GetFileName(request.Files[0]) == "a.pdf")
+            {
+                // 第一个文件在途时改端点：后续文件必须重新解析并改用新端点。
+                provider.SetConfig(RuntimeConfig() with { Endpoint = newEndpoint });
+            }
+
+            return RecordingBridge.Success();
+        };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, bridge.Requests.Count);
+        Assert.Equal("http://127.0.0.1:11434/v1", bridge.Requests[0].Options["endpoint"]);
+        Assert.Equal(newEndpoint, bridge.Requests[1].Options["endpoint"]);
+        Assert.All(vm.Files, f => Assert.True(f.IsDone));
+    }
+
+    [Fact]
+    public async Task Start_ProviderBecomesUnconfiguredMidBatch_StopsRemainingFiles_WithSpecificMessage()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        var provider = new MutableConfigProvider(RuntimeConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        bridge.Handler = request =>
+        {
+            if (Path.GetFileName(request.Files[0]) == "a.pdf")
+            {
+                // 第一个文件后配置变为「未同意」：第二个文件不得再发送。
+                provider.SetResolution(NoConsentResolution);
+            }
+
+            return RecordingBridge.Success();
+        };
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.Requests); // 剩余文件未发送
+        Assert.Contains("明确同意", vm.StatusMessage); // 展示具体原因，而非笼统文案
+        Assert.True(vm.Files[0].IsDone);
+        Assert.True(vm.Files[1].IsPending); // 未处理，保持待处理
+    }
+
+    // ---------------------------------------------------------------- F23：重试路径暴露具体原因
+
+    [Fact]
+    public async Task RetryFile_NonConfiguredResolution_SurfacesSpecificMessage()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        bridge.Handler = _ => new EngineResult { Ok = false, Error = "临时故障", ExitCode = 1 };
+        var provider = new MutableConfigProvider(RuntimeConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.AddFiles([temp.CreatePdf("a.pdf")]);
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.Files[0].IsFailed);
+        var requestsAfterStart = bridge.Requests.Count;
+
+        provider.SetResolution(NoConsentResolution);
+
+        await vm.RetryFileCommand.ExecuteAsync(vm.Files[0]);
+
+        Assert.Equal(requestsAfterStart, bridge.Requests.Count); // 未就绪不再发起请求
+        Assert.Contains("明确同意", vm.StatusMessage); // 具体原因被原样展示
+    }
+
+    [Fact]
+    public async Task RetryAllFailed_NonConfiguredResolution_SurfacesSpecificMessage()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        bridge.Handler = _ => new EngineResult { Ok = false, Error = "临时故障", ExitCode = 1 };
+        var provider = new MutableConfigProvider(RuntimeConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.FailedCount);
+        var requestsAfterStart = bridge.Requests.Count;
+
+        provider.SetResolution(NoConsentResolution);
+
+        await vm.RetryAllFailedCommand.ExecuteAsync(null);
+
+        Assert.Equal(requestsAfterStart, bridge.Requests.Count); // 未就绪不再发起请求
+        Assert.Contains("明确同意", vm.StatusMessage);
     }
 
     /// <summary>测试用临时目录：释放时递归删除（句柄占用时容忍残留）。</summary>
