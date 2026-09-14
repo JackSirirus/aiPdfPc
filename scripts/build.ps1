@@ -282,6 +282,9 @@ foreach ($sub in @("app", "engine\backend", "helper", "scripts")) {
 Copy-Item -Path (Join-Path $AppPublish "*") -Destination (Join-Path $Dist "app") -Recurse -Force
 # 引擎只带 backend 的三个文件（tests 不进 dist）；catalog JSON 由步骤 ③ 保证最新。
 Copy-Item -Path "backend\engine.py", "backend\catalog.py", "backend\catalog.json" -Destination (Join-Path $Dist "engine\backend") -Force
+# 翻译引擎包（backend/translate/*.py）；引擎以 ../backend 为 sys.path 顶层，故需整体拷贝。
+Copy-Item -Path "backend\translate" -Destination (Join-Path $Dist "engine\backend\translate") -Recurse -Force
+Remove-Item -Path (Join-Path $Dist "engine\backend\translate\__pycache__") -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item -Path (Join-Path $HelperPublish "*") -Destination (Join-Path $Dist "helper") -Force
 if (Test-Path -LiteralPath (Join-Path $ProjectDir "Install.ps1")) {
     Copy-Item -Path "Install.ps1" -Destination (Join-Path $Dist "scripts") -Force
