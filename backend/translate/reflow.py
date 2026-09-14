@@ -23,6 +23,9 @@ S0→S3 排入译文：
 
 降级报告与原因枚举复用 `verify.py`（翻译引擎 T7）的**唯一枚举**
 `DEGRADATION_REASONS` 与 `DegradationReport`，不在此另立一套，避免魔法字符串漂移。
+结构化检测（`detect.py`）在回填时落地：RTL/竖排块保留原文并记 `unsupported_script`，
+公式块溢出记 `formula_fail`，表格结构无法保留记 `table_fail`，旋转/裁剪页实际回填记
+`rotation_crop`（规格 §1/§2.4/§4.4）。
 """
 from __future__ import annotations
 
@@ -36,17 +39,20 @@ from pathlib import Path
 import pymupdf as fitz
 
 try:  # 作为包导入（tests 走 backend 顶层 → translate.reflow）
-    from . import geometry
+    from . import detect, geometry
     from .verify import (
-        CLIP, DEGRADATION_REASONS, FONT_FALLBACK, FONT_SHRINK, GLYPH_MISSING,
-        OVERFLOW_MARGIN, RASTER_OVERLAY, SEARCH_VERIFY_FAIL, UNSEARCHABLE_REASONS,
+        CLIP, DEGRADATION_REASONS, FONT_FALLBACK, FONT_SHRINK, FORMULA_FAIL,
+        GLYPH_MISSING, OVERFLOW_MARGIN, RASTER_OVERLAY, ROTATION_CROP,
+        SEARCH_VERIFY_FAIL, TABLE_FAIL, UNSEARCHABLE_REASONS, UNSUPPORTED_SCRIPT,
         DegradationReport,
     )
 except ImportError:  # 直接以 backend 为 sys.path 顶层加载时
+    import detect
     import geometry
     from verify import (
-        CLIP, DEGRADATION_REASONS, FONT_FALLBACK, FONT_SHRINK, GLYPH_MISSING,
-        OVERFLOW_MARGIN, RASTER_OVERLAY, SEARCH_VERIFY_FAIL, UNSEARCHABLE_REASONS,
+        CLIP, DEGRADATION_REASONS, FONT_FALLBACK, FONT_SHRINK, FORMULA_FAIL,
+        GLYPH_MISSING, OVERFLOW_MARGIN, RASTER_OVERLAY, ROTATION_CROP,
+        SEARCH_VERIFY_FAIL, TABLE_FAIL, UNSEARCHABLE_REASONS, UNSUPPORTED_SCRIPT,
         DegradationReport,
     )
 
@@ -101,10 +107,16 @@ class FontChoice:
 
 @dataclass
 class _Placement:
-    """成功写入的一段译文；`clipped=True` 表示只写入了能容纳的部分。"""
+    """成功写入的一段译文；`clipped=True` 表示只写入了能容纳的部分。
+
+    `degraded` 表示未能在 S0（原框原字号）一次容纳，`overflow` 表示走到了 S2/S3
+    （溢出页边或裁切）。结构化检测据此判定公式/表格是否已无法忠实回填。
+    """
 
     text: str
     clipped: bool = False
+    degraded: bool = False
+    overflow: bool = False
 
 
 # —— 规格 §5：字体候选、fsType 与缺字形 ---------------------------------------
@@ -388,6 +400,7 @@ def _place_block(page, block, text, occupied, report, page_no, *,
                                    lineheight=lineheight)
             if placement is not None:
                 report.add(page_no, FONT_SHRINK)
+                placement.degraded = True
                 return placement
 
     # S2：先下后右溢出到页边留白；与相邻块/图像相交则在该边界停住。
@@ -407,13 +420,15 @@ def _place_block(page, block, text, occupied, report, page_no, *,
                                    lineheight=lineheight)
             if placement is not None:
                 report.add(page_no, OVERFLOW_MARGIN)
+                placement.degraded = True
+                placement.overflow = True
                 return placement
 
     # S3：裁切——写入能容纳的部分，超出丢弃。
     _fits, writer = _attempt(page, expanded, text, choice.font, min_size)
     _write(writer, page)
     report.add(page_no, CLIP)
-    return _Placement(text=text, clipped=True)
+    return _Placement(text=text, clipped=True, degraded=True, overflow=True)
 
 
 # —— 页面处理 -----------------------------------------------------------------
@@ -499,6 +514,16 @@ def _verify_searchable(page, placements, report, page_no):
             return
 
 
+def _unsupported_kind(block):
+    """块的不支持脚本类型（§2.4）：优先读抽取标注，缺失时按文本补判 RTL。"""
+    script = str(getattr(block, "unsupported_script", "") or "").strip().lower()
+    if script:
+        return script
+    if detect.is_rtl_text(getattr(block, "text", "")):
+        return "rtl"
+    return ""
+
+
 def backfill_page(page, blocks, translations, report, *, font_provider=None,
                   system_files=None):
     """把一页的译文回填进 `page`（原地修改），并写入 `report`。
@@ -506,6 +531,11 @@ def backfill_page(page, blocks, translations, report, *, font_provider=None,
     - `blocks`：该页阅读序 `TextBlock`（含 `RectNorm`、字号、字体名）。
     - `translations`：译文，见 `_translation_map` 的三形态。
     - `report`：`DegradationReport`；每个未达成效果都留痕。
+
+    结构化检测（规格 §1/§2.4/§4.4）在此落地：RTL/竖排块不翻译、不回填，保留原文并
+    记 `unsupported_script`；公式块回到 S2/S3 记 `formula_fail`；表格结构无法保留
+    （不规则或单元格溢出）记 `table_fail`；旋转/裁剪页实际回填记 `rotation_crop`。
+
     - `font_provider` / `system_files`：注入字体选择或系统字体清单（测试用）。
 
     先在同一个处理批次内对所有可编辑块做真实移除（redaction，保留图像），再依次
@@ -515,12 +545,29 @@ def backfill_page(page, blocks, translations, report, *, font_provider=None,
     page_no = page.number + 1
     blocks = list(blocks or [])
     mapping = _translation_map(blocks, translations)
+    # §1：在旋转归零之前判定页面几何，旋转/裁剪页回填需坐标归一化。
+    geometry_limited = detect.page_geometry_degraded(page)
+    # §2.4：RTL/竖排块不参与翻译与回填，保留原文。
+    unsupported = {}
+    for index, block in enumerate(blocks):
+        kind = _unsupported_kind(block)
+        if kind:
+            unsupported[index] = kind
+    if unsupported:
+        report.add(page_no, UNSUPPORTED_SCRIPT, {
+            "blocks": sorted(unsupported),
+            "scripts": {str(index): kind for index, kind in sorted(unsupported.items())}})
+    # §4.4：页面级表格结构，决定单元格溢出/不规则时是否记 table_fail。
+    table = detect.table_structure(page, blocks)
+    table_cells = table["cells"] if table else frozenset()
     saved_rotation = page.rotation
     page.set_rotation(0)  # 规格 §1.2：在未旋转 + CropBox 相对坐标系内回填
     try:
         editable = []
         raster = []
         for index, block in enumerate(blocks):
+            if index in unsupported:
+                continue  # 保留原文：不 redaction、不写入译文
             text = mapping.get(index)
             if not text or not str(text).strip():
                 continue
@@ -541,13 +588,29 @@ def backfill_page(page, blocks, translations, report, *, font_provider=None,
 
         occupied = _occupied_rects(page, blocks)
         placements = []
+        table_hits = []
+        formula_hits = []
         for index, block, text in raster + editable:
             others = [rect for other, rect in enumerate(occupied) if other != index]
             placement = _place_block(page, block, text, others, report, page_no,
                                      font_provider=font_provider,
                                      system_files=system_files)
-            if placement is not None:
-                placements.append(placement)
+            if placement is None:
+                continue
+            placements.append(placement)
+            if index in table_cells and placement.overflow:
+                table_hits.append(index)
+            if placement.overflow and detect.is_math_dense(getattr(block, "text", "")):
+                formula_hits.append(index)
+        if table is not None and (table["irregular"] or table_hits):
+            report.add(page_no, TABLE_FAIL, {
+                "blocks": sorted(table_hits), "irregular": bool(table["irregular"]),
+                "rows": table["rows"], "cols": table["cols"]})
+        if formula_hits:
+            report.add(page_no, FORMULA_FAIL, {"blocks": sorted(formula_hits)})
+        if geometry_limited and placements:
+            report.add(page_no, ROTATION_CROP, {
+                "rotation": saved_rotation, "blocks": len(placements)})
         _verify_searchable(page, placements, report, page_no)
     finally:
         page.set_rotation(saved_rotation)

@@ -881,6 +881,8 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
 
     发送前对每段源文调用 `prompt.scan_untrusted_instructions`：命中已知注入模式（决策 #18）
     即**不发送该段**、保留原文，并在降级报告记 `suspicious_instruction`，绝不静默翻译。
+    RTL/竖排块（`block.unsupported_script`，规格 §2.4）同样不发送、保留原文；该原因由
+    回填阶段（`reflow.backfill_page`）记入降级报告。
     """
     from translate import chunk, prompt, verify
     chunks = chunk.chunk_blocks(blocks)
@@ -893,6 +895,9 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
         pairs = prompt.build_prompt([block.text for block in core], template_name=template_name,
                                     glossary=glossary_entries, custom_template=custom_template)
         for block, pair in zip(core, pairs):
+            if getattr(block, "unsupported_script", ""):
+                translations.append("")  # §2.4：不支持的脚本不发送、保留原文
+                continue
             hits = prompt.scan_untrusted_instructions(block.text)
             if hits:
                 report.add(block.page_no, verify.SUSPICIOUS_INSTRUCTION,

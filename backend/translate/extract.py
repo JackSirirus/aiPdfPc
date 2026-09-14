@@ -6,6 +6,8 @@
 并按《翻译-回填排版规格.md》§2 重建阅读序：去连字、多栏检测与列内排序、段落重建。
 扫描页（无文本层）走既有 OCR 路径（`vision_path` + `run_process`，与
 `engine.ocr_doc()` 同源），识别结果同样归一化后进入同一套排序与段落流程。
+抽取阶段同时对每个块做**不支持脚本**标注（§2.4）：RTL 文本或竖排行方向记入
+`TextBlock.unsupported_script`，供翻译阶段跳过、回填阶段保留原文并记降级。
 
 坐标事实：PyMuPDF `page.get_text("dict")` 的 bbox 本就是「未旋转 + 相对 CropBox」
 的规范坐标（已在 PyMuPDF 1.28 实测：`bbox == bbox * rotation_matrix * derotation_matrix`），
@@ -24,8 +26,9 @@ from pathlib import Path
 import pymupdf as fitz
 
 try:  # 作为包导入（tests 走 backend 顶层 → translate.extract）
-    from . import geometry
+    from . import detect, geometry
 except ImportError:  # 直接以 backend 为 sys.path 顶层加载时
+    import detect
     import geometry
 
 
@@ -56,6 +59,8 @@ class TextBlock:
     `confidence` 为 0–1：1 表示文本干净，越低表示 PUA/CID 乱码占比越高；
     `low_confidence` 对应规格 §9.1 的 `extraction_low_conf`。`size` / `font` 供
     回填排版（T8）复用；OCR 块没有字体名时 `font` 为空串或 "ocr"。
+    `unsupported_script` 为 `""` / `"rtl"` / `"vertical"`（§2.4）：非空表示该块
+    文字方向不支持，翻译阶段应跳过、回填阶段保留原文并记降级。
     """
 
     page_no: int
@@ -64,6 +69,7 @@ class TextBlock:
     confidence: float = 1.0
     size: float = 0.0
     font: str = ""
+    unsupported_script: str = ""
 
     @property
     def low_confidence(self):
@@ -92,6 +98,7 @@ class _Block:
     column: int = 0
     region: bool = False
     band: int = 0
+    script: str = ""
 
 
 def suspicious_ratio(text):
@@ -165,10 +172,12 @@ def _text_blocks_from_dict(page, dehyphenate):
         if spans:
             font = max(spans, key=lambda span: len(span.get("text", ""))).get("font", "")
         bold, italic = _style_flags(spans)
+        dirs = [line.get("dir") for line in lines]
         blocks.append(_Block(
             rect=geometry.RectNorm(bbox.x0, bbox.y0, bbox.x1, bbox.y1, rotation),
             text=text, size=size, font=font, bold=bold, italic=italic,
-            confidence=1.0 - suspicious_ratio(text)))
+            confidence=1.0 - suspicious_ratio(text),
+            script=detect.classify_unsupported(text, dirs)))
     return blocks
 
 
@@ -219,7 +228,8 @@ def _ocr_blocks(page, ocr_boxes):
                             (x + w) * visible_w, (y + h) * visible_h)
         rect = geometry.rect_normalize(page, visible)
         blocks.append(_Block(rect=rect, text=text, size=max(rect.height * 0.8, 0.0),
-                             font="ocr", confidence=1.0 - suspicious_ratio(text)))
+                             font="ocr", confidence=1.0 - suspicious_ratio(text),
+                             script=detect.classify_unsupported(text)))
     return blocks
 
 
@@ -317,6 +327,8 @@ def _absorb(prev, current, dehyphenate):
         max(prev.rect.x1, current.rect.x1), max(prev.rect.y1, current.rect.y1),
         prev.rect.rotation_deg)
     prev.confidence = min(prev.confidence, current.confidence)
+    if not prev.script and current.script:
+        prev.script = current.script
 
 
 def _merge_paragraphs(blocks, dehyphenate):
@@ -349,7 +361,8 @@ def extract_page(page, page_no=None, *, dehyphenate=True, ocr_boxes=None):
     _assign_columns(raw, gutters)
     paragraphs = _merge_paragraphs(_order_blocks(raw), dehyphenate)
     return [TextBlock(page_no=page_no, rect=blk.rect, text=blk.text,
-                      confidence=round(blk.confidence, 4), size=blk.size, font=blk.font)
+                      confidence=round(blk.confidence, 4), size=blk.size, font=blk.font,
+                      unsupported_script=blk.script)
             for blk in paragraphs if blk.text.strip()]
 
 

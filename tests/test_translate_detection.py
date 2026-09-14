@@ -1,0 +1,337 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 AIPDF contributors
+"""结构化降级检测测试；只用内存合成 PDF，不读写任何用户文档。
+
+覆盖《翻译-回填排版规格.md》§1/§2.4/§4.4 的四类结构化降级原因：
+
+- `rotation_crop`：旋转 / 裁剪页回填需坐标归一化（§1）；
+- `unsupported_script`：RTL / 竖排块保留原文并标注（§2.4）；
+- `formula_fail`：公式块无法忠实回填（§4.4）；
+- `table_fail`：表格结构无法保留（§4.4）。
+
+逐层验证：检测启发式（`detect`）→ 抽取标注（`extract`）→ 回填落地（`reflow`）→
+翻译跳过（`engine`）→ 报告 sidecar。LLM 调用全部 monkeypatch，不发起真实网络请求。
+"""
+import json
+import sys
+import tempfile
+import unittest
+import unittest.mock
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "backend"))
+
+import engine
+import pymupdf as fitz
+from translate import detect, extract, geometry, llm, reflow, verify
+
+ARABIC = "\u0627\u0644\u0639\u0631\u0628\u064a\u0629 \u0645\u0631\u062d\u0628\u0627"
+HEBREW = "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd"
+FORMULA = "f(x)=x^2+y^2/(a-b)"
+PROSE = "The quick brown fox jumps over the lazy dog"
+ENDPOINT = "https://api.example.test/v1"
+API_KEY = "sk-detection-secret-key-123456"
+MODEL = "test-model"
+
+
+def block(rect, text, size=12.0, font="helv", page_no=1, script=""):
+    """构造规范坐标块，独立于抽取器测试回填。"""
+    return extract.TextBlock(
+        page_no=page_no, rect=geometry.RectNorm(rect[0], rect[1], rect[2], rect[3], 0),
+        text=text, size=size, font=font, unsupported_script=script)
+
+
+# —— 检测启发式（detect） -----------------------------------------------------
+
+class DetectTests(unittest.TestCase):
+    def test_rtl_ratio_and_threshold(self):
+        self.assertGreater(detect.rtl_ratio(ARABIC), detect.RTL_RATIO_THRESHOLD)
+        self.assertEqual(detect.rtl_ratio(PROSE), 0.0)
+        self.assertTrue(detect.is_rtl_text(ARABIC))
+        self.assertTrue(detect.is_rtl_text(HEBREW))
+        self.assertFalse(detect.is_rtl_text(PROSE))
+        # 拉丁为主 + 少量 RTL → 不误判。
+        mixed = "hello world " * 4 + ARABIC
+        self.assertFalse(detect.is_rtl_text(mixed))
+
+    def test_vertical_lines_and_classify(self):
+        self.assertTrue(detect.is_vertical_lines([(0, -1), (0, -1)]))
+        self.assertFalse(detect.is_vertical_lines([(1, 0), (1, 0)]))
+        self.assertFalse(detect.is_vertical_lines([]))
+        self.assertEqual(detect.classify_unsupported(PROSE, [(0, -1)]), "vertical")
+        self.assertEqual(detect.classify_unsupported(ARABIC, [(1, 0)]), "rtl")
+        self.assertEqual(detect.classify_unsupported(PROSE, [(1, 0)]), "")
+
+    def test_math_density(self):
+        self.assertTrue(detect.is_math_dense(FORMULA))
+        self.assertFalse(detect.is_math_dense(PROSE))
+        self.assertFalse(detect.is_math_dense(""))  # 空文本不误判
+        # 普通正文里偶有运算符，占比不足 → 不误判。
+        self.assertFalse(detect.is_math_dense("The value is 3 plus 4 equals 7."))
+
+    def test_table_grid_regular_and_irregular(self):
+        cells = []
+        for row in range(4):
+            for col in range(2):
+                cells.append(block((40 + col * 120, 60 + row * 30,
+                                    100 + col * 120, 72 + row * 30), f"c{row}{col}", size=9))
+        grid = detect.table_grid(cells)
+        self.assertIsNotNone(grid)
+        self.assertEqual((grid["rows"], grid["cols"]), (4, 2))
+        self.assertFalse(grid["irregular"])
+        # 少一个列位（合并单元格）→ 不规则，行内回填无法还原。
+        merged = [c for i, c in enumerate(cells) if i != 3]
+        self.assertTrue(detect.table_grid(merged)["irregular"])
+        # 块太少 → 不误判为表格。
+        self.assertIsNone(detect.table_grid(cells[:2]))
+
+    def test_page_geometry_degraded(self):
+        plain = fitz.open()
+        self.addCleanup(plain.close)
+        page = plain.new_page(width=400, height=400)
+        self.assertFalse(detect.page_geometry_degraded(page))
+        page.set_rotation(90)
+        self.assertTrue(detect.page_geometry_degraded(page))
+        cropped = plain.new_page(width=400, height=400)
+        cropped.set_cropbox(fitz.Rect(40, 40, 360, 360))
+        self.assertTrue(detect.page_geometry_degraded(cropped))
+
+
+# —— 抽取标注（extract） ------------------------------------------------------
+
+class ExtractScriptTests(unittest.TestCase):
+    def make_doc(self):
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        return doc
+
+    def test_rtl_flagged_from_text(self):
+        """RTL 文本（含 OCR 块）在抽取阶段标注为 unsupported_script。"""
+        doc = self.make_doc()
+        page = doc.new_page(width=400, height=300)
+        boxes = [{"text": ARABIC, "x": 0.1, "y": 0.1, "w": 0.5, "h": 0.05}]
+        blocks = extract.extract_page(page, ocr_boxes=boxes)
+        self.assertEqual(blocks[0].unsupported_script, "rtl")
+
+    def test_vertical_flagged_from_line_direction(self):
+        """竖排行方向（line['dir'] 非水平）标注为 vertical。"""
+        doc = self.make_doc()
+        page = doc.new_page(width=400, height=300)
+        page.insert_text((180, 60), "VerticalText", fontsize=12, rotate=90)
+        blocks = extract.extract_page(page)
+        self.assertTrue(blocks, "竖排块未被抽取")
+        self.assertEqual(blocks[0].unsupported_script, "vertical")
+
+    def test_normal_text_not_flagged(self):
+        doc = self.make_doc()
+        page = doc.new_page(width=400, height=300)
+        page.insert_text((40, 60), PROSE, fontsize=12)
+        blocks = extract.extract_page(page)
+        self.assertEqual(blocks[0].unsupported_script, "")
+
+
+# —— 回填落地（reflow） -------------------------------------------------------
+
+class ReflowDetectionTests(unittest.TestCase):
+    def make_page(self, width=400, height=400, rotation=0):
+        doc = fitz.open()
+        self.addCleanup(doc.close)
+        page = doc.new_page(width=width, height=height)
+        if rotation:
+            page.set_rotation(rotation)
+        return page
+
+    def report_reasons(self, report, page_no=1):
+        return next((item["reasons"] for item in report.to_dict()["pages"]
+                     if item["page"] == page_no), [])
+
+    def report_detail(self, report, reason, page_no=1):
+        item = next((entry for entry in report.to_dict()["pages"]
+                     if entry["page"] == page_no), None)
+        return None if item is None else item.get("detail", {}).get(reason)
+
+    # unsupported_script ---------------------------------------------------
+
+    def test_unsupported_flag_keeps_original_and_records_index(self):
+        """标记为 RTL 的块不翻译：原文保留、不 redaction，报告含块下标。"""
+        page = self.make_page()
+        page.insert_text((40, 60), "Original kept text", fontsize=12)
+        blocks = extract.extract_page(page)
+        blocks[0].unsupported_script = "rtl"
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: ARABIC}, report)
+        self.assertIn("Original kept text", page.get_text())
+        self.assertNotIn(ARABIC, page.get_text())
+        self.assertEqual(self.report_reasons(report), ["unsupported_script"])
+        self.assertEqual(self.report_detail(report, "unsupported_script")["blocks"], [0])
+        self.assertEqual(len(list(page.annots() or [])), 0)  # 未 redaction/未铺黑框
+
+    def test_rtl_text_detected_without_flag(self):
+        """抽取未标注时，回填按块文本补判 RTL 并记 unsupported_script。"""
+        page = self.make_page()
+        page.insert_text((40, 60), "hebrew source", fontsize=12)
+        blocks = [block((35, 45, 260, 80), HEBREW)]
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "should not be written"}, report)
+        self.assertIn("unsupported_script", self.report_reasons(report))
+        self.assertNotIn("should not be written", page.get_text())
+
+    # formula_fail ---------------------------------------------------------
+
+    def test_formula_fail_when_overflowing(self):
+        page = self.make_page()
+        page.insert_text((40, 60), FORMULA, fontsize=10)
+        blocks = extract.extract_page(page)
+        self.assertTrue(detect.is_math_dense(blocks[0].text))
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "translated " * 200}, report)
+        self.assertIn("formula_fail", self.report_reasons(report))
+
+    def test_formula_that_fits_not_flagged(self):
+        page = self.make_page()
+        page.insert_text((40, 60), FORMULA, fontsize=10)
+        blocks = extract.extract_page(page)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "译文"}, report)
+        self.assertNotIn("formula_fail", self.report_reasons(report))
+
+    # table_fail -----------------------------------------------------------
+
+    def _table_page(self):
+        page = self.make_page(width=420, height=420)
+        xs, ys = [40, 170, 300], [60, 110, 160, 210]
+        for row, y in enumerate(ys):
+            for col, x in enumerate(xs):
+                page.insert_text((x, y), f"r{row}c{col}", fontsize=9)
+        for x in (30, 160, 290, 410):
+            page.draw_line(fitz.Point(x, 40), fitz.Point(x, 230))
+        for y in (45, 95, 145, 195, 230):
+            page.draw_line(fitz.Point(30, y), fitz.Point(410, y))
+        return page
+
+    def test_table_fail_when_cells_overflow(self):
+        page = self._table_page()
+        blocks = extract.extract_page(page)
+        self.assertIsNotNone(detect.table_structure(page, blocks))
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks,
+                             {i: "translated " * 200 for i in range(len(blocks))}, report)
+        self.assertIn("table_fail", self.report_reasons(report))
+
+    def test_table_with_fitting_cells_not_flagged(self):
+        page = self._table_page()
+        blocks = extract.extract_page(page)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {i: "表" for i in range(len(blocks))}, report)
+        self.assertNotIn("table_fail", self.report_reasons(report))
+
+    # rotation_crop --------------------------------------------------------
+
+    def test_rotated_page_records_rotation_crop(self):
+        page = self.make_page(rotation=90)
+        page.insert_text((40, 60), "Rotated source", fontsize=12)
+        blocks = extract.extract_page(page)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "旋转译文"}, report)
+        self.assertEqual(page.rotation, 90)
+        self.assertIn("rotation_crop", self.report_reasons(report))
+
+    def test_cropped_page_records_rotation_crop(self):
+        page = self.make_page(width=595, height=842)
+        page.set_cropbox(fitz.Rect(50, 100, 545, 600))
+        page.insert_text((120, 260), "inside crop", fontsize=12)
+        blocks = extract.extract_page(page)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "裁剪译文"}, report)
+        self.assertIn("rotation_crop", self.report_reasons(report))
+
+    def test_plain_page_has_no_rotation_crop(self):
+        page = self.make_page()
+        page.insert_text((40, 60), "Plain source", fontsize=12)
+        blocks = extract.extract_page(page)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, blocks, {0: "普通译文"}, report)
+        self.assertNotIn("rotation_crop", self.report_reasons(report))
+
+
+# —— 翻译跳过（engine）与报告 sidecar ----------------------------------------
+
+class EngineSkipTests(unittest.TestCase):
+    def test_unsupported_block_not_sent_to_model(self):
+        """标记 unsupported_script 的块不发送请求（决策 §2.4：保留原文不翻译）。"""
+
+        class ExplodingClient:
+            def translate(self, pair, validator=None):
+                raise AssertionError("不支持的脚本块不应发送到模型")
+
+        report = verify.DegradationReport()
+        blocks = [block((35, 45, 260, 80), ARABIC, script="rtl")]
+        translations = engine._translate_blocks(blocks, report, ExplodingClient(),
+                                                "generic", None, "auto", "zh")
+        self.assertEqual(len(translations), 1)
+        self.assertEqual(translations[0].text, "")  # 未翻译 → 回填保留原文
+
+
+class ReportSidecarTests(unittest.TestCase):
+    """旋转页经 engine.dispatch 后，rotation_crop 应进入结果与 sidecar JSON。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(prefix="aipdf-detect-")
+        cls.root = Path(cls.temp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    class FakeResponse:
+        def __init__(self, body):
+            self._body = json.dumps(body).encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def test_rotation_crop_reaches_sidecar(self):
+        source = self.root / "rotated.pdf"
+        doc = fitz.open()
+        page = doc.new_page(width=400, height=400)
+        page.insert_text((60, 80), "Hello rotated world", fontsize=12)
+        page.set_rotation(90)
+        doc.save(source)
+        doc.close()
+
+        content = json.dumps([{"index": 0, "text": "旋转译文"}])
+        body = {"choices": [{"index": 0, "message": {"role": "assistant", "content": content},
+                             "finish_reason": "stop"}]}
+        request = {"operation": "translate", "files": [str(source)],
+                   "outputDir": str(self.root),
+                   "options": {"apiKey": API_KEY, "endpoint": ENDPOINT, "model": MODEL,
+                               "targetLang": "zh", "sourceLang": "auto",
+                               "template": "generic", "format": "mono"}}
+        with unittest.mock.patch.object(llm, "_open",
+                                        return_value=self.FakeResponse(body)):
+            result = engine.dispatch(request)
+
+        self.assertTrue(result["ok"])
+        reasons = {reason for entry in result["results"][0]["report"]["pages"]
+                   for reason in entry["reasons"]}
+        self.assertIn("rotation_crop", reasons)
+        reports = list(Path(result["outputDir"]).glob("*-降级报告.json"))
+        self.assertEqual(len(reports), 1)
+        sidecar = json.loads(reports[0].read_text(encoding="utf-8"))
+        sidecar_reasons = {reason for entry in sidecar["pages"] for reason in entry["reasons"]}
+        self.assertIn("rotation_crop", sidecar_reasons)
+        # 源文件只读不变。
+        with fitz.open(str(source)) as reopened:
+            self.assertIn("Hello rotated world", reopened[0].get_text())
+
+
+if __name__ == "__main__":
+    unittest.main()
