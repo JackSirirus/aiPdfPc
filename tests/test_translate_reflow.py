@@ -212,6 +212,17 @@ class ReflowTests(unittest.TestCase):
         self.assertIn("KEEP ORIGINAL", page.get_text())
         self.assertEqual(self.reasons(report), [])
 
+    def test_duplicate_index_fragments_are_concatenated(self):
+        """R5-2 防线：同一下标的多片译文按序拼接，后者不覆盖前者。"""
+        page = self.make_page()
+        page.insert_text((40, 60), "SOURCE", fontsize=12)
+        report = reflow.DegradationReport()
+        reflow.backfill_page(page, [block((35, 45, 260, 80), "SOURCE")], [
+            BlockTranslation(index=0, text="前半"),
+            BlockTranslation(index=0, text="后半"),
+        ], report)
+        self.assertIn("前半后半", page.get_text())
+
     # --- §5 字体策略 --------------------------------------------------------
 
     def test_cjk_output_is_searchable_after_save(self):

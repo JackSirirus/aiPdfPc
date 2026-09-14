@@ -285,6 +285,17 @@ class TranslationFormsTests(OutputTestCase):
         self.addCleanup(mono.close)
         self.assertIn("甲", mono[0].get_text())
 
+    def test_flat_duplicate_index_fragments_are_concatenated(self):
+        # R5-2 防线：同一下标的多片译文按序拼接，不因覆盖而丢片。
+        src_path = self.source("报告.pdf", ["Page one"])
+        report = DegradationReport(task_id="t")
+        translations = [BlockTranslation(index=0, text="前半"),
+                        BlockTranslation(index=0, text="后半")]
+        with fitz.open(str(src_path)) as src:
+            mono = output.build_mono(src, translations, report, marker=False)
+        self.addCleanup(mono.close)
+        self.assertIn("前半后半", mono[0].get_text())
+
 
 class FilenameTests(OutputTestCase):
     def test_default_names(self):

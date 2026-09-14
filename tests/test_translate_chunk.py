@@ -213,6 +213,31 @@ class ReassembleTests(unittest.TestCase):
         self.assertEqual(chunk.reassemble_chunks([], []), [])
         self.assertEqual(chunk.reassemble_chunks([], ["junk"]), [])
 
+    def test_split_block_fragments_merge_in_source_order(self):
+        # R5-2：同一源块被切成 3 片时，按源序拼成一条，不丢片。
+        item = chunk.Chunk(chunks=["aa", "bb", "cc"], source_indices=[0, 0, 0])
+        results = chunk.reassemble_chunks([item], ["T1", "T2", "T3"])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].index, 0)
+        self.assertEqual(results[0].text, "T1T2T3")
+        self.assertFalse(results[0].degraded)
+
+    def test_missing_fragment_marks_merged_translation_degraded(self):
+        # R5-2：任一片缺失译文时整条标 degraded，交由调用方保留原文（不半替换）。
+        item = chunk.Chunk(chunks=["aa", "bb"], source_indices=[0, 0])
+        results = chunk.reassemble_chunks([item], ["T1", ""])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, "T1")
+        self.assertTrue(results[0].degraded)
+
+    def test_fragments_across_chunks_merge_into_one(self):
+        # 同一块的多片落在不同 chunk：仍合并为单条（源序）。
+        first = chunk.Chunk(chunks=["aa"], source_indices=[0])
+        second = chunk.Chunk(chunks=["ctx", "bb"], source_indices=[0])
+        results = chunk.reassemble_chunks([first, second], ["T1", "", "T2"])
+        self.assertEqual([(r.index, r.text, r.degraded) for r in results],
+                         [(0, "T1T2", False)])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -458,5 +458,207 @@ class TranslateTextTests(unittest.TestCase):
         self.assertIn("unsupported_script", result["reasons"])
 
 
+class RemediationR5Tests(unittest.TestCase):
+    """R4 对抗性复审遗留缺陷（R5-1 / R5-2 / R5-3 / R5-11）的端到端回归。
+
+    所有 LLM 调用经 monkeypatch 的 `translate.llm._open`，不发起任何真实网络请求；
+    样例均为内存/临时目录的合成 PDF，不读取个人文档。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(prefix="aipdf-r5-")
+        cls.root = Path(cls.temp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    @staticmethod
+    def _plain_pdf(name, text="Hello world"):
+        path = RemediationR5Tests.root / name
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 100), text, fontsize=12)
+        doc.save(str(path))
+        doc.close()
+        return path
+
+    @staticmethod
+    def _restricted_pdf(name, text="Secret original body"):
+        """权限加密源：空用户密码 + 仅允许打印（/P 禁止抽取/复制）。"""
+        path = RemediationR5Tests.root / name
+        doc = fitz.open()
+        page = doc.new_page(width=400, height=500)
+        page.insert_text((72, 90), text, fontsize=12)
+        doc.save(str(path), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="",
+                 owner_pw="owner-secret", permissions=int(fitz.PDF_PERM_PRINT))
+        doc.close()
+        return path
+
+    @staticmethod
+    def _oversized_pdf(name):
+        """单块文本超过硬上限（>3000 token）：抽取为一个块，分块时被切成多片。"""
+        path = RemediationR5Tests.root / name
+        doc = fitz.open()
+        page = doc.new_page(width=595, height=842)
+        y, index = 20.0, 0
+        while y < 830:
+            line = "".join("w%02d " % ((index * 7 + j) % 97) for j in range(18))
+            page.insert_text((20, y), line, fontsize=7)
+            y += 8.2
+            index += 1
+        doc.save(str(path))
+        doc.close()
+        return path
+
+    @staticmethod
+    def _tiny_pdf(name, text):
+        """小页 + 满页块：较长的译文必然溢出/裁切，用于 R5-11 聚合告警。"""
+        path = RemediationR5Tests.root / name
+        doc = fitz.open()
+        page = doc.new_page(width=200, height=200)
+        y = 12.0
+        for start in range(0, len(text), 40):
+            page.insert_text((10, y), text[start:start + 40], fontsize=7)
+            y += 8.0
+        doc.save(str(path))
+        doc.close()
+        return path
+
+    def default_options(self, **overrides):
+        options = {"apiKey": API_KEY, "endpoint": ENDPOINT, "model": MODEL,
+                   "targetLang": "zh", "sourceLang": "auto", "template": "generic"}
+        options.update(overrides)
+        return options
+
+    def dispatch(self, files, options, output_dir=None):
+        request = {"operation": "translate", "files": [str(p) for p in files],
+                   "options": options, "outputDir": str(output_dir or self.root)}
+        return engine.dispatch(request)
+
+    # --- R5-1：受限披露从 sidecar 接到 dispatch 结果 -------------------------
+
+    def test_restricted_source_protection_reaches_dispatch_result(self):
+        source = self._restricted_pdf("受限.pdf")
+        with unittest.mock.patch.object(llm, "_open",
+                                        return_value=FakeResponse(response_body())):
+            result = self.dispatch([source], self.default_options(format="mono"))
+        self.assertTrue(result["ok"])
+        report = result["results"][0]["report"]
+        self.assertIn("source_protection", report)          # 键名与宿主契约一致
+        self.assertTrue(report["source_protection"]["restricted"])
+        self.assertTrue(report["source_protection"]["disclosure"])
+        # write_outputs 返回值、report、sidecar 三方同源。
+        self.assertEqual(result["results"][0]["sourceProtection"],
+                         report["source_protection"])
+        sidecars = list(Path(result["outputDir"]).glob("*-降级报告.json"))
+        self.assertEqual(len(sidecars), 1)
+        sidecar = json.loads(sidecars[0].read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["source_protection"], report["source_protection"])
+
+    def test_source_protection_present_for_plain_source(self):
+        source = self._plain_pdf("plain-disclosure.pdf")
+        with unittest.mock.patch.object(llm, "_open",
+                                        return_value=FakeResponse(response_body())):
+            result = self.dispatch([source], self.default_options(format="mono"))
+        info = result["results"][0]["report"].get("source_protection")
+        self.assertIsNotNone(info)
+        self.assertFalse(info["restricted"])
+
+    # --- R5-2：超长段落多片译文全部落盘 --------------------------------------
+
+    def test_split_fragments_all_reach_output_pdf(self):
+        source = self._oversized_pdf("big.pdf")
+        with fitz.open(str(source)) as doc:
+            blocks = extract.extract_document(doc).blocks
+        self.assertEqual(len(blocks), 1)
+        nodes = chunk.chunk_blocks(blocks)
+        self.assertGreaterEqual(len(nodes), 2, "用例应触发超长段落切分")
+        self.assertTrue(all(item.source_indices == [0] for item in nodes))
+
+        digests = []
+
+        def fake_open(request, timeout):
+            body = json.loads(bytes(request.data).decode("utf-8"))
+            user = next(m["content"] for m in body["messages"] if m["role"] == "user")
+            segment = user.split(">", 1)[1].rsplit("</untrusted>", 1)[0]
+            segment = segment.replace("&lt;", "<").replace("&gt;", ">")
+            digest = hashlib.md5(segment.encode("utf-8")).hexdigest()[:12]
+            digests.append(digest)
+            # 每片至少 0.2× 长度（校验下界）且带唯一标记：既证明各片都回填，
+            # 又避免超长译文触发大量 fill_textbox 测量拖慢用例。
+            content = json.dumps(
+                [{"index": 0, "text": "【" + digest + "】" + "译" * max(1, len(segment) // 4)}],
+                ensure_ascii=False)
+            return FakeResponse({"choices": [{"index": 0, "finish_reason": "stop",
+                                              "message": {"role": "assistant",
+                                                          "content": content}}]})
+
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            result = self.dispatch([source], self.default_options(format="mono"))
+        self.assertTrue(result["ok"])
+        # 每一片核心段各发一次请求 → 每片译文都必须出现在产物里。
+        self.assertEqual(len(digests), sum(len(item.source_indices) for item in nodes))
+        self.assertGreaterEqual(len(digests), 2)
+        with fitz.open(result["outputs"][0]) as doc:
+            extracted = re.sub(r"\s+", "", doc[0].get_text())
+        missing = [digest for digest in digests if digest not in extracted]
+        self.assertEqual(missing, [], f"有片段译文未落盘：{missing}")
+        reasons = {reason for page in result["results"][0]["report"]["pages"]
+                   for reason in page["reasons"]}
+        self.assertIn("segment_split", reasons)
+
+    # --- R5-3：非 loopback 强制 https ----------------------------------------
+
+    def test_http_non_loopback_endpoint_is_rejected(self):
+        source = self._plain_pdf("scheme.pdf")
+        with unittest.mock.patch.object(llm, "_open") as mocked:
+            with self.assertRaisesRegex(engine.UserError, "https"):
+                self.dispatch([source], self.default_options(endpoint="http://api.example.test/v1"))
+            with self.assertRaisesRegex(engine.UserError, "https"):
+                engine.dispatch({"operation": "translate_text",
+                                 "options": {"text": "Hi", "endpoint": "http://api.example.test/v1",
+                                             "model": MODEL, "apiKey": API_KEY}})
+        mocked.assert_not_called()
+
+    def test_https_and_loopback_http_endpoints_are_allowed(self):
+        source = self._plain_pdf("scheme-ok.pdf")
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(response_body())
+
+        for endpoint in ("https://api.example.test/v1", "http://127.0.0.1:11434/v1"):
+            with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+                result = self.dispatch([source], self.default_options(endpoint=endpoint,
+                                                                      format="mono"))
+            self.assertTrue(result["ok"])
+        self.assertEqual(len(captured), 2)
+
+    # --- R5-11：溢出/裁切聚合告警 --------------------------------------------
+
+    def test_overflow_aggregate_warns_for_clipped_translation(self):
+        source = self._tiny_pdf("overflow.pdf", ("word " * 200)[:800])
+        with unittest.mock.patch.object(
+                llm, "_open", return_value=FakeResponse(response_body("译" * 2320))):
+            result = self.dispatch([source], self.default_options(format="mono"))
+        self.assertTrue(result["ok"])
+        overflow = result["results"][0]["overflow"]
+        self.assertEqual(set(overflow), {"pages", "clipPages", "warn"})
+        self.assertTrue(overflow["warn"])
+        self.assertGreaterEqual(overflow["pages"], 1)
+        self.assertGreaterEqual(overflow["clipPages"], 1)
+
+    def test_overflow_aggregate_is_quiet_when_translation_fits(self):
+        source = self._plain_pdf("fits.pdf")
+        with unittest.mock.patch.object(llm, "_open",
+                                        return_value=FakeResponse(response_body())):
+            result = self.dispatch([source], self.default_options(format="mono"))
+        self.assertEqual(result["results"][0]["overflow"],
+                         {"pages": 0, "clipPages": 0, "warn": False})
+
+
 if __name__ == "__main__":
     unittest.main()

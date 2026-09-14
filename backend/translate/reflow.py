@@ -465,6 +465,11 @@ def _translation_map(blocks, translations):
 
 
 def _store_translation(result, index, value):
+    """记录一个块下标的译文；同一下标已存在时按序拼接而非覆盖。
+
+    超长段落被切成多片后会产生多个同下标译文，直接赋值会丢掉先前片段，
+    因此这里追加（`chunk.reassemble_chunks` 已先合并；这是第二道防线）。
+    """
     if value is None:
         return
     if hasattr(value, "text"):
@@ -477,7 +482,8 @@ def _store_translation(result, index, value):
         text = value
     text = "" if text is None else str(text)
     if text.strip():
-        result[index] = text
+        existing = result.get(index)
+        result[index] = text if existing is None else existing + text
 
 
 def _is_raster(block):

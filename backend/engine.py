@@ -919,23 +919,62 @@ def _translate_blocks(blocks, report, client, template_name, glossary_entries, s
         core = [blocks[index] for index in item.source_indices]
         if not core:
             continue
+        # 待译文本：普通块用原块文本；被切分的超长段落用 `Chunk.core_segments` 的原子片段。
+        # 超长段落切成 ≥2 片时同一块下标会重复出现，只有按片段发送才能让每片各自 ≤ 硬上限；
+        # 否则整段被重复发送、浪费额度，重组时又会丢弃片段。`core_segments` 与
+        # `source_indices` 一一对应，`split_indices` 标记本块内被切分的源块下标。
+        split_indices = set(item.split_indices)
+        segments = [segment if index in split_indices else blocks[index].text
+                    for index, segment in zip(item.source_indices, item.core_segments)]
         # 请求段顺序 = [上下文重叠段…, 核心段…]；重叠段仅作提示，用占位符对齐，不参与回填。
         translations.extend([""] * item.overlap_count)
-        pairs = prompt.build_prompt([block.text for block in core], template_name=template_name,
+        pairs = prompt.build_prompt(segments, template_name=template_name,
                                     glossary=glossary_entries, custom_template=custom_template)
-        for block, pair in zip(core, pairs):
+        for block, segment, pair in zip(core, segments, pairs):
             if getattr(block, "unsupported_script", ""):
                 translations.append("")  # §2.4：不支持的脚本不发送、保留原文
                 continue
-            hits = prompt.scan_untrusted_instructions(block.text)
+            hits = prompt.scan_untrusted_instructions(segment)
             if hits:
                 report.add(block.page_no, verify.SUSPICIOUS_INSTRUCTION,
                            {"patterns": hits, "index": getattr(block, "index", None)})
                 translations.append("")
                 continue
-            translations.append(_translate_one_segment(client, pair, block.text, block.page_no,
+            translations.append(_translate_one_segment(client, pair, segment, block.page_no,
                                                        report, source_lang, target_lang))
     return chunk.reassemble_chunks(chunks, translations)
+
+
+def _report_payload(report):
+    """降级报告 payload：`to_dict()` 合并受限文档披露，供 sidecar 与 dispatch 结果共用。
+
+    受限披露（`report.source_protection`，由 `output.write_outputs` 落属性）不在固定
+    schema 内，必须显式合并；sidecar 与 `results[].report` 用同一份，避免二者断链
+    （R5-1：宿主读 `results[].report.source_protection`）。
+    """
+    payload = report.to_dict()
+    info = getattr(report, "source_protection", None)
+    if info:
+        payload["source_protection"] = info
+    return payload
+
+
+def _overflow_summary(report):
+    """从每页 `reasons` 聚合溢出/裁切：`{pages, clipPages, warn}`（R5-11）。
+
+    `pages` = 命中 `overflow_margin`(S2) 或 `clip`(S3) 的页数；`clipPages` = 仅命中
+    `clip` 的页数；`warn` = 是否存在溢出页。消费方（含批量页）据此无需遍历逐页明细
+    即可非静默地把「本文件 N 页译文超出原文范围，其中 M 页被裁切」呈现给用户。
+    """
+    from translate.verify import CLIP, OVERFLOW_MARGIN
+    pages = clip_pages = 0
+    for item in report.to_dict().get("pages", []):
+        reasons = set(item.get("reasons", []))
+        if reasons & {OVERFLOW_MARGIN, CLIP}:
+            pages += 1
+        if CLIP in reasons:
+            clip_pages += 1
+    return {"pages": pages, "clipPages": clip_pages, "warn": pages > 0}
 
 
 def _translate_document(source_doc, source_path, options, out, client, formats, high_risk):
@@ -962,12 +1001,8 @@ def _translate_document(source_doc, source_path, options, out, client, formats, 
     result = output.write_outputs(source_doc, source_path, translations, report, out,
                                   marker=bool(options.get("marker", True)), high_risk=high_risk,
                                   formats=formats, blocks_by_page=blocks_by_page, task_dir=out)
-    payload = report.to_dict()
-    info = getattr(report, "source_protection", None)
-    if info:
-        payload["source_protection"] = info
     bridge.atomic_write(out / f"{Path(source_path).stem}-降级报告.json",
-                        json.dumps(payload, ensure_ascii=False, indent=2))
+                        json.dumps(_report_payload(report), ensure_ascii=False, indent=2))
     return result, report
 
 
@@ -998,6 +1033,20 @@ def _is_loopback_endpoint(endpoint):
         return False
 
 
+def _require_secure_endpoint(endpoint):
+    """非 loopback 端点必须 https：拒绝明文 `http://`（本机 loopback 仍允许 http）。
+
+    与 C# `TranslationProviderConfig` 的云端 https 要求同口径；本机自备服务
+    （Ollama / LM Studio，loopback）常只监听 http，保持放行。非 http/https 的
+    其它 scheme（含缺 scheme）一律拒绝，避免把密钥发往未预期协议。
+    """
+    value = str(endpoint or "").strip()
+    scheme = urlsplit(value).scheme.lower()
+    if scheme == "https" or (scheme == "http" and _is_loopback_endpoint(value)):
+        return
+    raise UserError("翻译服务端点必须使用 https（仅本机 loopback 允许 http）。")
+
+
 def translate_request(request):
     """翻译操作 dispatch：在 BY_ID 与 outputDir 校验之前处理，自建等价校验（T10）。"""
     from translate import glossary as glossary_module
@@ -1016,6 +1065,7 @@ def translate_request(request):
     model = str(options.get("model", "") or "").strip()
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
+    _require_secure_endpoint(endpoint)
     if not model:
         raise UserError("请先配置翻译模型。")
     if not api_key and not _is_loopback_endpoint(endpoint):
@@ -1066,7 +1116,12 @@ def translate_request(request):
             results.append({"file": path, "taskDir": result["taskDir"],
                             "mono": result.get("mono"), "dual": result.get("dual"),
                             "markdown": result.get("markdown"),
-                            "report": report.to_dict()})
+                            # 与 sidecar 同源：含 source_protection，宿主据此读受限披露（R5-1）。
+                            "report": _report_payload(report),
+                            # 不丢弃 write_outputs 返回的受限披露（R5-1）。
+                            "sourceProtection": result.get("sourceProtection"),
+                            # 溢出/裁切聚合，供结果区与批量页非静默告警（R5-11）。
+                            "overflow": _overflow_summary(report)})
         progress("翻译完成", 1.0)
         return {"ok": True, "outputs": [str(p) for p in outputs], "outputDir": str(out),
                 "results": results,
@@ -1104,6 +1159,7 @@ def translate_text_request(request):
     api_key = str(options.get("apiKey", "") or "")
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
+    _require_secure_endpoint(endpoint)
     if not model:
         raise UserError("请先配置翻译模型。")
     if not api_key and not _is_loopback_endpoint(endpoint):

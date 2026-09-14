@@ -229,6 +229,11 @@ def reassemble_chunks(chunks, translations):
 
     译文多于预期时忽略多余项，少于预期时缺失下标以 `degraded=True` 标记，交由调用方保留
     原文。调用方应优先产出请求对齐输入，避免长度巧合带来的歧义。
+
+    同一源块被切成 ≥2 个 atom（超长段落切分）时，`source_indices` 会重复同一块下标，
+    这里在返回前把**同一下标的多片译文按源序拼成一条**（见 `_merge_fragments`）。否则
+    回填按块下标写入（`output._flatten` / `reflow._store_translation`）会互相覆盖，只留
+    最后一片，前面的译文静默丢失。
     """
     chunks = list(chunks or [])
     translations = list(translations or [])
@@ -249,7 +254,31 @@ def reassemble_chunks(chunks, translations):
                 results.append(BlockTranslation(index=index, text=core[offset]))
             else:
                 results.append(BlockTranslation(index=index, text="", degraded=True))
-    return results
+    return _merge_fragments(results)
+
+
+def _merge_fragments(results):
+    """把同一源块下标的多片译文按出现顺序拼成一条 `BlockTranslation`。
+
+    超长段落被切分后，同一块会产生多片译文。这里按源序拼接（不自造分隔符；CJK 目标
+    语言无需空格，拉丁目标语言的片段边界由模型译文自身标点承接）。任一片缺失译文
+    （`degraded` 或空串——空串表示该片未发送/未通过校验）时整条标记 `degraded`，由
+    调用方保留原文，避免「半段替换、半段留原文」的静默错位。
+    """
+    merged = []
+    positions = {}
+    for item in results:
+        position = positions.get(item.index)
+        if position is None:
+            positions[item.index] = len(merged)
+            merged.append(item)
+            continue
+        previous = merged[position]
+        missing = item.degraded or not (item.text or "").strip()
+        merged[position] = BlockTranslation(
+            index=item.index, text=(previous.text or "") + (item.text or ""),
+            degraded=previous.degraded or missing)
+    return merged
 
 
 # —— 超长段落切分（§3.2.2） --------------------------------------------------

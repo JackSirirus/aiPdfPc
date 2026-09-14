@@ -193,6 +193,17 @@ def _text_of(value):
     return str(value)
 
 
+def _append_text(result, index, text):
+    """把同一块下标的译文按出现顺序拼接（超长段落被切成多片后逐片回填）。
+
+    回填按块下标写入，若同一下标出现多次而直接赋值会覆盖先前片段、静默丢内容，
+    因此这里改为追加。`reassemble_chunks` 已在上游合并同块片段；本函数是防线，
+    保证任何仍带重复下标的输入也不会丢片。
+    """
+    existing = result.get(index)
+    result[index] = text if existing is None else existing + text
+
+
 def _localize(value, blocks, offset):
     """把一页的译文输入归一为 `{局部块下标: 译文}`。
 
@@ -222,7 +233,7 @@ def _localize(value, blocks, offset):
             index = int(item.index) - (offset if global_form else 0)
             text = _text_of(item)
             if 0 <= index < len(blocks) and text.strip():
-                result[index] = text
+                _append_text(result, index, text)  # 同块多片译文按序拼接，不覆盖
         return result
     result = {}
     for index, item in enumerate(items):
@@ -283,7 +294,7 @@ def _flatten(pages, items):
             page_no, index = located
             text = _text_of(item)
             if text.strip():
-                result.setdefault(page_no, {})[index] = text
+                _append_text(result.setdefault(page_no, {}), index, text)
         return result
     cursor = 0
     for page_index, blocks in enumerate(pages):
@@ -496,6 +507,9 @@ def write_outputs(source_doc, source_path, translations, report, output_dir, *,
     if not parent.is_dir():
         raise _user_error("请选择有效的输出文件夹。")
     folder = Path(task_dir) if task_dir else new_task_dir(parent)
+    # 受限披露先于任何产物落地：即便只导出 Markdown（不经过 mono/dual 构建器），
+    # 报告与结果也携带同一份 source_protection，避免 sidecar 与 dispatch 结果断链。
+    _disclose_restrictions(source_doc, report)
     pages = blocks_by_page if blocks_by_page is not None else _extract_blocks(source_doc)
     builders = {"mono": build_mono, "dual": build_dual}
     result = {"taskDir": str(folder)}
