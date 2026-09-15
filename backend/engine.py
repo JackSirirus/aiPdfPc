@@ -1063,6 +1063,8 @@ def translate_request(request):
     api_key = str(options.get("apiKey", "") or "")
     endpoint = str(options.get("endpoint", "") or "").strip()
     model = str(options.get("model", "") or "").strip()
+    # v1.2 契约：缺失 apiProtocol 即 openai（向后兼容）；provider/displayName 永不读取。
+    protocol = str(options.get("apiProtocol", llm.PROTOCOL_OPENAI) or llm.PROTOCOL_OPENAI)
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
     _require_secure_endpoint(endpoint)
@@ -1103,7 +1105,8 @@ def translate_request(request):
     out.mkdir(mode=0o700)
     started = time.monotonic()
     try:
-        client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
+        client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap,
+                               api_protocol=protocol)
         outputs, results = [], []
         for index, path in enumerate(files):
             progress(f"正在翻译文件 {index + 1}/{len(files)}", index / len(files))
@@ -1157,6 +1160,8 @@ def translate_text_request(request):
     endpoint = str(options.get("endpoint", "") or "").strip()
     model = str(options.get("model", "") or "").strip()
     api_key = str(options.get("apiKey", "") or "")
+    # v1.2 契约：缺失 apiProtocol 即 openai（向后兼容）；provider/displayName 永不读取。
+    protocol = str(options.get("apiProtocol", llm.PROTOCOL_OPENAI) or llm.PROTOCOL_OPENAI)
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
     _require_secure_endpoint(endpoint)
@@ -1202,7 +1207,8 @@ def translate_text_request(request):
         report.add(1, verify.SUSPICIOUS_INSTRUCTION, {"patterns": hits})
     elif not unsupported:
         try:
-            client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap)
+            client = llm.LLMClient(endpoint, api_key, model, cost_cap=cost_cap,
+                                   api_protocol=protocol)
             pair = prompt.build_prompt([text], template_name=template_name,
                                        glossary=glossary_entries,
                                        custom_template=custom_template)[0]

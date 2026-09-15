@@ -20,6 +20,9 @@ ENDPOINT = "https://api.example.test/v1"
 API_KEY = "sk-super-secret-test-key-123456"
 MODEL = "test-model"
 URL = ENDPOINT + "/chat/completions"
+# Anthropic base 不以 /v1 结尾（见需求总结 §Base URL 形状规则）。
+ANTHROPIC_ENDPOINT = "https://open.bigmodel.cn/api/anthropic"
+ANTHROPIC_URL = ANTHROPIC_ENDPOINT + "/v1/messages"
 
 
 class FakeResponse:
@@ -49,6 +52,13 @@ def ok(content="译文", usage=None, finish_reason="stop", refusal=None):
     if usage is not None:
         body["usage"] = usage
     return body
+
+
+def anthropic_ok(content="译文", input_tokens=1, output_tokens=1):
+    """一条 Anthropic Messages 响应：content 是文本块列表，usage 用 input/output_tokens。"""
+    return {"content": [{"type": "text", "text": content}],
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+            "stop_reason": "end_turn"}
 
 
 def http_error(status, body=""):
@@ -456,6 +466,89 @@ class KeyHygieneTests(unittest.TestCase):
 
     def test_redact_secret_leaves_short_values_alone(self):
         self.assertEqual(llm.redact_secret("abc", "ab"), "abc")
+
+
+class AnthropicProtocolTests(unittest.TestCase):
+    """`apiProtocol="anthropic"` 走 `/v1/messages` + `x-api-key` + `anthropic-version`。"""
+
+    def make_anthropic(self, **kwargs):
+        kwargs.setdefault("sleep", lambda _delay: None)
+        return llm.LLMClient(ANTHROPIC_ENDPOINT, API_KEY, MODEL,
+                             api_protocol="anthropic", **kwargs)
+
+    @staticmethod
+    def _headers(request):
+        return {name.lower(): value for name, value in request.header_items()}
+
+    def test_anthropic_request_shape(self):
+        with unittest.mock.patch.object(
+                llm, "_open", return_value=FakeResponse(anthropic_ok("你好"))) as opened:
+            self.assertEqual(self.make_anthropic().translate({"system": "S", "user": "U"}), "你好")
+        request = opened.call_args.args[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.full_url, ANTHROPIC_URL)
+        self.assertTrue(request.full_url.endswith("/v1/messages"))
+        headers = self._headers(request)
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertEqual(headers["x-api-key"], API_KEY)
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertNotIn("authorization", headers)
+        sent = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(sent["model"], MODEL)
+        self.assertIsInstance(sent["max_tokens"], int)
+        self.assertGreater(sent["max_tokens"], 0)
+        self.assertEqual(sent["system"], "S")
+        self.assertEqual(sent["messages"], [{"role": "user", "content": "U"}])
+        self.assertNotIn(API_KEY, request.data.decode("utf-8"))
+
+    def test_anthropic_omits_system_when_absent(self):
+        with unittest.mock.patch.object(
+                llm, "_open", return_value=FakeResponse(anthropic_ok())) as opened:
+            self.make_anthropic().translate({"user": "U"})
+        sent = json.loads(opened.call_args.args[0].data.decode("utf-8"))
+        self.assertNotIn("system", sent)
+        self.assertEqual(sent["messages"], [{"role": "user", "content": "U"}])
+
+    def test_anthropic_usage_is_normalized(self):
+        response = anthropic_ok("你好", input_tokens=3, output_tokens=4)
+        client = self.make_anthropic()
+        with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(response)):
+            client.translate({"system": "S", "user": "U"})
+        self.assertEqual(client.cost.used_tokens, 7)
+
+    def test_anthropic_401_maps_to_auth_error(self):
+        with unittest.mock.patch.object(llm, "_open", side_effect=http_error(401, "nope")) as opened:
+            with self.assertRaises(llm.AuthError):
+                self.make_anthropic().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 1)
+
+    def test_anthropic_429_maps_to_rate_limit_and_retries(self):
+        """分类与重试策略与 OpenAI 分支一致：429 → RateLimitError，共 3 次尝试。"""
+        with unittest.mock.patch.object(llm, "_open", side_effect=http_error(429, "slow")) as opened:
+            with self.assertRaises(llm.RateLimitError):
+                self.make_anthropic().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 3)
+
+    def test_anthropic_error_message_never_contains_key(self):
+        with unittest.mock.patch.object(llm, "_open", side_effect=urllib.error.URLError("boom")):
+            with self.assertRaises(llm.NetworkError) as caught:
+                self.make_anthropic().translate({"system": "S", "user": "U"})
+        self.assertNotIn(API_KEY, str(caught.exception))
+
+
+class DefaultProtocolTests(unittest.TestCase):
+    """契约：`options["apiProtocol"]` 缺失时即 `openai`，行为与改动前逐字一致。"""
+
+    def test_missing_protocol_defaults_to_openai(self):
+        with unittest.mock.patch.object(llm, "_open", return_value=FakeResponse(ok())) as opened:
+            llm.LLMClient(ENDPOINT, API_KEY, MODEL, sleep=lambda _delay: None).translate(
+                {"system": "S", "user": "U"})
+        request = opened.call_args.args[0]
+        self.assertEqual(request.full_url, URL)
+        self.assertTrue(request.full_url.endswith("/chat/completions"))
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertEqual(headers["authorization"], "Bearer " + API_KEY)
+        self.assertNotIn("anthropic-version", headers)
 
 
 if __name__ == "__main__":

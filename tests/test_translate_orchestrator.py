@@ -51,6 +51,14 @@ def response_body(text=TRANSLATION):
                          "finish_reason": "stop"}]}
 
 
+def anthropic_response_body(text=TRANSLATION):
+    """一条 Anthropic Messages 响应；文本块内容是逐段译文 JSON 数组。"""
+    content = json.dumps([{"index": 0, "text": text}])
+    return {"content": [{"type": "text", "text": content}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "stop_reason": "end_turn"}
+
+
 class TranslateOrchestratorTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -81,6 +89,24 @@ class TranslateOrchestratorTests(unittest.TestCase):
                    "targetLang": "zh", "sourceLang": "auto", "template": "generic"}
         options.update(overrides)
         return options
+
+    def test_anthropic_protocol_reaches_v1_messages(self):
+        """整篇翻译同样读取 options.apiProtocol 并交给传输层（v1.2 T4）。"""
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(anthropic_response_body())
+
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            result = self.dispatch(options=self.default_options(apiProtocol="anthropic"))
+
+        self.assertTrue(result["ok"])
+        request = captured[0]
+        self.assertTrue(request.full_url.endswith("/v1/messages"))
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertEqual(headers["x-api-key"], API_KEY)
+        self.assertNotIn("authorization", headers)
 
     def test_end_to_end_mono_and_dual(self):
         captured = []
@@ -430,6 +456,39 @@ class TranslateTextTests(unittest.TestCase):
         self.assertFalse(result["degraded"])
         self.assertEqual(result["reasons"], [])
         self.assertTrue(captured)
+
+    def test_anthropic_protocol_reaches_v1_messages(self):
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(anthropic_response_body())
+
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            result = engine.dispatch(self.request("Hello world", apiProtocol="anthropic"))
+
+        self.assertTrue(result["ok"])
+        request = captured[0]
+        self.assertTrue(request.full_url.endswith("/v1/messages"))
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertEqual(headers["x-api-key"], API_KEY)
+
+    def test_absent_protocol_keeps_openai_endpoint(self):
+        captured = []
+
+        def fake_open(request, timeout):
+            captured.append(request)
+            return FakeResponse(response_body())
+
+        with unittest.mock.patch.object(llm, "_open", side_effect=fake_open):
+            engine.dispatch(self.request("Hello world"))
+
+        request = captured[0]
+        self.assertTrue(request.full_url.endswith("/chat/completions"))
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertEqual(headers["authorization"], "Bearer " + API_KEY)
+        self.assertNotIn("anthropic-version", headers)
 
     def test_refusal_degrades_without_raising(self):
         with unittest.mock.patch.object(

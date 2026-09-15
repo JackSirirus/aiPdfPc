@@ -103,6 +103,15 @@ _RETRY_POLICY = {
 # 避免服务端不响应时无界挂起；一次 translate 最多尝试 3 次，最坏约 3×此值。
 DEFAULT_TIMEOUT = 30.0
 
+# —— 协议契约（v1.2，见需求总结 §协议与端点兼容）-----------------------------
+# `apiProtocol` ∈ {openai, anthropic}；缺失即 openai（向后兼容）。两种协议只在
+# 传输层分派：路径、鉴权头、请求体形状不同，错误分类与重试策略完全一致。
+PROTOCOL_OPENAI = "openai"
+PROTOCOL_ANTHROPIC = "anthropic"
+# Anthropic Messages 需要声明 API 版本，且 `max_tokens` 必填。
+ANTHROPIC_VERSION = "2023-06-01"
+ANTHROPIC_DEFAULT_MAX_TOKENS = 8192
+
 _NETWORK_MESSAGE = "无法连接翻译服务，请检查网络或服务端点后重试。"
 _RATE_LIMIT_MESSAGE = "翻译服务限流（HTTP 429），请稍后重试或更换服务商。"
 _REFUSAL_MESSAGE = "模型拒绝翻译这段内容。请更换 prompt 模板或模型后重试。"
@@ -205,15 +214,20 @@ def _open(request, timeout):
 
 
 class LLMClient:
-    """OpenAI 兼容 `chat/completions` 客户端。
+    """按 `api_protocol` 分派的翻译客户端。
 
+    `openai`（默认）：POST `{endpoint}/chat/completions`，`Authorization: Bearer`，body
+    `{model, messages}`——与 v1.1 行为逐字一致。
+    `anthropic`：POST `{endpoint}/v1/messages`，`x-api-key` + `anthropic-version`，body
+    `{model, max_tokens, messages[, system]}`；响应体在 `_post` 内转回统一形状，因此调用
+    方的重试 / 校验 / 成本逻辑无需感知协议差异。
     `api_key` 只从构造参数进入（调用方经 stdin 拿到后传入）；本类不读环境变量 / argv /
-    文件。`endpoint` 是 API 基址（如 `https://host/v1`），调用时拼接 `/chat/completions`。
+    文件。`endpoint` 是 API 基址（openai 常含 `/v1`；anthropic 不含，由本类拼 `/v1/messages`）。
     `cost_cap` 可传 `CostCap` 实例或直接传一个整数 token 上限。
     """
 
     def __init__(self, endpoint, api_key, model, timeout=DEFAULT_TIMEOUT, cost_cap=None,
-                 sleep=time.sleep):
+                 sleep=time.sleep, api_protocol=PROTOCOL_OPENAI):
         if not str(endpoint or "").strip():
             raise LLMError("未配置翻译服务端点。")
         if not str(model or "").strip():
@@ -223,6 +237,10 @@ class LLMClient:
         self.model = str(model).strip()
         self.timeout = timeout
         self.cost = cost_cap if isinstance(cost_cap, CostCap) else CostCap(cost_cap)
+        # 契约：只有 "anthropic" 走 Anthropic，其余（含缺失/未知）回到 openai。
+        self.api_protocol = (PROTOCOL_ANTHROPIC
+                             if str(api_protocol or "").strip().lower() == PROTOCOL_ANTHROPIC
+                             else PROTOCOL_OPENAI)
         self._sleep = sleep
 
     def __repr__(self):
@@ -256,14 +274,27 @@ class LLMClient:
                 self._sleep(delay)
 
     def _post(self, messages):
-        """POST 一次请求并返回解析后的 JSON；失败按类别抛出对应异常。"""
-        body = json.dumps({"model": self.model, "messages": messages},
-                          ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint.rstrip("/") + "/chat/completions", data=body, method="POST")
-        request.add_header("Content-Type", "application/json")
-        request.add_header("Authorization", "Bearer " + self.api_key)
-        request.add_header("Accept", "application/json")
+        """POST 一次请求并返回解析后的 JSON；失败按类别抛出对应异常。
+
+        按 `self.api_protocol` 选择路径 / 鉴权头 / 请求体；错误分类与重试不因协议而异。
+        """
+        if self.api_protocol == PROTOCOL_ANTHROPIC:
+            body = json.dumps(_anthropic_request_body(self.model, messages),
+                              ensure_ascii=False).encode("utf-8")
+            request = urllib.request.Request(
+                self.endpoint.rstrip("/") + "/v1/messages", data=body, method="POST")
+            request.add_header("Content-Type", "application/json")
+            request.add_header("x-api-key", self.api_key)
+            request.add_header("anthropic-version", ANTHROPIC_VERSION)
+            request.add_header("Accept", "application/json")
+        else:
+            body = json.dumps({"model": self.model, "messages": messages},
+                              ensure_ascii=False).encode("utf-8")
+            request = urllib.request.Request(
+                self.endpoint.rstrip("/") + "/chat/completions", data=body, method="POST")
+            request.add_header("Content-Type", "application/json")
+            request.add_header("Authorization", "Bearer " + self.api_key)
+            request.add_header("Accept", "application/json")
         try:
             with _open(request, self.timeout) as response:
                 raw = response.read()
@@ -278,9 +309,12 @@ class LLMClient:
             raise NetworkError(self._redact(_NETWORK_MESSAGE)) from error
         try:
             text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-            return json.loads(text)
+            payload = json.loads(text)
         except ValueError as error:
             raise LLMError(self._redact(_MALFORMED_MESSAGE)) from error
+        if self.api_protocol == PROTOCOL_ANTHROPIC:
+            payload = _normalize_anthropic_payload(payload)
+        return payload
 
     def _redact(self, message):
         return redact_secret(message, self.api_key)
@@ -333,6 +367,53 @@ def _normalize_messages(prompt_messages):
 
 def _as_text(value):
     return "" if value is None else str(value)
+
+
+def _anthropic_request_body(model, messages):
+    """把统一 messages 转成 Anthropic Messages 请求体。
+
+    Anthropic 要求 `system` 是顶层字段、`messages` 只含 user/assistant，且 `max_tokens`
+    必填。多个 system 消息（理论上只有一个）以空行合并。
+    """
+    system_parts = [_as_text(item.get("content")) for item in messages
+                    if str(item.get("role", "")) == "system"]
+    chat = [{"role": str(item.get("role", "user")), "content": _as_text(item.get("content"))}
+            for item in messages if str(item.get("role", "")) != "system"]
+    body = {"model": model, "max_tokens": ANTHROPIC_DEFAULT_MAX_TOKENS, "messages": chat}
+    if system_parts:
+        body["system"] = "\n\n".join(system_parts)
+    return body
+
+
+def _normalize_anthropic_payload(payload):
+    """把 Anthropic Messages 响应转成统一 `choices[0].message.content` 形状。
+
+    文本块拼接为 content；`usage.input_tokens + output_tokens` 归一为 `total_tokens`，
+    让 `_extract_content` / `_token_usage` 无需感知协议。缺 `content` 时原样返回，
+    交由后续结构校验报「无法解析的响应」。
+    """
+    if not isinstance(payload, dict) or "content" not in payload:
+        return payload
+    blocks = payload.get("content")
+    if isinstance(blocks, list):
+        text = "".join(block["text"] for block in blocks
+                       if isinstance(block, dict) and isinstance(block.get("text"), str))
+    else:
+        text = blocks if isinstance(blocks, str) else ""
+    normalized = {"choices": [{"index": 0,
+                               "message": {"role": "assistant", "content": text},
+                               "finish_reason": "stop"}]}
+    usage = payload.get("usage")
+    if isinstance(usage, dict):
+        total, counted = 0, False
+        for field in ("input_tokens", "output_tokens"):
+            value = usage.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                total += value
+                counted = True
+        if counted:
+            normalized["usage"] = {"total_tokens": total}
+    return normalized
 
 
 def _extract_content(payload):
@@ -446,5 +527,7 @@ __all__ = [
     "EmptyResponseError", "OverLimitError", "AbortedError", "ValidationError",
     "OverBudgetError",
     "NETWORK_BACKOFFS", "RATE_LIMIT_BACKOFFS", "EMPTY_BACKOFFS", "VALIDATION_BACKOFFS",
+    "PROTOCOL_OPENAI", "PROTOCOL_ANTHROPIC", "ANTHROPIC_VERSION",
+    "ANTHROPIC_DEFAULT_MAX_TOKENS",
     "redact_headers", "redact_secret", "prompt_tokens",
 ]
