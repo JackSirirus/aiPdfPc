@@ -44,43 +44,6 @@
             </Setter>
         </Style>
 
-        <!-- 引擎二选一：本地 / 云端（默认本地） -->
-        <Style x:Key="EngineToggle" TargetType="RadioButton">
-            <Setter Property="Margin" Value="0,0,6,0" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Bd"
-                                Background="{DynamicResource Brush.FieldBackground}"
-                                BorderBrush="{DynamicResource Brush.Border}"
-                                BorderThickness="1"
-                                CornerRadius="14"
-                                Padding="14,5">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
-                                <Setter Property="FontWeight" Value="SemiBold" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextTertiary}" />
-                                <Setter Property="Cursor" Value="Arrow" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <!-- 输出勾选项：单行内自动换行 -->
         <Style x:Key="ConfigCheckBox" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
@@ -89,13 +52,19 @@
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
+
+        <!-- 内联迷你按钮（v1.2 T15）：复用 SecondaryButton 视觉，收窄内边距适配 320px 右栏 -->
+        <Style x:Key="ConfigMiniButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
     </UserControl.Resources>
 
     <StackPanel>
         <!-- 标题 -->
         <TextBlock Style="{StaticResource SectionTitle}" Text="整篇翻译设置" />
         <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
-                   Text="默认本地引擎；已保存的配置跨会话自动复用，密钥存于系统凭据管理器、仅经 stdin 传递。" />
+                   Text="默认本地服务；已保存的配置跨会话自动复用，密钥存于系统凭据管理器、仅经 stdin 传递。" />
 
         <!-- 源语言 -->
         <TextBlock Style="{StaticResource FieldLabel}" Margin="0,14,0,0" Text="源语言" />
@@ -173,21 +142,203 @@
         <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
                    Text="可选 CSV（源词,目标词[,大小写敏感[,说明]]）。留空表示不使用术语表。" />
 
-        <!-- 引擎 -->
-        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,12,0,0" Text="引擎" />
-        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-            <RadioButton Style="{StaticResource EngineToggle}"
-                         GroupName="TranslationEngine"
-                         Content="本地"
-                         IsChecked="{Binding IsLocalEngine, Mode=TwoWay}" />
-            <RadioButton Style="{StaticResource EngineToggle}"
-                         GroupName="TranslationEngine"
-                         Content="云端 LLM"
-                         IsChecked="{Binding IsCloudEngine, Mode=TwoWay}" />
-        </StackPanel>
-        <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0"
-                   Text="本地引擎须为 loopback 端点；云端首次使用需明确同意，密钥仅经 stdin 传递。"
-                   Visibility="{Binding IsCloudEngine, Converter={StaticResource BoolToVis}}" />
+        <!--
+          模型供应商（v1.2 T15：内联就地展开，设计 S4 / P27–P31）。
+          折叠态一行「供应商 · 显示名 · 模型」+「更换 ▾」；展开态就地配置，不弹窗、不跳设置页。
+          原 v1.1「本地 / 云端」引擎单选已移除（供应商本身决定本地还是云端）。
+        -->
+        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,12,0,0" Text="模型供应商" />
+
+        <!-- 折叠态：供应商 · 显示名 · 模型 +「更换 ▾」（运行中入口禁用） -->
+        <Border Margin="0,5,0,0"
+                Padding="10,7"
+                CornerRadius="7"
+                Background="{DynamicResource Brush.FieldBackground}"
+                BorderBrush="{DynamicResource Brush.Border}"
+                BorderThickness="1"
+                Visibility="{Binding Inline.IsCollapsed, Converter={StaticResource BoolToVis}}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           VerticalAlignment="Center"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource Brush.TextPrimary}">
+                    <Run Foreground="{DynamicResource Brush.TextTertiary}" Text="供应商 · " />
+                    <Run Text="{Binding Inline.HeaderLabel, Mode=OneWay}" />
+                </TextBlock>
+                <Button Grid.Column="1"
+                        Margin="8,0,0,0"
+                        Style="{StaticResource ConfigMiniButton}"
+                        Content="{Binding Inline.ActionLabel, Mode=OneWay}"
+                        IsEnabled="{Binding Inline.CanChangeProvider}"
+                        Click="OnInlineToggleClick" />
+            </Grid>
+        </Border>
+
+        <!-- 任务运行中（P31）：说明入口禁用原因，先取消任务再修改 -->
+        <TextBlock Style="{StaticResource FieldHint}"
+                   Margin="0,4,0,0"
+                   Foreground="{DynamicResource Brush.ConverterWarnText}"
+                   Text="{Binding Inline.RunningHintText}"
+                   Visibility="{Binding Inline.ShowRunningHint, Converter={StaticResource BoolToVis}}" />
+
+        <!-- 展开态：就地配置块（供应商 → 模型 → API Key → 拉取 / 测试 → 完成） -->
+        <Border Margin="0,5,0,0"
+                CornerRadius="7"
+                Background="{DynamicResource Brush.FieldBackground}"
+                BorderBrush="{DynamicResource Brush.Border}"
+                BorderThickness="1"
+                Visibility="{Binding Inline.IsExpanded, Converter={StaticResource BoolToVis}}">
+            <StackPanel>
+                <!-- 头部：模型供应商 +「收起 ▴」 -->
+                <Grid Margin="10,7,10,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Brush.TextPrimary}"
+                               Text="{Binding Inline.HeaderLabel, Mode=OneWay}" />
+                    <Button Grid.Column="1"
+                            Style="{StaticResource ConfigMiniButton}"
+                            Content="{Binding Inline.ActionLabel, Mode=OneWay}"
+                            Click="OnInlineToggleClick" />
+                </Grid>
+
+                <!-- 配置项：运行中只读（IsConfigEnabled），防止「一半用 A、一半用 B」 -->
+                <StackPanel Margin="10,8,10,10" IsEnabled="{Binding Inline.IsConfigEnabled}">
+                    <!-- 供应商：变更即触发协议 / 模型列表联动（TranslationConfigViewModel.RefreshProviderState） -->
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="供应商" />
+                    <ComboBox Margin="0,4,0,0"
+                              Style="{StaticResource FieldComboBox}"
+                              MinWidth="160"
+                              HorizontalAlignment="Left"
+                              ItemsSource="{Binding AvailableProviders}"
+                              DisplayMemberPath="DisplayName"
+                              SelectedValuePath="Id"
+                              SelectedValue="{Binding SelectedProvider, Mode=TwoWay}" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
+                               Text="{Binding ProtocolLabel, Mode=OneWay}" />
+
+                    <!--
+                      本地服务（P27–P31）：展开态就地填写 API 地址 + 端口建议 chips + 拉取模型。
+                      仅所选供应商为本地（IsLocalProvider）时显示；非 loopback 由 inline VM 实时报错。
+                    -->
+                    <StackPanel Visibility="{Binding IsLocalProvider, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,10,0,0" Text="本地 API 地址" />
+                        <TextBox Margin="0,4,0,0"
+                                 Style="{StaticResource FieldTextBox}"
+                                 Text="{Binding Inline.LocalEndpoint, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <ItemsControl Margin="0,6,0,0" ItemsSource="{Binding Inline.PortSuggestions}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Margin="0,0,6,6"
+                                            Style="{StaticResource ConfigMiniButton}"
+                                            Content="{Binding Label}"
+                                            Tag="{Binding Port}"
+                                            Click="OnLocalPortSuggestionClick" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Style="{StaticResource ErrorText}"
+                                   Text="{Binding Inline.LocalEndpointError}"
+                                   Visibility="{Binding Inline.HasLocalEndpointError, Converter={StaticResource BoolToVis}}" />
+                    </StackPanel>
+
+                    <!-- 模型：预设默认模型；本地 / 自定义由宿主「拉取模型」回填 -->
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,10,0,0" Text="模型" />
+                    <ComboBox Margin="0,4,0,0"
+                              Style="{StaticResource FieldComboBox}"
+                              MinWidth="160"
+                              HorizontalAlignment="Left"
+                              ItemsSource="{Binding AvailableModels}"
+                              SelectedItem="{Binding SelectedModel, Mode=TwoWay}" />
+
+                    <!-- API Key：输入后交由宿主写入系统凭据管理器（仅经 stdin 传递） -->
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,10,0,0" Text="API Key" />
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <PasswordBox x:Name="ApiKeyBox"
+                                     Grid.Column="0"
+                                     MinWidth="120"
+                                     Padding="8,5"
+                                     FontSize="13"
+                                     VerticalContentAlignment="Center"
+                                     Background="{DynamicResource Brush.FieldBackground}"
+                                     BorderBrush="{DynamicResource Brush.Border}" />
+                        <Button Grid.Column="1"
+                                Margin="6,0,0,0"
+                                Style="{StaticResource ConfigMiniButton}"
+                                Content="保存"
+                                Click="OnSaveKeyClick" />
+                    </Grid>
+
+                    <!-- 连接：拉取模型（T5）/ 测试连接 -->
+                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,10,0,0" Text="连接" />
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Style="{StaticResource ConfigMiniButton}"
+                                Content="拉取模型"
+                                Click="OnFetchModelsClick" />
+                        <Button Margin="6,0,0,0"
+                                Style="{StaticResource ConfigMiniButton}"
+                                Content="测试连接"
+                                Click="OnTestConnectionClick" />
+                    </StackPanel>
+
+                    <!-- 操作结果提示（保存 / 拉取 / 测试；宿主回填，绝不包含密钥） -->
+                    <TextBlock Margin="0,6,0,0"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Text="{Binding Inline.OperationMessage}"
+                               Visibility="{Binding Inline.HasOperationMessage, Converter={StaticResource BoolToVis}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Inline.IsOperationError}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </StackPanel>
+
+                <!-- 底部：完成（收起内联块，沿用当前选择） -->
+                <Border BorderBrush="{DynamicResource Brush.Border}"
+                        BorderThickness="0,1,0,0"
+                        Padding="10,7">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Padding="14,5"
+                                Content="完成"
+                                Click="OnInlineCompleteClick" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Border>
+
+        <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
+                   Text="本地服务端点须为 loopback（127.0.0.1 / ::1 / localhost），请求不离开本机。"
+                   Visibility="{Binding IsLocalProvider, Converter={StaticResource BoolToVis}}" />
+        <TextBlock Style="{StaticResource FieldHint}" Margin="0,4,0,0"
+                   Text="云端首次使用需明确同意，密钥仅经 stdin 传递、存于系统凭据管理器。"
+                   Visibility="{Binding IsCloudProvider, Converter={StaticResource BoolToVis}}" />
 
         <!-- 输出 -->
         <TextBlock Style="{StaticResource FieldLabel}" Margin="0,12,0,0" Text="输出" />
