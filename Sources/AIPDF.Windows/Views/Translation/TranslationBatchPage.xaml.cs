@@ -15,8 +15,9 @@ namespace AIPDF.Windows.Views.Translation;
 /// <summary>批量翻译工具页（DataContext = <see cref="TranslationBatchViewModel"/>）。</summary>
 public partial class TranslationBatchPage : UserControl
 {
-    private readonly TranslationInlineProviderController _inlineController =
-        new(new SettingsStore(), new TranslationCredentialStore());
+    private readonly SettingsStore _settingsStore = new();
+
+    private readonly TranslationInlineProviderController _inlineController;
 
     private bool _inlinePanelHooked;
 
@@ -29,7 +30,14 @@ public partial class TranslationBatchPage : UserControl
         Func<TranslationConsentRequest, Task<bool>>? confirmCloudConsentAsync = null)
     {
         InitializeComponent();
-        ViewModel = new TranslationBatchViewModel(bridge, tool, configProvider, confirmCloudConsentAsync: confirmCloudConsentAsync);
+        _inlineController = new TranslationInlineProviderController(_settingsStore, new TranslationCredentialStore());
+        ViewModel = new TranslationBatchViewModel(
+            bridge,
+            tool,
+            configProvider,
+            // v1.2 后续修复：注入已保存供应商，默认选中项在本地未配置时落到首个可用供应商（与整篇 / 划词同一口径）。
+            new TranslationConfigViewModel(_settingsStore.Load().TranslationProviders),
+            confirmCloudConsentAsync: confirmCloudConsentAsync);
         DataContext = ViewModel;
 
         // v1.2 T15 修复：内联供应商入口的「保存 / 拉取 / 测试」此前只有事件无订阅者（死按钮）。
