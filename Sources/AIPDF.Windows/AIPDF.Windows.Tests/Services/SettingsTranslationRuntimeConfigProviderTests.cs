@@ -140,6 +140,151 @@ public sealed class SettingsTranslationRuntimeConfigProviderTests
         Assert.Equal("local", resolution.Config!.Provider);
     }
 
+    // ---------------------------------------------------------------- T7：选中供应商驱动目的地
+
+    private const string OpenAiEndpoint = "https://api.openai.com/v1";
+
+    private static TranslationProviderConfig OpenAi() => new()
+    {
+        PresetId = "openai",
+        Provider = "openai",
+        Endpoint = OpenAiEndpoint,
+        Model = "gpt-4o",
+    };
+
+    [Fact]
+    public void Resolve_SelectedCloud_ReturnsSelectedDestination_NotFirstSaved()
+    {
+        using var fx = new Fixture();
+        // deepseek 先保存（旧规则会回落到它），但选中 openai → 目的地必须严格等于选中项。
+        fx.SaveProviders(Cloud(), OpenAi());
+        fx.Credentials.Store(CloudProvider, CloudEndpoint, Key);
+        fx.Consent.GrantConsent(CloudProvider, CloudEndpoint, Key);
+        fx.Credentials.Store("openai", OpenAiEndpoint, Key);
+        fx.Consent.GrantConsent("openai", OpenAiEndpoint, Key);
+
+        var resolution = fx.NewProvider().Resolve("openai");
+
+        Assert.True(resolution.IsConfigured);
+        Assert.True(resolution.IsCloud);
+        Assert.Equal("openai", resolution.Config!.Provider);
+        Assert.Equal(OpenAiEndpoint, resolution.Config.Endpoint);
+        Assert.Equal("gpt-4o", resolution.Config.Model);
+    }
+
+    [Fact]
+    public void Resolve_SelectedCloud_CarriesSelectedApiProtocol()
+    {
+        using var fx = new Fixture();
+        const string anthropicEndpoint = "https://open.bigmodel.cn/api/anthropic";
+        fx.SaveProviders(new TranslationProviderConfig
+        {
+            PresetId = "glm-coding-plan",
+            Provider = "glm-coding-plan",
+            Endpoint = anthropicEndpoint,
+            Model = "glm-5.3",
+            ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+        });
+        fx.Credentials.Store("glm-coding-plan", anthropicEndpoint, Key);
+        fx.Consent.GrantConsent("glm-coding-plan", anthropicEndpoint, Key);
+
+        var resolution = fx.NewProvider().Resolve("glm-coding-plan");
+
+        Assert.True(resolution.IsConfigured);
+        Assert.Equal("glm-5.3", resolution.Config!.Model);
+        Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, resolution.Config.ApiProtocol);
+    }
+
+    [Fact]
+    public void Resolve_SelectedLocal_IsLocalById_EvenWhenDisplayNameIsNotLocal()
+    {
+        using var fx = new Fixture();
+        // 稳定 id local + 显示名「本地服务」：旧的名字判定会误当云端，新规则须判为本地且密钥可空。
+        fx.SaveProviders(new TranslationProviderConfig
+        {
+            PresetId = "local",
+            Provider = "本地服务",
+            Endpoint = "http://127.0.0.1:11434/v1",
+            Model = "qwen",
+        });
+
+        var resolution = fx.NewProvider().Resolve("local");
+
+        Assert.True(resolution.IsConfigured);
+        Assert.False(resolution.IsCloud);
+        Assert.Equal("本地服务", resolution.Config!.Provider);
+        Assert.Equal("", resolution.Config.ApiKey);
+    }
+
+    [Fact]
+    public void Resolve_SelectedLocalNonLoopback_IsRejected()
+    {
+        using var fx = new Fixture();
+        fx.SaveProviders(new TranslationProviderConfig
+        {
+            PresetId = "local",
+            Provider = "本地服务",
+            Endpoint = "https://remote.example.com:443/v1",
+            Model = "m",
+        });
+
+        var resolution = fx.NewProvider().Resolve("local");
+
+        Assert.Equal(TranslationRuntimeConfigStatus.NotLoopback, resolution.Status);
+        Assert.False(resolution.IsConfigured);
+        Assert.False(resolution.IsCloud);
+    }
+
+    [Fact]
+    public void Resolve_SelectedMissing_ReportsNoProvider_WithoutFallingBack()
+    {
+        using var fx = new Fixture();
+        // 存在一个可用云端，但选中 id 不存在 → 绝不回落到它。
+        fx.SaveProviders(Cloud());
+        fx.Credentials.Store(CloudProvider, CloudEndpoint, Key);
+        fx.Consent.GrantConsent(CloudProvider, CloudEndpoint, Key);
+
+        var resolution = fx.NewProvider().Resolve("does-not-exist");
+
+        Assert.Equal(TranslationRuntimeConfigStatus.NoProvider, resolution.Status);
+        Assert.False(resolution.IsConfigured);
+    }
+
+    [Fact]
+    public void Resolve_SelectedCloudWithoutConsent_ReportsNoConsent()
+    {
+        using var fx = new Fixture();
+        fx.SaveProviders(OpenAi());
+        fx.Credentials.Store("openai", OpenAiEndpoint, Key);
+
+        var resolution = fx.NewProvider().Resolve("openai");
+
+        Assert.Equal(TranslationRuntimeConfigStatus.NoConsent, resolution.Status);
+        Assert.True(resolution.NeedsConsent);
+        Assert.False(resolution.IsConfigured);
+    }
+
+    [Fact]
+    public void Resolve_SelectedByProviderName_MatchesLegacyWithoutPresetId()
+    {
+        using var fx = new Fixture();
+        // 旧数据未回填 PresetId：仍可按显示名 / 旧 provider 名选中（兼容期）。
+        fx.SaveProviders(new TranslationProviderConfig
+        {
+            Provider = "legacy-gw",
+            Endpoint = "https://gw.example.com/v1",
+            Model = "m1",
+        });
+        fx.Credentials.Store("legacy-gw", "https://gw.example.com/v1", Key);
+        fx.Consent.GrantConsent("legacy-gw", "https://gw.example.com/v1", Key);
+
+        var resolution = fx.NewProvider().Resolve("legacy-gw");
+
+        Assert.True(resolution.IsConfigured);
+        Assert.Equal("legacy-gw", resolution.Config!.Provider);
+        Assert.Equal("m1", resolution.Config.Model);
+    }
+
     // ---------------------------------------------------------------- 云端同意门禁
 
     [Fact]
@@ -263,5 +408,32 @@ public sealed class SettingsTranslationRuntimeConfigProviderTests
 
         Assert.True(resolution.IsConfigured);
         Assert.Equal(Key, resolution.Config!.ApiKey);
+    }
+
+    [Fact]
+    public async Task Ensure_SelectedDestination_RequestsConsentForThatProvider()
+    {
+        using var fx = new Fixture();
+        // deepseek 与 openai 均已存密钥；只选中 openai → 同意弹窗与授予都必须针对 openai。
+        fx.SaveProviders(Cloud(), OpenAi());
+        fx.Credentials.Store(CloudProvider, CloudEndpoint, Key);
+        fx.Credentials.Store("openai", OpenAiEndpoint, Key);
+
+        TranslationConsentRequest? seen = null;
+        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(
+            fx.NewProvider(),
+            request =>
+            {
+                seen = request;
+                fx.Consent.GrantConsent(request.Provider, request.Endpoint, Key, remember: false);
+                return Task.FromResult(true);
+            },
+            selectedProviderId: "openai");
+
+        Assert.NotNull(seen);
+        Assert.Equal("openai", seen!.Provider);
+        Assert.Equal(OpenAiEndpoint, seen.Endpoint);
+        Assert.True(resolution.IsConfigured);
+        Assert.Equal("openai", resolution.Config!.Provider);
     }
 }

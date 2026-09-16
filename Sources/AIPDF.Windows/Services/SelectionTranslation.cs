@@ -37,6 +37,7 @@ public sealed record TranslationRuntimeConfig(
     string SourceLang,
     string TargetLang,
     string Template,
+    string ApiProtocol = TranslationProviderConfig.ProtocolOpenAi,
     string? GlossaryPath = null,
     int? MaxTokens = null)
 {
@@ -85,6 +86,7 @@ public enum TranslationRuntimeConfigStatus
 /// <summary>
 /// 运行时配置解析结果：<see cref="Config"/> 非空即可用；否则 <see cref="Status"/> 指明具体缺口、
 /// <see cref="Message"/> 为可直接展示的引导文案，<see cref="Provider"/> / <see cref="Endpoint"/> 供同意弹窗等定位目的地。
+/// <see cref="ProviderId"/> 为供应商稳定身份键（T8：凭据 / 同意寻址以此为准；缺省空串 = 回退 <see cref="Provider"/>）。
 /// </summary>
 public sealed record TranslationRuntimeConfigResolution(
     TranslationRuntimeConfigStatus Status,
@@ -92,7 +94,8 @@ public sealed record TranslationRuntimeConfigResolution(
     string Provider,
     string Endpoint,
     bool IsCloud,
-    string Message)
+    string Message,
+    string ProviderId = "")
 {
     /// <summary>配置是否可用。</summary>
     public bool IsConfigured => Config is not null;
@@ -107,8 +110,9 @@ public sealed record TranslationRuntimeConfigResolution(
 /// <summary>
 /// 一次云端首次同意请求（F5 模态展示用）。只含目的地标识，<b>不含密钥</b>；
 /// 同意后由宿主从凭据管理器读取密钥并按指纹授予同意。
+/// <see cref="ProviderId"/> 为稳定身份键（T8 凭据 / 同意寻址用；空串时宿主回退 <see cref="Provider"/>）。
 /// </summary>
-public sealed record TranslationConsentRequest(string Provider, string Endpoint, string Model = "");
+public sealed record TranslationConsentRequest(string Provider, string Endpoint, string Model = "", string ProviderId = "");
 
 /// <summary>翻译运行时配置来源（生产实现读取设置 + 系统凭据管理器 + 同意记录）。</summary>
 public interface ITranslationRuntimeConfigProvider
@@ -125,12 +129,14 @@ public interface ITranslationRuntimeConfigProvider
     /// <summary>
     /// 解析运行时配置，并区分「未就绪」的具体原因。默认实现仅区分「可用 / 未配置」，
     /// 生产实现（<c>SettingsTranslationRuntimeConfigProvider</c>）覆盖为细分原因。
+    /// <paramref name="selectedProviderId"/> 为面板 / 调用方选中的稳定供应商 id：生产实现据此选择目的地；
+    /// 默认实现用它判定本地 / 云端（稳定 id <c>local</c> 优先，旧数据回退显示名）。
     /// </summary>
-    TranslationRuntimeConfigResolution Resolve()
+    TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
         => Get() is { } config
             ? new TranslationRuntimeConfigResolution(
                 TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint,
-                !TranslationProviderConfig.IsLocalProvider(config.Provider), "")
+                !TranslationProviderConfig.IsLocalService(selectedProviderId, config.Provider), "")
             : new TranslationRuntimeConfigResolution(
                 TranslationRuntimeConfigStatus.NoProvider, null, "", "", false,
                 TranslationRuntimeConfigResolution.NotConfiguredMessage);
@@ -180,6 +186,9 @@ public sealed class EngineSelectionTranslationService : ISelectionTranslationSer
             ["template"] = string.IsNullOrWhiteSpace(request.Template) ? config.Template : request.Template,
             ["endpoint"] = config.Endpoint,
             ["model"] = config.Model,
+            // 协议是传输层字段（T4 引擎契约）：openai → /chat/completions，anthropic → /v1/messages；
+            // provider 名 / 显示名绝不进入 options。
+            ["apiProtocol"] = config.ApiProtocol,
             ["apiKey"] = config.ApiKey,
         };
         if (!string.IsNullOrWhiteSpace(config.GlossaryPath))

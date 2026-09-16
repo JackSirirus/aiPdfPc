@@ -63,8 +63,21 @@ public class FullTranslationServiceTests
         Assert.Equal("/out", bridge.LastRequest.OutputDir);
         Assert.Equal("both", bridge.LastRequest.Options["format"]);
         Assert.Equal("academic", bridge.LastRequest.Options["template"]);
+        // 协议贯通（v1.2 T6）：请求缺省 openai，引擎据 apiProtocol 选择路径 / 鉴权（T4 契约）。
+        Assert.Equal("openai", bridge.LastRequest.Options["apiProtocol"]);
         // 密钥只经 options（→ stdin）传递，绝不进 argv / 环境变量。
         Assert.Equal("sk-test", bridge.LastRequest.Options["apiKey"]);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_SendsRequestApiProtocol_IntoOptions()
+    {
+        var bridge = new StubBridge(new EngineResult { Ok = true });
+        var service = new EngineFullTranslationService(bridge);
+
+        await service.TranslateAsync(Request() with { ApiProtocol = "anthropic" }, progress: null);
+
+        Assert.Equal("anthropic", bridge.LastRequest!.Options["apiProtocol"]);
     }
 
     [Fact]

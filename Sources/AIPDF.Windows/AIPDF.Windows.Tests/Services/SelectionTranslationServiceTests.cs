@@ -78,8 +78,28 @@ public class SelectionTranslationServiceTests
         Assert.Equal("translate_text", bridge.LastRequest!.Operation);
         Assert.Equal("Hello", bridge.LastRequest.Options["text"]);
         Assert.Equal("http://127.0.0.1:11434/v1", bridge.LastRequest.Options["endpoint"]);
+        // 协议随运行时配置贯通（v1.2 T6）：未显式指定即缺省 openai（T4 契约）。
+        Assert.Equal("openai", bridge.LastRequest.Options["apiProtocol"]);
         // 密钥只经 options（→ stdin）传递，绝不进 argv / 环境变量。
         Assert.Equal("sk-test", bridge.LastRequest.Options["apiKey"]);
+    }
+
+    [Fact]
+    public async Task Translate_WithAnthropicRuntimeConfig_SendsApiProtocol()
+    {
+        var bridge = new StubBridge(Ok("你好"));
+        var config = new TranslationRuntimeConfig(
+            "glm-coding-plan", "https://open.bigmodel.cn/api/anthropic", "glm-5.3", "sk-test",
+            "en", "zh", "generic", ApiProtocol: "anthropic");
+        var service = new EngineSelectionTranslationService(bridge, new FixedConfigProvider(config));
+
+        var result = await service.TranslateAsync(new SelectionTranslationRequest("Hello", "en", "zh", "generic"));
+
+        Assert.True(result.Ok);
+        Assert.Equal("anthropic", bridge.LastRequest!.Options["apiProtocol"]);
+        // provider 名 / 显示名绝不进入划词 options。
+        Assert.DoesNotContain("provider", bridge.LastRequest.Options.Keys);
+        Assert.DoesNotContain("presetId", bridge.LastRequest.Options.Keys);
     }
 
     [Fact]

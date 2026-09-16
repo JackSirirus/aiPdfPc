@@ -29,6 +29,7 @@ public sealed record FullTranslationRequest(
     string Endpoint,
     string Model,
     string ApiKey,
+    string ApiProtocol = TranslationProviderConfig.ProtocolOpenAi,
     string? GlossaryPath = null,
     int? MaxTokens = null,
     bool GenerateMono = true,
@@ -89,6 +90,8 @@ public static class TranslationOutputFormats
 /// <summary>
 /// 组装 `translate` op 引擎 options 的唯一实现（整篇服务与批量工具页共用，保证口径一致）。
 /// 值一律字符串（<c>maxTokens</c> / <c>marker</c> 亦然）；密码 / 密钥仅经此处进入子进程 stdin。
+/// <c>apiProtocol</c>（openai | anthropic）是传输层字段：引擎据它选择路径 / 鉴权（T4 契约，
+/// 缺失或未知即按 openai）；provider 名 / 显示名绝不进入 options。
 /// </summary>
 internal static class TranslationEngineOptions
 {
@@ -97,6 +100,7 @@ internal static class TranslationEngineOptions
         string endpoint,
         string model,
         string apiKey,
+        string apiProtocol,
         string sourceLang,
         string targetLang,
         string template,
@@ -114,6 +118,7 @@ internal static class TranslationEngineOptions
             ["endpoint"] = endpoint,
             ["model"] = model,
             ["apiKey"] = apiKey,
+            ["apiProtocol"] = apiProtocol,
             ["sourceLang"] = sourceLang,
             ["targetLang"] = targetLang,
             ["template"] = template,
@@ -279,6 +284,7 @@ public sealed class EngineFullTranslationService : IFullTranslationService
             request.Endpoint,
             request.Model,
             request.ApiKey,
+            request.ApiProtocol,
             request.SourceLang,
             request.TargetLang,
             request.Template,

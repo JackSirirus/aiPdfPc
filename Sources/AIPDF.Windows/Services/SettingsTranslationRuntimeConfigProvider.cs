@@ -15,8 +15,9 @@ namespace AIPDF.Windows.Services;
 
 /// <summary>
 /// 生产运行时配置提供者：读设置 + 凭据管理器 + 同意记录，产出可用的 <see cref="TranslationRuntimeConfig"/>。
-/// 目的地选择规则（确定性）：优先「本地」服务商（若存在），否则取首个已保存的云端服务商。
-/// 这契合「默认引擎 = 本地」（决策 #15）——本地运行时就绪即用，否则回落云端并强制同意。
+/// 目的地由<b>面板 / 调用方选中的供应商</b>决定（v1.2 T7，修复「引擎单选不驱动目的地」）：按稳定
+/// <see cref="TranslationProviderConfig.PresetId"/> 定位选中项；本地项必须 loopback，否则拒绝；云端要求端点 + 密钥 + 同意。
+/// 未提供选择时保留确定性回退（优先「本地」，否则首个可用云端），供尚未接入选择的调用方沿用。
 /// </summary>
 public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRuntimeConfigProvider
 {
@@ -42,65 +43,114 @@ public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRunti
     public int ConsentGeneration => _consent.Generation;
 
     /// <inheritdoc />
-    public TranslationRuntimeConfigResolution Resolve()
+    public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
     {
         var settings = _settings.Load();
-        // 只使用通过端点校验的条目（IsUsable）：归一化保留失效条目供用户修正，但运行时绝不采用
-        // 内嵌密钥 / 非法 scheme 的端点（R5-3）。
-        var providers = settings.TranslationProviders.Where(p => p is { IsUsable: true }).ToList();
-        if (providers.Count == 0)
-        {
-            return Missing(
-                TranslationRuntimeConfigStatus.NoProvider, "", "", isCloud: false,
-                "翻译服务尚未配置，请在「设置 → 翻译」中添加服务商与端点后重试。");
-        }
+        var providers = settings.TranslationProviders;
 
-        // 默认本地：存在「本地」服务商时优先它；其端点必须是 loopback，否则拒绝（防同意绕过）。
-        var local = providers.FirstOrDefault(p => TranslationProviderConfig.IsLocalProvider(p.Provider));
-        if (local is not null)
+        TranslationProviderConfig selected;
+        if (!string.IsNullOrWhiteSpace(selectedProviderId))
         {
-            if (!TranslationProviderConfig.IsLoopbackEndpoint(local.Endpoint))
+            // 面板 / 调用方显式选择：按稳定 id 精确定位目的地（不再回落其它供应商）。
+            var found = FindSelected(providers, selectedProviderId.Trim());
+            if (found is null)
             {
                 return Missing(
-                    TranslationRuntimeConfigStatus.NotLoopback, local.Provider, local.Endpoint, isCloud: false,
-                    TranslationProviderConfig.LoopbackViolationMessage(local.Endpoint));
+                    TranslationRuntimeConfigStatus.NoProvider, selectedProviderId.Trim(), "", isCloud: false,
+                    $"未找到选中的翻译服务商「{selectedProviderId.Trim()}」，请在「设置 → 翻译」中重新选择。");
             }
 
-            return Configured(settings, local, ReadCredential(local) ?? "");
+            selected = found;
+        }
+        else
+        {
+            // 兼容回退（尚未接入选择的调用方 / 旧行为）：只采用通过端点校验的条目（IsUsable）——
+            // 归一化保留失效条目供用户修正，但运行时绝不采用内嵌密钥 / 非法 scheme 的端点（R5-3）。
+            var usable = providers.Where(p => p is { IsUsable: true }).ToList();
+            if (usable.Count == 0)
+            {
+                return Missing(
+                    TranslationRuntimeConfigStatus.NoProvider, "", "", isCloud: false,
+                    "翻译服务尚未配置，请在「设置 → 翻译」中添加服务商与端点后重试。");
+            }
+
+            selected = usable.FirstOrDefault(p => p.IsLocalService()) ?? usable[0];
         }
 
-        // 云端：首个已保存服务商为目的地；缺密钥 → 引导补 key；有 key 未同意 → 引导同意（宿主弹 F5）。
-        var cloud = providers[0];
-        if (string.IsNullOrWhiteSpace(cloud.Endpoint))
+        // 本地（稳定 id local）：端点必须 loopback，否则拒绝（防以本地名义绕过云端同意）；密钥可空。
+        if (selected.IsLocalService())
+        {
+            if (string.IsNullOrWhiteSpace(selected.Endpoint))
+            {
+                return Missing(
+                    TranslationRuntimeConfigStatus.NoEndpoint, selected.Provider, "", isCloud: false,
+                    $"服务商「{selected.Provider}」缺少端点地址，请在「设置 → 翻译」中补全后重试。");
+            }
+
+            if (!TranslationProviderConfig.IsLoopbackEndpoint(selected.Endpoint))
+            {
+                return Missing(
+                    TranslationRuntimeConfigStatus.NotLoopback, selected.Provider, selected.Endpoint, isCloud: false,
+                    TranslationProviderConfig.LoopbackViolationMessage(selected.Endpoint));
+            }
+
+            return Configured(settings, selected, ReadCredential(selected) ?? "");
+        }
+
+        // 云端：端点（含通过校验）→ 已存密钥 → 有效同意，逐项给出可操作原因。
+        if (string.IsNullOrWhiteSpace(selected.Endpoint))
         {
             return Missing(
-                TranslationRuntimeConfigStatus.NoEndpoint, cloud.Provider, "", isCloud: true,
-                $"服务商「{cloud.Provider}」缺少端点地址，请在「设置 → 翻译」中补全后重试。");
+                TranslationRuntimeConfigStatus.NoEndpoint, selected.Provider, "", isCloud: true,
+                $"服务商「{selected.Provider}」缺少端点地址，请在「设置 → 翻译」中补全后重试。",
+                TranslationProviderIdentity.For(selected));
         }
 
-        var key = ReadCredential(cloud);
+        if (selected.ValidationError is { } endpointError)
+        {
+            return Missing(
+                TranslationRuntimeConfigStatus.NoEndpoint, selected.Provider, selected.Endpoint, isCloud: true,
+                endpointError,
+                TranslationProviderIdentity.For(selected));
+        }
+
+        var key = ReadCredential(selected);
         if (string.IsNullOrEmpty(key))
         {
             return Missing(
-                TranslationRuntimeConfigStatus.NoCredential, cloud.Provider, cloud.Endpoint, isCloud: true,
-                $"云端服务商「{cloud.Provider}」尚未保存密钥，请在「设置 → 翻译」中填写 API Key 后重试。");
+                TranslationRuntimeConfigStatus.NoCredential, selected.Provider, selected.Endpoint, isCloud: true,
+                $"云端服务商「{selected.Provider}」尚未保存密钥，请在「设置 → 翻译」中填写 API Key 后重试。",
+                TranslationProviderIdentity.For(selected));
         }
 
-        if (!_consent.IsConsented(cloud.Provider, cloud.Endpoint, key))
+        if (!_consent.IsConsented(TranslationProviderIdentity.For(selected), selected.Endpoint, key))
         {
             return Missing(
-                TranslationRuntimeConfigStatus.NoConsent, cloud.Provider, cloud.Endpoint, isCloud: true,
-                $"云端翻译需要你的明确同意（服务商：{cloud.Provider}）。");
+                TranslationRuntimeConfigStatus.NoConsent, selected.Provider, selected.Endpoint, isCloud: true,
+                $"云端翻译需要你的明确同意（服务商：{selected.Provider}）。",
+                TranslationProviderIdentity.For(selected));
         }
 
-        return Configured(settings, cloud, key);
+        return Configured(settings, selected, key);
     }
+
+    /// <summary>
+    /// 按稳定 id 定位选中供应商：优先匹配 <see cref="TranslationProviderConfig.PresetId"/>；
+    /// 自定义 / 旧数据（无 presetId）回退按显示名 <see cref="TranslationProviderConfig.Provider"/> 匹配。
+    /// </summary>
+    private static TranslationProviderConfig? FindSelected(
+        IReadOnlyList<TranslationProviderConfig> providers, string selectedProviderId)
+        => providers.FirstOrDefault(p =>
+               string.Equals(p.PresetId?.Trim(), selectedProviderId, StringComparison.OrdinalIgnoreCase))
+           ?? providers.FirstOrDefault(p =>
+               string.Equals(p.Provider?.Trim(), selectedProviderId, StringComparison.OrdinalIgnoreCase));
 
     private string? ReadCredential(TranslationProviderConfig provider)
     {
         try
         {
-            return _credentials.Get(provider.Provider, provider.Endpoint);
+            // 凭据寻址按稳定身份键（T8）：与同意匹配同源，显示名 / 大小写不影响定位。
+            return _credentials.Get(TranslationProviderIdentity.For(provider), provider.Endpoint);
         }
         catch (CredentialStoreUnavailableException)
         {
@@ -120,6 +170,8 @@ public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRunti
             SourceLang: settings.TranslationDefaultSourceLanguage,
             TargetLang: settings.TranslationDefaultTargetLanguage,
             Template: EngineTemplate(settings.TranslationTemplateId),
+            // 协议随配置贯通（T4 契约：openai | anthropic；缺省 openai）。
+            ApiProtocol: provider.ApiProtocol,
             GlossaryPath: string.IsNullOrWhiteSpace(settings.TranslationGlossaryPath)
                 ? null
                 : settings.TranslationGlossaryPath.Trim(),
@@ -129,12 +181,16 @@ public sealed class SettingsTranslationRuntimeConfigProvider : ITranslationRunti
 
         return new TranslationRuntimeConfigResolution(
             TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint,
-            !TranslationProviderConfig.IsLocalProvider(config.Provider), "");
+            // 云端判定由稳定 id（local → 本地）派生，不再依赖可变的显示名。
+            !provider.IsLocalService(), "",
+            // 稳定身份键透传宿主：同意弹窗后的凭据读取 / 授予同意必须以它寻址（T8）。
+            TranslationProviderIdentity.For(provider));
     }
 
     private static TranslationRuntimeConfigResolution Missing(
-        TranslationRuntimeConfigStatus status, string provider, string endpoint, bool isCloud, string message)
-        => new(status, null, provider, endpoint, isCloud, message);
+        TranslationRuntimeConfigStatus status, string provider, string endpoint, bool isCloud, string message,
+        string providerId = "")
+        => new(status, null, provider, endpoint, isCloud, message, providerId);
 
     /// <summary>
     /// 设置模板标识 → 引擎 <c>prompt.PRESET_TEMPLATES</c> 键名。与 <c>FullTranslationViewModel.ToEngineTemplate</c>
@@ -158,25 +214,29 @@ public static class TranslationRuntimeConsentFlow
     /// <summary>
     /// 解析配置并在需要时征求同意。<paramref name="confirmAsync"/> 为 null（测试 / 无 UI）时不做交互，
     /// 直接返回原解析结果（未同意即不可用）。确认后重新解析以拿到刚授予同意的配置。
+    /// <paramref name="selectedProviderId"/> 透传给 <see cref="ITranslationRuntimeConfigProvider.Resolve"/>，
+    /// 保证同意弹窗定位的是「选中的」目的地而非其它供应商。
     /// </summary>
     public static async Task<TranslationRuntimeConfigResolution> EnsureAsync(
         ITranslationRuntimeConfigProvider provider,
-        Func<TranslationConsentRequest, Task<bool>>? confirmAsync)
+        Func<TranslationConsentRequest, Task<bool>>? confirmAsync,
+        string? selectedProviderId = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
 
-        var resolution = provider.Resolve();
+        var resolution = provider.Resolve(selectedProviderId);
         if (!resolution.NeedsConsent || confirmAsync is null)
         {
             return resolution;
         }
 
-        var request = new TranslationConsentRequest(resolution.Provider, resolution.Endpoint);
+        var request = new TranslationConsentRequest(
+            resolution.Provider, resolution.Endpoint, ProviderId: resolution.ProviderId);
         if (!await confirmAsync(request).ConfigureAwait(true))
         {
             return resolution;
         }
 
-        return provider.Resolve();
+        return provider.Resolve(selectedProviderId);
     }
 }
