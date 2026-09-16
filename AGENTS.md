@@ -10,6 +10,9 @@
 - `Sources/VisionHelper` 调用系统 OCR；`Sources/WebHelper` 负责显式输入的网址渲染。
 - 工具目录以 `backend/catalog.py` 为准；修改后运行 `.venv/bin/python backend/catalog.py`，同时提交生成的 JSON。
 - 当前范围为 33 个工具。**AI 翻译已以 v1.1 正式纳入范围**（阅读器划词 / 整篇 + 批量翻译工具页）；翻译默认使用本地引擎，可选云端 LLM，云端须用户显式配置并经首次明确同意，密钥仅经 stdin 传递、交系统凭据管理器保存；不下载模型与字体。**此处排除的「模型连接」特指由应用代管的本地模型服务（自动启动、托管本地模型进程、代下载运行模型），不包括用户在翻译设置中显式配置的云端服务商连接（provider / endpoint / 模型名）**；AI 摘要与模型下载仍由维护者明确排除，不自行恢复。
+- v1.2 起，翻译服务商配置统一为「模型供应商」：内置 14 家云端预设（选供应商 → 填 Key → 选模型）、本地服务（填 OpenAI 兼容 API 地址 → 拉取模型）、自定义供应商；
+- 新增 `apiProtocol` 维度（openai / anthropic）：Anthropic 协议在 Python 引擎侧统一适配（`/v1/messages` + `x-api-key`/Bearer + `anthropic-version`）；
+- 编程套餐端点（GLM Coding Plan / Kimi Code / opencode go）默认不启用，选中时展示合规警示并提供「改用标准 API」；自建应用应使用标准 API 端点。
 
 ## 文件与进程
 

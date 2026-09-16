@@ -42,6 +42,8 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
 按用户要求，不提供 AI 摘要。**PDF 翻译（划词 / 整篇 / 批量）已作为 v1.1 功能纳入**：默认使用本地引擎，可选用云端 LLM，云端首次使用需明确同意，密钥仅经 stdin 传递并存于系统凭据管理器；不下载任何模型或字体。不连接本地模型服务（此处指由应用代管的本地模型服务；本地引擎指用户自备的运行时），也不下载模型。Markdown 导出保留在"格式转换"分类。
 
+服务商配置：内置 14 家云端供应商（OpenAI / Anthropic / Gemini / DeepSeek / 通义千问 / 智谱 GLM / Kimi / Groq / MiniMax / 豆包 / opencode Zen / opencode go / GLM Coding Plan / Kimi Code），支持本地 OpenAI 兼容地址与自定义供应商；支持 OpenAI 与 Anthropic 两种协议。
+
 ## 构建与依赖
 
 以下为维护者的开发构建，要求 macOS 14+、Xcode Command Line Tools、Python 3.12—3.14。当前已在 Apple Silicon / macOS 15.7.4 验证。
