@@ -1047,6 +1047,15 @@ def _require_secure_endpoint(endpoint):
     raise UserError("翻译服务端点必须使用 https（仅本机 loopback 允许 http）。")
 
 
+def _resolve_api_protocol(options):
+    """协议读取的唯一真源：v1.2 契约——缺失 apiProtocol 即 openai（向后兼容）。
+
+    `provider` / `displayName` 永不读取；空串 / None 等假值同样回退 openai。
+    """
+    from translate import llm
+    return str(options.get("apiProtocol", llm.PROTOCOL_OPENAI) or llm.PROTOCOL_OPENAI)
+
+
 def translate_request(request):
     """翻译操作 dispatch：在 BY_ID 与 outputDir 校验之前处理，自建等价校验（T10）。"""
     from translate import glossary as glossary_module
@@ -1063,8 +1072,7 @@ def translate_request(request):
     api_key = str(options.get("apiKey", "") or "")
     endpoint = str(options.get("endpoint", "") or "").strip()
     model = str(options.get("model", "") or "").strip()
-    # v1.2 契约：缺失 apiProtocol 即 openai（向后兼容）；provider/displayName 永不读取。
-    protocol = str(options.get("apiProtocol", llm.PROTOCOL_OPENAI) or llm.PROTOCOL_OPENAI)
+    protocol = _resolve_api_protocol(options)
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
     _require_secure_endpoint(endpoint)
@@ -1160,8 +1168,7 @@ def translate_text_request(request):
     endpoint = str(options.get("endpoint", "") or "").strip()
     model = str(options.get("model", "") or "").strip()
     api_key = str(options.get("apiKey", "") or "")
-    # v1.2 契约：缺失 apiProtocol 即 openai（向后兼容）；provider/displayName 永不读取。
-    protocol = str(options.get("apiProtocol", llm.PROTOCOL_OPENAI) or llm.PROTOCOL_OPENAI)
+    protocol = _resolve_api_protocol(options)
     if not endpoint:
         raise UserError("请先配置翻译服务端点。")
     _require_secure_endpoint(endpoint)

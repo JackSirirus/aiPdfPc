@@ -389,7 +389,9 @@ def _normalize_anthropic_payload(payload):
     """把 Anthropic Messages 响应转成统一 `choices[0].message.content` 形状。
 
     文本块拼接为 content；`usage.input_tokens + output_tokens` 归一为 `total_tokens`，
-    让 `_extract_content` / `_token_usage` 无需感知协议。缺 `content` 时原样返回，
+    让 `_extract_content` / `_token_usage` 无需感知协议。`stop_reason="refusal"`（模型拒答）
+    归一为 `finish_reason="content_filter"`，复用既有拒译路径（不新增错误类）；
+    `end_turn` / 缺省等正常路径仍为 `"stop"`。缺 `content` 时原样返回，
     交由后续结构校验报「无法解析的响应」。
     """
     if not isinstance(payload, dict) or "content" not in payload:
@@ -400,9 +402,10 @@ def _normalize_anthropic_payload(payload):
                        if isinstance(block, dict) and isinstance(block.get("text"), str))
     else:
         text = blocks if isinstance(blocks, str) else ""
+    finish_reason = "content_filter" if payload.get("stop_reason") == "refusal" else "stop"
     normalized = {"choices": [{"index": 0,
                                "message": {"role": "assistant", "content": text},
-                               "finish_reason": "stop"}]}
+                               "finish_reason": finish_reason}]}
     usage = payload.get("usage")
     if isinstance(usage, dict):
         total, counted = 0, False
