@@ -1,0 +1,1329 @@
+<!-- AIPDF PDF 翻译 · 主设计稿 v1.1 · 2026-09-13
+     ============================================================================
+     方向：复用 v1.0 阅读器 A+C 暖纸体系（暖中性色 + 衬线展示标题 + 纸张阅读画布）。
+     载体：阅读器右栏双 Tab「划词 / 整篇」（宽 320）+ 起始页/工具箱「批量翻译」工具页。
+     产物：mono（纯译文）/ dual（原文译文对照）PDF，在阅读器新标签打开；Markdown 可选。
+     覆盖：F1 划词 / F2 整篇配置 / F3 整篇进度 / F4 整篇结果 / F5 云端首次同意 /
+           F6 批量翻译工具页 / F7 暗色示例 / F8 token 色卡 / 附录能力边界。
+     约束：
+       - 自包含单文件：零外部资源（无外部 URL / script src / link href / 内嵌字体）。
+       - CSS 变量名与 设计/v1.0-阅读器/A+C-设计说明与token清单.md §1.1 一致。
+       - 不新增主题 token：翻译区复用既有 accent/surface/warn/success 及
+         Brush.OverlayMask（--mask）/ Brush.OnAccent（--onacc）。
+       - 本文件仅设计产物，不改动 Sources/、tests/、App.xaml。
+     ============================================================================ -->
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIPDF PDF 翻译 · 主设计稿 v1.1</title>
+<style>
+/* ==========================================================================
+   1) TOKEN 层：与 A+C 设计说明 §1.1 一致的 CSS 变量名（值取 §1.2）
+   ========================================================================== */
+:root{
+  --win:#FBFAF7;         /* Brush.Window */
+  --side:#F4F1EA;        /* Brush.Sidebar */
+  --hov:#ECE7DD;         /* Brush.Hover */
+  --bd:#E4DDCF;          /* Brush.Border */
+  --bdstrong:#C9C0AE;    /* Brush.BorderStrong */
+  --t1:#2A251E;          /* Brush.TextPrimary */
+  --t2:#6E6659;          /* Brush.TextSecondary */
+  --t3:#9C9384;          /* Brush.TextTertiary */
+  --acc:#3159D9;         /* Brush.Accent */
+  --acchov:#2749AE;      /* Brush.AccentHover */
+  --accpress:#1F3B8F;    /* Brush.AccentPressed */
+  --accsoft:#E7EBF8;     /* Brush.AccentSoft */
+  --acct:#2A4CBB;        /* Brush.AccentText */
+  --readbg:#ECE7DC;      /* Brush.PreviewBg */
+  --field:#FFFDF8;       /* Brush.FieldBackground */
+  --surf:#F7F4EC;        /* Brush.Surface */
+  --toolbar:#F4F1EA;     /* Brush.Toolbar */
+  --ok:#1F7A3D;          /* Brush.Success */
+  --err:#C4321F;         /* Brush.Error */
+  --oksoft:#E4F3E9;      /* Brush.SuccessSoft */
+  --danger:#B3382E;      /* Brush.Danger */
+  --dangersoft:#FBEAE8;  /* Brush.DangerSoft */
+  --neutralsoft:#EFEAE0; /* Brush.NeutralSoft */
+  --warnbg:#FBF2DF;      /* Brush.ConverterWarnBackground */
+  --warntext:#8A5300;    /* Brush.ConverterWarnText */
+  --mask:rgba(43,37,28,.45); /* Brush.OverlayMask（A+C 新增候选；翻译区复用） */
+  --onacc:#FFFFFF;       /* Brush.OnAccent（A+C 新增候选；翻译区复用） */
+  /* —— 纯 CSS 装饰（无 token 语义） —— */
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-serif:"Source Han Serif SC","Noto Serif SC","Source Han Serif CN","Songti SC","SimSun","PingFang SC",Georgia,"Times New Roman",serif;
+  --shadow-page:0 1px 2px rgba(74,58,36,.08),0 2px 8px rgba(74,58,36,.06);
+  --shadow-pop:0 4px 18px rgba(60,46,26,.16);
+  --shadow-modal:0 10px 40px rgba(48,36,20,.28);
+  --ease:cubic-bezier(.22,.61,.36,1);
+  --dur:140ms;
+}
+[data-theme="dark"]{
+  --win:#1C1A17;
+  --side:#23201A;
+  --hov:#302C24;
+  --bd:#3A3529;
+  --bdstrong:#4C4636;
+  --t1:#EDE7DA;
+  --t2:#B3AA99;
+  --t3:#877F6F;
+  --acc:#7E9CD8;
+  --acchov:#90ACDF;
+  --accpress:#6B88C4;
+  --accsoft:#272F41;
+  --acct:#A9C0EA;
+  --readbg:#26221C;
+  --field:#262219;
+  --surf:#201D17;
+  --toolbar:#23201A;
+  --ok:#7FC08E;
+  --err:#E88B7D;
+  --oksoft:#1F2C22;
+  --danger:#E88B7D;
+  --dangersoft:#38231F;
+  --neutralsoft:#2C2820;
+  --warnbg:#3A2F1C;
+  --warntext:#E6B36A;
+  --mask:rgba(10,8,5,.56);
+  --onacc:#FDFBF6;
+  --shadow-page:0 1px 2px rgba(0,0,0,.35),0 2px 10px rgba(0,0,0,.28);
+  --shadow-pop:0 4px 18px rgba(0,0,0,.45);
+  --shadow-modal:0 10px 40px rgba(0,0,0,.55);
+}
+
+/* ==========================================================================
+   2) 基础
+   ========================================================================== */
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--font-ui);color:var(--t1);background:var(--win);font-size:13px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--acc);outline-offset:2px;border-radius:6px;
+}
+.serif{font-family:var(--font-serif)}
+::selection{background:var(--accsoft);color:var(--acct)}
+
+.doc{max-width:1080px;margin:0 auto;padding:0 28px 96px}
+.masthead{padding:30px 0 14px;border-bottom:2px solid var(--bd);margin-bottom:8px}
+.masthead .kicker{font-size:11px;letter-spacing:.18em;color:var(--t3);text-transform:uppercase;font-weight:600}
+.masthead h1{font-family:var(--font-serif);font-size:30px;font-weight:700;letter-spacing:.01em;margin:6px 0 4px}
+.masthead .sub{font-size:12.5px;color:var(--t2);max-width:800px}
+.masthead .meta{font-size:11px;color:var(--t3);margin-top:8px}
+.toolrow{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb,var(--win) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--bd);padding:9px 0;margin-bottom:26px}
+.toolrow .sp{flex:1}
+.tbtn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--bd);background:var(--field);
+  color:var(--t1);border-radius:7px;padding:6px 13px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.tbtn:hover{background:var(--hov)}
+.tbtn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.tbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--onacc)}
+.chipbar{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--neutralsoft);color:var(--t2);border:1px solid var(--bd)}
+.chip b{color:var(--t1);font-weight:600}
+.toc{background:var(--surf);border:1px solid var(--bd);border-radius:10px;padding:14px 18px;margin-bottom:34px}
+.toc .t{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--t2);margin-bottom:8px}
+.toc ol{margin-left:20px;font-size:12.5px;color:var(--t2);columns:2;column-gap:34px}
+.toc a{color:var(--acct);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.gtitle{font-family:var(--font-serif);font-size:19px;font-weight:700;margin:46px 0 3px;padding-top:14px;border-top:2px solid var(--bd)}
+.gsub{font-size:12px;color:var(--t2);margin-bottom:16px}
+.notes{font-size:12px;color:var(--t2);margin:12px 0 4px;padding-left:18px;max-width:1000px}
+.notes li{margin-bottom:4px}
+.notes b{color:var(--t1)}
+.notes code,.spec code{color:var(--acct);font-family:Consolas,monospace;font-size:11.5px}
+
+/* 规格说明块 */
+.spec{border:1px solid var(--bd);border-left:3px solid var(--acc);border-radius:8px;background:var(--surf);
+  padding:12px 16px;margin:12px 0 30px}
+.spec h4{font-family:var(--font-serif);font-size:13.5px;margin-bottom:7px}
+.spec .cols{display:grid;grid-template-columns:1fr 1fr;gap:4px 26px}
+.spec .col h5{font-size:10.5px;letter-spacing:.08em;color:var(--t3);text-transform:uppercase;margin-bottom:4px;font-weight:700}
+.spec ul{padding-left:16px;font-size:12px;color:var(--t2)}
+.spec li{margin-bottom:3px}
+.spec b{color:var(--t1)}
+
+/* ==========================================================================
+   3) 应用外壳（复用 A+C 几何：顶栏 44 / 左栏 200 / 右栏翻译 320 / 状态栏 32）
+   ========================================================================== */
+.stage{border:1px solid var(--bd);border-radius:10px;overflow:hidden;background:var(--win);
+  box-shadow:var(--shadow-page);margin-bottom:8px}
+.app{display:flex;flex-direction:column;height:640px;overflow:hidden}
+.tabbar{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:6px;padding:0 10px;
+  background:var(--side);border-bottom:1px solid var(--bd)}
+.brand{display:flex;align-items:center;gap:7px;padding:0 8px 0 2px;font-weight:700;font-size:13px;color:var(--t1)}
+.brand .mark{width:20px;height:20px;border-radius:5px;background:var(--acc);color:var(--onacc);font-size:11px;font-weight:800;
+  display:flex;align-items:center;justify-content:center}
+.tab{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px 6px 0 0;font-size:13px;
+  color:var(--t2);cursor:default;user-select:none;white-space:nowrap;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.tab.active{background:var(--win);color:var(--t1);box-shadow:inset 0 -2px 0 var(--acc)}
+.tab:not(.active):hover{background:var(--hov)}
+.tab .x{color:var(--t3);font-size:11px;margin-left:4px}
+.tab .newdot{width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:2px}
+.tab .trdot{width:6px;height:6px;border-radius:50%;background:var(--acc);margin-left:2px}
+.newtab{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:15px}
+.newtab:hover{background:var(--hov)}
+.search{margin-left:auto}
+.search input{width:200px;height:28px;padding:0 10px;font-size:13px;border:1px solid var(--bd);border-radius:6px;
+  background:var(--field);color:var(--t1);outline:none}
+.search input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accsoft)}
+.gear{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:14px}
+.gear:hover{background:var(--hov)}
+.main{flex:1;display:flex;min-height:0}
+.nav{width:200px;flex:0 0 200px;background:var(--side);border-right:1px solid var(--bd);padding:10px;overflow:hidden}
+.minitabs{display:flex;gap:2px;margin-bottom:12px}
+.minitabs span{flex:1;text-align:center;padding:5px 0;font-size:11px;border-radius:6px;color:var(--t2);cursor:default}
+.minitabs span.on{background:var(--win);color:var(--acct);font-weight:600}
+.thumb{position:relative;background:var(--win);border-radius:6px;box-shadow:var(--shadow-page);aspect-ratio:210/297;
+  margin-bottom:10px;padding:12px 9px}
+.thumb.on{outline:2px solid var(--acc);outline-offset:1px}
+.thumb .ln{height:4px;border-radius:2px;background:var(--bd);margin-bottom:6px}
+.thumb .ln.w60{width:60%}.thumb .ln.w80{width:80%}.thumb .ln.w90{width:90%}
+.thumb .pg{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--t3)}
+.nav .hint{font-size:11px;color:var(--t3);margin-top:4px}
+/* 阅读画布 */
+.read{flex:1;background-color:var(--readbg);overflow:hidden;padding:14px 0;min-width:0;position:relative}
+.pages{width:64%;margin:0 auto;display:flex;flex-direction:column;gap:14px;position:relative;z-index:1}
+.page{position:relative;background:var(--win);box-shadow:var(--shadow-page);aspect-ratio:210/297;padding:24px 28px;flex:0 0 auto}
+.h2{font-family:var(--font-serif);font-size:16px;font-weight:700;margin-bottom:12px}
+.p p{font-size:13px;line-height:1.85;margin-bottom:11px}
+.sel{background:var(--accsoft);box-shadow:inset 0 -2px 0 var(--acc);border-radius:2px}
+.p-title{font-family:var(--font-serif);font-size:24px;font-weight:700;text-align:center;margin-top:16%}
+.p-sub{text-align:center;font-size:13px;color:var(--t2);margin-top:8px}
+/* 划词浮出「译」按钮 */
+.tfloat{position:absolute;z-index:6;display:flex;align-items:center;gap:0;
+  background:var(--win);border:1px solid var(--bd);border-radius:8px;box-shadow:var(--shadow-pop);
+  animation:pop 130ms var(--ease)}
+.tfloat .tb{width:30px;height:30px;border:none;background:var(--acc);color:var(--onacc);font-size:14px;font-weight:700;
+  border-radius:7px;display:flex;align-items:center;justify-content:center}
+.tfloat .tb:hover{background:var(--acchov)}
+.tfloat .tip{font-size:11px;color:var(--t2);padding:0 9px 0 8px;white-space:nowrap}
+/* 右栏翻译 320 */
+.drawer{width:320px;flex:0 0 320px;background:var(--win);border-left:1px solid var(--bd);
+  overflow:hidden;display:flex;flex-direction:column}
+.drawer .outer{width:240px;flex:0 0 240px}
+.dtabs{display:flex;gap:0;height:40px;flex:0 0 40px;border-bottom:1px solid var(--bd);background:var(--side)}
+.dtabs span{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:var(--t2);cursor:default;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.dtabs span.on{background:var(--win);color:var(--t1);font-weight:600;box-shadow:inset 0 -2px 0 var(--acc)}
+.dtabs span:not(.on):hover{background:var(--hov)}
+.dbody{flex:1;overflow:hidden;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.dsec{border:1px solid var(--bd);border-radius:9px;background:var(--surf);padding:11px 12px}
+.dsec .h{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--t3);text-transform:uppercase;margin-bottom:7px}
+.dlbl{font-size:11px;color:var(--t3);display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.dlbl .meta{color:var(--t3)}
+.src,.out{font-size:12.5px;line-height:1.7}
+.src{color:var(--t1)}
+.out{color:var(--t1)}
+.darrow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t3);margin:2px 0}
+.darrow .ln{flex:1;height:1px;background:var(--bd)}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.abtn{border:1px solid var(--bd);background:var(--field);color:var(--t1);border-radius:7px;padding:5px 11px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease)}
+.abtn:hover{background:var(--hov)}
+.abtn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.abtn.primary:hover{background:var(--acchov)}
+.abtn.ghost{background:transparent;border-color:transparent;color:var(--acct);padding:5px 4px}
+.abtn.ghost:hover{background:var(--hov)}
+.abtn[disabled]{opacity:.45;cursor:default;pointer-events:none}
+.dfoot{font-size:11px;color:var(--t3);margin-top:2px}
+/* 整篇：纵向堆叠 */
+.cfg{display:flex;flex-direction:column;gap:0}
+.crow{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--bd)}
+.crow:last-of-type{border-bottom:none}
+.crow>label{font-size:12px;color:var(--t2)}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden}
+.seg span{font-size:12px;padding:4px 12px;color:var(--t2);background:var(--field)}
+.seg span.on{background:var(--accsoft);color:var(--acct);font-weight:600}
+.tmpl{display:flex;flex-wrap:wrap;gap:5px}
+.tmpl span{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);background:var(--field);color:var(--t2)}
+.tmpl span.on{background:var(--accsoft);border-color:var(--acc);color:var(--acct);font-weight:600}
+.linkrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mini{border:1px solid var(--bd);background:var(--field);color:var(--acct);border-radius:6px;padding:2px 9px;font-size:11px}
+.mini:hover{background:var(--hov)}
+.engwrap{display:flex;flex-direction:column;gap:6px;min-width:0}
+.savedcfg{display:flex;align-items:center;gap:7px;background:var(--field);border:1px solid var(--bd);border-radius:7px;padding:5px 8px;font-size:11.5px;min-width:0}
+.savedcfg .st{font-size:9.5px;font-weight:800;letter-spacing:.04em;border-radius:5px;padding:2px 6px;background:var(--oksoft);color:var(--ok);flex:0 0 auto}
+.savedcfg .sn{color:var(--t1);font-weight:600;line-height:1.35;word-break:break-word;flex:1;min-width:0}
+.savedcfg .mini{margin-left:auto;flex:0 0 auto}
+.chk{display:flex;gap:10px;flex-wrap:wrap}
+.ck{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t2)}
+.ck .box{width:14px;height:14px;border-radius:4px;border:1.5px solid var(--bdstrong);display:inline-flex;
+  align-items:center;justify-content:center;font-size:10px;color:var(--onacc);background:var(--field)}
+.ck.on{color:var(--t1)}
+.ck.on .box{background:var(--acc);border-color:var(--acc)}
+.startbtn{width:100%;height:36px;margin-top:11px;border:1px solid var(--acc);background:var(--acc);color:var(--onacc);
+  border-radius:8px;font-size:13px;font-weight:600;transition:background var(--dur) var(--ease)}
+.startbtn:hover{background:var(--acchov)}
+.tipnote{font-size:11px;color:var(--t3);margin-top:7px;display:flex;gap:6px;align-items:flex-start}
+/* 进度 */
+.proghead{display:flex;align-items:center;gap:8px;font-size:13px}
+.proghead .pct{margin-left:auto;color:var(--acct);font-weight:700}
+.progress{height:6px;border-radius:999px;background:var(--bd);overflow:hidden;margin:9px 0 6px}
+.progress>i{display:block;height:100%;background:var(--acc);border-radius:999px}
+.progmeta{font-size:11px;color:var(--t3)}
+.stages{margin-top:9px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.stages .st{display:flex;align-items:center;gap:7px;color:var(--t2)}
+.stages .st.done{color:var(--ok)}
+.stages .st.now{color:var(--acct);font-weight:600}
+.log{margin-top:8px;border:1px solid var(--bd);border-radius:7px;background:var(--field);padding:7px 9px;
+  font-family:Consolas,monospace;font-size:10.5px;color:var(--t2);line-height:1.65;max-height:74px;overflow:hidden}
+.progacts{display:flex;gap:8px;margin-top:9px}
+/* 结果 */
+.reshead{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ok);font-weight:600}
+.resrow{display:flex;align-items:center;gap:9px;border:1px solid var(--bd);border-radius:8px;background:var(--field);
+  padding:9px 10px;margin-top:8px}
+.badge{font-size:9.5px;font-weight:800;letter-spacing:.05em;border-radius:5px;padding:3px 7px;flex:0 0 auto;color:var(--onacc)}
+.badge.mono{background:var(--acc)}
+.badge.dual{background:var(--ok)}
+.resmeta{flex:1;min-width:0}
+.resmeta b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.resmeta span{font-size:11px;color:var(--t3)}
+.resacts{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.reshint{font-size:10.5px;color:var(--t3);margin-top:8px;word-break:break-all}
+.reshint.warn{color:var(--warntext);background:var(--warnbg);border-radius:6px;padding:6px 8px}
+/* 状态栏 32 */
+.status{height:32px;flex:0 0 32px;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--side);
+  border-top:1px solid var(--bd);font-size:12px;color:var(--t2)}
+.sbtn{width:24px;height:24px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:12px}
+.sbtn:hover{background:var(--hov)}
+.pageno b{color:var(--acc);font-weight:600}
+.pageno i{color:var(--t3);font-style:normal}
+.tstatus{margin-left:auto;font-size:11px;color:var(--t3)}
+.tstatus .live{color:var(--acct)}
+
+/* ==========================================================================
+   4) 模态 / 同意 / 工具页 / 状态组件
+   ========================================================================== */
+.overlay{position:absolute;inset:0;background:var(--mask);z-index:20;animation:fadein 160ms var(--ease);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--win);border:1px solid var(--bd);border-radius:12px;box-shadow:var(--shadow-modal);
+  animation:rise 150ms var(--ease)}
+.consent{width:480px;max-width:100%;padding:20px 22px}
+.consent .ct{font-family:var(--font-serif);font-size:19px;font-weight:700}
+.consent .cd{font-size:12px;color:var(--t2);margin:5px 0 13px}
+.conslist{display:flex;flex-direction:column;gap:0;border:1px solid var(--bd);border-radius:9px;overflow:hidden;margin-bottom:13px}
+.consrow{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--bd);background:var(--field)}
+.consrow:last-child{border-bottom:none}
+.consrow .ic{width:24px;height:24px;flex:0 0 24px;border-radius:7px;background:var(--accsoft);color:var(--acct);
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.consrow b{display:block;font-size:12px}
+.consrow span{font-size:11.5px;color:var(--t2)}
+.ckbig{display:flex;gap:9px;align-items:center;font-size:12px;color:var(--t2);padding:5px 0}
+.ckbig .box{width:16px;height:16px;flex:0 0 16px;border-radius:4px;border:1.5px solid var(--bdstrong);
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--onacc)}
+.ckbig.on{color:var(--t1)}
+.ckbig.on .box{background:var(--acc);border-color:var(--acc)}
+.cfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--bd)}
+.btn{border:1px solid var(--bd);background:var(--field);color:var(--t1);border-radius:8px;padding:8px 16px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.btn:hover{background:var(--hov)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.btn.primary:hover{background:var(--acchov)}
+/* 工具页 */
+.toolpage{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--win)}
+.tp-head{padding:18px 26px 11px;border-bottom:1px solid var(--bd)}
+.tp-head .crumb{font-size:11px;color:var(--t3);letter-spacing:.06em;margin-bottom:4px}
+.tp-head h2{font-family:var(--font-serif);font-size:22px;font-weight:700}
+.tp-head .d{font-size:12.5px;color:var(--t2);margin-top:2px}
+.tp-body{flex:1;display:flex;min-height:0}
+.tp-form{flex:1;padding:16px 26px;overflow:hidden;min-width:0}
+.tp-side{width:300px;flex:0 0 300px;border-left:1px solid var(--bd);background:var(--surf);padding:16px 18px;overflow:hidden}
+.dropzone{border:1.5px dashed var(--bdstrong);border-radius:10px;background:var(--field);padding:20px;text-align:center;
+  font-size:12.5px;color:var(--t2);margin-bottom:14px}
+.dropzone .big{font-size:14px;color:var(--t1);font-weight:600;display:block;margin-bottom:3px}
+.dropzone .lnk{color:var(--acct);font-weight:600}
+.fl-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--t2);margin-bottom:8px}
+.fl-head b{color:var(--t1)}
+.fitem{display:flex;align-items:center;gap:9px;border:1px solid var(--bd);border-radius:8px;background:var(--field);
+  padding:8px 10px;margin-bottom:6px}
+.fitem .fic{width:30px;height:30px;flex:0 0 30px;border-radius:7px;background:var(--accsoft);color:var(--acct);
+  font-size:9.5px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.fitem .fnm{flex:1;min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fitem .fnm span{display:block;font-size:11px;color:var(--t3);font-weight:400}
+.fst{font-size:10.5px;border-radius:999px;padding:2px 9px;flex:0 0 auto}
+.fst.wait{background:var(--neutralsoft);color:var(--t2)}
+.fst.scan{background:var(--warnbg);color:var(--warntext)}
+.fst.done{background:var(--oksoft);color:var(--ok)}
+.fst.err{background:var(--dangersoft);color:var(--danger)}
+.fitem .x{width:22px;height:22px;border:none;background:transparent;color:var(--t3);border-radius:6px;font-size:14px}
+.fitem .x:hover{background:var(--hov)}
+.uni{font-size:11.5px;color:var(--t2);background:var(--neutralsoft);border-radius:8px;padding:9px 12px;margin-top:6px}
+.uni b{color:var(--t1)}
+.warnbanner{display:flex;align-items:flex-start;gap:8px;background:var(--warnbg);color:var(--warntext);font-size:11.5px;
+  border:1px solid color-mix(in srgb,var(--warntext) 28%,transparent);border-radius:8px;padding:8px 12px;margin-top:10px}
+.runbar{display:flex;align-items:center;gap:10px;padding:11px 26px;border-top:1px solid var(--bd);background:var(--toolbar)}
+.runbar .note{font-size:11px;color:var(--t3);margin-right:auto}
+.psummary{border:1px solid var(--bd);border-radius:9px;background:var(--field);padding:11px 13px;margin-bottom:10px}
+.psummary .h{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--t3);text-transform:uppercase;margin-bottom:6px}
+.psummary .r{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+.psummary .r span{color:var(--t3)}
+/* 状态组件 */
+.spinner{width:14px;height:14px;border:2px solid var(--accsoft);border-top-color:var(--acc);border-radius:50%;
+  animation:spin .8s linear infinite;display:inline-block;vertical-align:-2px;flex:0 0 auto}
+.skel{background:linear-gradient(90deg,var(--bd) 25%,var(--surf) 50%,var(--bd) 75%);background-size:200% 100%;
+  animation:sh 1.4s infinite;border-radius:4px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:150px;
+  text-align:center;color:var(--t3);gap:5px}
+.empty .eic{font-size:26px;opacity:.8}
+.empty .et{font-size:12.5px;color:var(--t2);font-weight:600}
+.empty .eh{font-size:11px;max-width:230px}
+/* Token 色卡 */
+.swgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.swcard{border:1px solid var(--bd);border-radius:10px;overflow:hidden;background:var(--win)}
+.swcard .swh{display:flex;height:38px}
+.swcard .swh>i{flex:1;display:block}
+.swcard .swm{padding:8px 10px;font-size:11px}
+.swcard .swm .v{color:var(--t3);font-family:Consolas,monospace;font-size:10.5px;margin-top:2px}
+.swcard .swm .k{font-weight:700}
+.tag-reuse{color:var(--ok);font-weight:700}
+.tag-newcand{color:var(--acct);font-weight:700}
+.sw-legend{font-size:11px;color:var(--t3);margin:6px 0 14px}
+/* 暗色示例容器 */
+.darkwrap{background:var(--win);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:8px}
+.darkwrap .app{height:440px;border:1px solid var(--bd);border-radius:8px}
+/* 附录 */
+.boundary{border:1px solid var(--bd);border-left:3px solid var(--warnbg);border-radius:8px;background:var(--surf);padding:14px 18px}
+.boundary table{border-collapse:collapse;width:100%;font-size:12px}
+.boundary th{text-align:left;background:var(--warnbg);color:var(--warntext);padding:7px 10px}
+.boundary td{padding:7px 10px;border-bottom:1px solid var(--bd);vertical-align:top;color:var(--t2)}
+.boundary td b{color:var(--t1)}
+.foot-note{margin-top:40px;padding-top:14px;border-top:2px solid var(--bd);font-size:11.5px;color:var(--t3)}
+
+/* 动效 */
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes sh{to{background-position:-200% 0}}
+@keyframes blink{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="masthead">
+    <div class="kicker">AIPDF · Windows WPF · PDF Translation</div>
+    <h1 class="serif">PDF 翻译 · 主设计稿</h1>
+    <div class="sub">在阅读器内就地翻译：右栏双 Tab「划词 / 整篇」，整篇纵向堆叠配置→开始→进度→结果；批量走独立工具页。译后生成 <strong>mono（纯译文）</strong> 与 <strong>dual（原文/译文对照）</strong> 两份 PDF，在新标签打开，不改源文件。视觉复用 v1.0 阅读器 A+C 暖纸体系，<strong>不新增主题 token</strong>。</div>
+    <div class="meta">版本 v1.1 · 2026-09-13 · token 基线《A+C-设计说明与token清单.md》· 配套《需求总结.md》《翻译-全状态设计参考.html》</div>
+  </header>
+
+  <div class="toolrow">
+    <button class="tbtn primary" id="themeToggle" type="button"><span class="dot"></span><span id="themeLabel">切到暖暗色</span></button>
+    <span class="chipbar">
+      <span class="chip"><b>载体</b> 右栏双 Tab（320px）</span>
+      <span class="chip"><b>产物</b> mono + dual PDF</span>
+      <span class="chip"><b>批量</b> 独立工具页</span>
+      <span class="chip"><b>token</b> 复用不新增</span>
+      <span class="chip"><b>零</b> 外部资源</span>
+    </span>
+    <span class="sp"></span>
+    <span style="font-size:11px;color:var(--t3)">当前：<b id="themeNow" style="color:var(--t1)">亮色</b></span>
+  </div>
+
+  <div class="toc">
+    <div class="t">目录</div>
+    <ol>
+      <li><a href="#f1">F1 划词翻译（选中浮出「译」按钮）</a></li>
+      <li><a href="#f2">F2 整篇 · 配置</a></li>
+      <li><a href="#f3">F3 整篇 · 进度（取消 / 后台继续）</a></li>
+      <li><a href="#f4">F4 整篇 · 结果（mono + dual）</a></li>
+      <li><a href="#f5">F5 云端首次同意模态</a></li>
+      <li><a href="#f6">F6 批量翻译工具页</a></li>
+      <li><a href="#f7">F7 暗色示例</a></li>
+      <li><a href="#f8">F8 Token 色卡（复用 / 新增）</a></li>
+      <li><a href="#appendix">附录 · 能力边界</a></li>
+    </ol>
+  </div>
+
+  <!-- ===================== F1 划词 ===================== -->
+  <div class="gtitle" id="f1">F1 · 划词翻译</div>
+  <div class="gsub">在阅读区选中文字 → 选区附近浮出小「译」按钮（不自动翻译）→ 点击后右栏「划词」Tab 出译文卡片。右栏宽 320px，双 Tab「划词 / 整篇」。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active" style="position:relative">📄 季度运营报告.pdf <span class="x">×</span><span style="color:var(--acc);font-size:11px">①</span></div>
+        <div class="tab">📄 员工手册.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><div class="ln w80"></div><span class="pg">1</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln w60"></div><span class="pg">2</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><span class="pg">3</span></div>
+          <div class="hint">12 页 · 1.8 MB · 可搜索</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page">
+              <div class="h2">一、核心指标</div>
+              <div class="p">
+                <p>本季度产品整体保持稳健增长。九月底日活达到 42.6 万，较上季度末增长 18.4%；七日留存率稳定在 46% 附近。</p>
+                <p>Paid conversion reached <span class="sel">3.2%, up 0.4 percentage points quarter over quarter</span>, with annual membership now at 58%.</p>
+              </div>
+              <div class="tfloat" style="left:44%;top:52%">
+                <button class="tb" title="翻译选中文字">译</button>
+                <span class="tip">学术 · 英→中</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs">
+            <span class="on">划词 <span class="chip" style="padding:0 6px;background:var(--accsoft);color:var(--acct);border:none">译</span></span>
+            <span>整篇</span>
+          </div>
+          <div class="dbody">
+            <div class="dsec">
+              <div class="dlbl"><span>原文</span><span class="meta">EN · 11 词</span></div>
+              <div class="src">Paid conversion reached 3.2%, up 0.4 percentage points quarter over quarter.</div>
+            </div>
+            <div class="darrow"><span class="ln"></span>学术 · 英→中 · 云端<span class="ln"></span></div>
+            <div class="dsec">
+              <div class="dlbl"><span>译文</span><span class="meta">1.2s</span></div>
+              <div class="out">付费转化率升至 3.2%，环比提升 0.4 个百分点，年度会员占比现为 58%。</div>
+            </div>
+            <div class="dsec">
+              <div class="h">操作</div>
+              <div class="acts">
+                <button class="abtn">复制</button>
+                <button class="abtn">替换标注</button>
+                <button class="abtn">加入术语</button>
+                <button class="abtn primary">重译</button>
+              </div>
+              <div class="dfoot" style="margin-top:8px">「替换标注」把译文写入独立 sidecar 标注文件（不写回源 PDF），仅在阅读视图叠加显示。sidecar 优先存放在源 PDF 同目录（使用 FILE_ATTRIBUTE_HIDDEN 属性隐藏；Windows 上点号前缀 ≠ 隐藏），源目录不可写时回退到任务临时目录。仅会话内有效，退出即清理；不缓存原文全文。</div>
+            </div>
+            <div class="dfoot">源文件只读 · 译文写入 sidecar（不写回原 PDF） · 选中文本按需发送，不缓存正文</div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>2</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">右栏：<span class="live">划词</span> · 已翻译 1 段</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="gsub" style="margin-top:18px"><b>F1b · 本页无文本层（划词不可用）</b>：扫描图片页没有可选文字，划词无法工作。必须显式说明，而不是让用户「框选没反应」。</div>
+  <div class="stage">
+    <div class="app" style="height:440px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 供应商合同-v2.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on" style="position:relative">
+            <div class="skel" style="position:absolute;inset:12px 9px"></div>
+            <span class="pg">1</span>
+          </div>
+          <div class="hint">8 页 · 640 KB · 含扫描页</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page" style="padding:0;overflow:hidden">
+              <div class="skel" style="position:absolute;inset:0;border-radius:0"></div>
+              <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:12px;color:var(--t2);background:var(--field);border:1px solid var(--bd);border-radius:8px;padding:7px 12px;box-shadow:var(--shadow-pop)">图片型页面 · 无文本层</div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs">
+            <span class="on">划词 <span class="chip" style="padding:0 6px;background:var(--neutralsoft);color:var(--t3);border:none">不可用</span></span>
+            <span>整篇</span>
+          </div>
+          <div class="dbody">
+            <div class="empty">
+              <div class="eic">▨</div>
+              <div class="et">本页无文本层</div>
+              <div class="eh">此页是扫描图片，没有可选文字，划词翻译不可用。可改用整篇翻译（先 OCR 该页），或先对本页 OCR。</div>
+            </div>
+            <div class="acts">
+              <button class="abtn primary">用整篇翻译（先 OCR）</button>
+              <button class="abtn">仅本页 OCR</button>
+            </div>
+            <div class="dfoot">无文本层页不会静默失败；划词入口显式禁用并给出替代路径。</div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/8</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">右栏：<span style="color:var(--t3)">划词 · 不可用（无文本层）</span></span>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>① 选中触发</b>：仅在用户框选文字后，于选区附近浮出小「译」按钮；<b>点击才发请求</b>，避免误触发与无谓调用。</li>
+    <li><b>② 右栏双 Tab</b>：固定「划词 / 整篇」；宽 320px。切 Tab 不打断阅读，滚动位置与选中保持不变。</li>
+    <li><b>③ 划词卡片</b>：原文 / 译文两段 + 操作（复制、替换标注、加入术语、重译）；给出语言对、模板与模型来源。</li>
+    <li><b>④ 隐私边界</b>：只发送选中的文本片段；源文件只读，译文以 sidecar 叠层呈现，不写回原 PDF。</li>
+    <li><b>⑤ 无文本层</b>：扫描图片页无可选文字 → 划词不可用，显式禁用并引导「整篇（先 OCR）/ 本页 OCR」，不做「框选没反应」。</li>
+    <li><b>⑥ 入口收敛</b>：6 个入口共享一个翻译配置面板组件（划词 Tab / 整篇 Tab / 批量工具页），配置读写同一份 settings，保证一致性。</li>
+    <li><b>⑦ 最小窗口</b>：阅读器最小宽度 680px；&lt; 680px 时右栏 drawer 切换为覆盖层（overlay 320px + 遮罩）；&lt; 480px 时配置行折叠为摘要。批量工具页不受窗口宽度限制。</li>
+  </ul>
+  <div class="spec">
+    <h4>规格说明 · F1</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>选中即显「译」浮钮；点击后卡片先出骨架，返回后替换为译文。</li>
+          <li>再次选中新文字，卡片就地刷新；不堆叠多张历史卡片。</li>
+          <li>「重译」沿用当前语言对/模板，可临时切换模板后重译。</li>
+          <li>错误态在卡片内联提示并给「重试」（见全状态稿）。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>语言：<b>源语言自动检测</b> → <b>目标语言「中文」</b>（目标语言显式选择，不参与自动检测，可改）。</li>
+          <li>模板：继承上次选择，默认 <b>学术</b>。</li>
+          <li>引擎：默认 <b>本地</b>（需自备运行时）；云端须主动选择并先同意（见 F5）。</li>
+          <li>术语表：命中则优先采用指定译法；译后校验命中情况并标注（不谎称「强制成功」）。</li>
+          <li>无文本层页：划词入口禁用，引导整篇（先 OCR）/ 本页 OCR。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F2 整篇配置 ===================== -->
+  <div class="gtitle" id="f2">F2 · 整篇翻译 · 配置</div>
+  <div class="gsub">「整篇」Tab 内纵向堆叠第一步。所有配置在一屏内完成，不弹向导；底部为唯一主动作「开始整篇翻译」。已保存的配置（本地 / 云端各自记住上次选择）跨会话自动复用。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><span class="pg">1</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><span class="pg">2</span></div>
+          <div class="hint">12 页 · 1.8 MB</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page"><div class="p-title">2026 年第三季度产品运营报告</div><div class="p-sub">产品技术部 · 2026-09-08</div></div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody">
+            <div class="dsec" style="flex:1">
+              <div class="h">整篇翻译设置</div>
+              <div class="cfg">
+                <div class="crow"><label>源语言</label><div class="seg"><span class="on">自动检测</span><span>英</span><span>日</span></div></div>
+                <div class="crow"><label>目标语言</label><div class="seg"><span class="on">中文</span><span>English</span><span>日本語</span></div></div>
+                <div class="crow"><label>Prompt 模板</label><div class="tmpl">
+                  <span class="on">学术</span><span>法律</span><span>医学</span><span>技术</span><span>通用</span><span>＋ 自定义</span>
+                </div></div>
+                <div class="crow"><label>术语表</label><div class="linkrow"><span style="font-size:12px;color:var(--t1)">产品名 · 12 条</span><button class="mini">编辑</button><button class="mini">新建</button></div></div>
+                <div class="crow"><label>引擎</label>
+                  <div class="engwrap">
+                    <div class="seg"><span>云端 LLM</span><span class="on">本地</span></div>
+                    <div class="savedcfg">
+                      <span class="st">已保存</span>
+                      <span class="sn">本机 llama.cpp · Qwen3-8B</span>
+                      <button class="mini">管理</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="crow"><label>成本上限</label><div class="linkrow"><span style="font-size:12px;color:var(--t1)">云端 ≤ 2.0M token / 任务</span><button class="mini">调整</button><button class="mini">不限</button></div></div>
+                <div class="crow"><label>回填策略</label><div style="font-size:11.5px;color:var(--t2)">缩字 1.00→0.70 → 溢到页边 → 裁切 + 降级标注（只读，详见回填规格）</div></div>
+                <div class="crow"><label>输出</label><div class="chk">
+                  <label class="ck on"><span class="box">✓</span>纯译文 mono</label>
+                  <label class="ck on"><span class="box">✓</span>对照 dual</label>
+                  <label class="ck"><span class="box"></span>Markdown</label>
+                </div></div>
+                <div class="crow"><label>范围</label><div class="linkrow"><span style="font-size:12px;color:var(--t1)">全部 12 页</span><button class="mini">选择页…</button></div></div>
+              </div>
+              <div class="tipnote"><span style="color:var(--acct)">ⓘ</span>已保存的配置跨会话自动复用；密钥存于系统凭据管理器，仅经 stdin 传递。</div>
+              <button class="startbtn">开始整篇翻译</button>
+              <div class="tipnote"><span style="color:var(--acct)">ⓘ</span>默认 <b>本地引擎</b>；默认同时生成 <b>纯译文</b> 与 <b>对照</b> 两份 PDF，完成后在新标签打开。选「法律 / 医学」模板时将先弹高风险确认。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">右栏：<span class="live">整篇 · 配置</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · F2</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>切到「整篇」即显示上次配置（跨会话记忆），无需重填。</li>
+          <li>引擎默认 <b>本地</b>；本地 / 云端各自记住上次选择，下次启动自动读回。引擎卡显示已保存运行时/服务商 +「管理」入口。</li>
+          <li>引擎选「云端」且该 <b>provider + endpoint</b> 未同意 → 点开始弹 F5 同意模态；已同意且 endpoint 未变则直接开始。</li>
+          <li>引擎选「本地」但无运行时 → 开始按钮禁用并提示（见全状态稿）。</li>
+          <li>源语言可自动检测；<b>目标语言必须显式选择</b>，不参与自动检测。</li>
+          <li>显示云端<b>成本硬上限</b>与只读的<b>回填策略</b>；达到上限即停并转「成本超限」态。</li>
+          <li>选「法律 / 医学」模板 → 先弹高风险确认（见 F2b），确认后才可开始。</li>
+          <li>模板「自定义」展开文本框；术语表可现场编辑，保存后复用于批量。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>源语言：<b>自动检测</b>（可显式指定，如英/日）。</li>
+          <li>目标语言：<b>中文</b>（显式选择，不自动检测）。</li>
+          <li>模板：<b>学术</b>（5 类 + 自定义）；法律/医学触发高风险确认。</li>
+          <li>引擎：默认 <b>本地</b>（需运行时）；云端须主动选择并同意；二者各自记住上次选择。</li>
+          <li>成本上限：云端默认 <b>≤ 2.0M token / 任务</b>，可调整或设为不限。</li>
+          <li>回填策略：<b>缩字 1.00→0.70 → 溢白 → 裁切+降级</b>（只读展示）。</li>
+          <li>输出：<b>mono ✓ + dual ✓</b>；Markdown 默认关。</li>
+          <li>范围：<b>全部页</b>；可改页区间。术语表：上次选择或空。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="gsub" style="margin-top:18px"><b>F2b · 高风险模板确认</b>：选中「法律 / 医学」模板时，开始前弹一次确认，避免用户把未审核机翻直接用于高风险文档。</div>
+  <div class="stage">
+    <div class="app" style="height:400px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 供应商合同-v2.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><span class="pg">1</span></div>
+        </div>
+        <div class="read"><div class="pages"><div class="page"><div class="h2">供应商合同</div><div class="p"><p>本合同由以下双方订立……</p></div></div></div></div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="darrow"><span class="ln"></span>模板 · 法律<span class="ln"></span></div></div></div>
+        </div>
+        <div class="overlay">
+          <div class="modal consent" style="width:440px">
+            <div class="ct serif">高风险文档 · 请确认</div>
+            <div class="cd">你选择了 <strong>法律</strong> 模板。机器翻译不能保证法律条款、金额、日期、条款编号的准确性，<strong>不构成专业意见</strong>，必须由具备资质的人复核后方可使用。</div>
+            <div class="conslist">
+              <div class="consrow"><span class="ic">!</span><div><b>机器翻译 · 请核对</b><span>结果区常驻显示此标记；产物 PDF 页脚极小标记默认开启，高风险模板（法律/医学）下该页脚标记为强制显示、不可由设置关闭。</span></div></div>
+              <div class="consrow"><span class="ic">核</span><div><b>人工复核为必需</b><span>请在使用或签署任何法律文件前进行专业审阅。</span></div></div>
+              <div class="consrow"><span class="ic">密</span><div><b>机密性与合规</b><span>上传涉密/受特权保护或受监管数据前请确认合规与授权。机器翻译不替代专业法律/医学意见。</span></div></div>
+            </div>
+            <label class="ckbig"><span class="box"></span>我已知悉并将在人工复核后使用</label>
+            <div class="cfoot"><button class="btn">改用「通用」模板</button><button class="btn primary">确认并继续</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F3 进度 ===================== -->
+  <div class="gtitle" id="f3">F3 · 整篇翻译 · 进度</div>
+  <div class="gsub">同一「整篇」Tab 内的第二步：阶段名 + 百分比 + 已用/剩余 + 日志；提供「取消」与「后台继续」。整篇会占用同一无窗口任务通道，进度同时反映在状态栏。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span><span style="color:var(--acc);font-size:11px">●</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><span class="pg">1</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><span class="pg">2</span></div>
+          <div class="hint">12 页 · 1.8 MB</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page"><div class="h2">一、核心指标</div><div class="p"><p>本季度产品整体保持稳健增长。九月底日活达到 42.6 万，较上季度末增长 18.4%。</p><p>付费转化率升至 3.2%，环比提升 0.4 个百分点。</p></div></div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody">
+            <div class="dsec">
+              <div class="proghead"><span class="spinner"></span><b>正在翻译</b><span class="pct">62%</span></div>
+              <div class="progress"><i style="width:62%"></i></div>
+              <div class="progmeta">第 8/12 页 · 已用 1:24 · 预计剩余 0:52</div>
+              <div class="stages">
+                <div class="st done">✓ 抽取文本</div>
+                <div class="st done">✓ OCR 扫描页（2 页）</div>
+                <div class="st now">● 翻译中 · 8/12</div>
+                <div class="st">○ 回填排版</div>
+                <div class="st">○ 导出 mono / dual</div>
+              </div>
+              <div class="log">
+                13:42:07  page 7/12 done · 术语命中 2<br>
+                13:42:11  page 8/12 · provider ok · 980 tok<br>
+                13:42:15  retry page 8 (rate limit) → ok
+              </div>
+              <div class="progacts">
+                <button class="abtn">取消</button>
+                <button class="abtn">后台继续</button>
+              </div>
+            </div>
+            <div class="dfoot">取消仅停止当前整篇任务，已译页可先导出（见全状态稿）。「后台继续」关闭右栏后任务继续，迷你进度留在状态栏；<b>仅本次会话内有效，应用退出即丢失未导出内容</b>。</div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>2</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">任务：<span class="live">整篇翻译 62%</span> · <span style="color:var(--acct)">取消</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · F3</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>阶段固定：抽取 → OCR（如需要）→ 翻译 → 回填 → 导出；当前阶段高亮。</li>
+          <li>日志只显示诊断行，<b>不含文档正文与密钥</b>。</li>
+          <li>「取消」即时停止子进程树；已译内容保留，可「先导出已译页」。</li>
+          <li>「后台继续」收起右栏任务视图，状态栏保留迷你进度与取消入口；仅本次会话内有效。</li>
+          <li>错误按分类处置（网络/超限/拒译/空/超限/校验）；拒译不当作网络错误，命中成本上限即停（见全状态稿）。</li>
+          <li>导出采用原子写（temp→rename）；应用退出时 kill-on-close 清理子进程与临时文件。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>百分比按已翻译页 / 总页；OCR/回填/导出阶段用加权进度，剩余时间标注「估算，可能不准」。</li>
+          <li>重试：同一错误<b>最多 2 次</b>（共 3 次尝试），指数退避；拒译/取消不重试。</li>
+          <li>任务通道：复用全局任务队列，<b>串行</b>，可取消。</li>
+          <li>状态栏迷你进度默认开启。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F4 结果 ===================== -->
+  <div class="gtitle" id="f4">F4 · 整篇翻译 · 结果</div>
+  <div class="gsub">「整篇」Tab 第三步：两个结果行（mono / dual）各带「打开」；下方为导出 Markdown 与输出目录提示。产物在阅读器新标签打开。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <div class="tab">📄 季度运营报告-纯译文.pdf <span class="trdot"></span><span class="x">×</span></div>
+        <div class="tab">📄 季度运营报告-对照.pdf <span class="trdot"></span><span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><span class="pg">1</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><span class="pg">2</span></div>
+          <div class="hint">12 页 · 3.1 MB · 可搜索</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page"><div class="p-title">2026 年第三季度产品运营报告</div><div class="p-sub">产品技术部 · 2026-09-08</div></div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody">
+            <div class="reshead">✓ 翻译完成 · 12 页 · 用时 2:38
+              <span class="badge" style="background:var(--warntext);color:var(--onacc);font-weight:800;margin-left:auto">机器翻译 · 请核对</span>
+            </div>
+            <div class="dsec" style="flex:1">
+              <div class="resrow">
+                <span class="badge mono">MONO</span>
+                <div class="resmeta"><b>季度运营报告-纯译文.pdf</b><span>12 页 · 3.1 MB · 纯中文</span></div>
+                <button class="abtn primary">打开</button>
+              </div>
+              <div class="resrow">
+                <span class="badge dual">DUAL</span>
+                <div class="resmeta"><b>季度运营报告-对照.pdf</b><span>12 页 · 4.6 MB · 原文/译文</span></div>
+                <button class="abtn primary">打开</button>
+              </div>
+              <div class="resacts">
+                <button class="abtn">导出 Markdown</button>
+                <button class="abtn">打开输出目录</button>
+                <button class="abtn">每页降级报告</button>
+                <button class="abtn">再译一次</button>
+              </div>
+              <div class="reshint">输出目录：D:\AIPDF\2026-09-13-0042-翻译\ · 降级报告：译本-降级报告.json</div>
+              <div class="reshint" style="color:var(--ok)">可搜索校验：通过 · 12/12 页可提取文本 · 0 页意外不可搜索（扫描叠加页会单独说明）</div>
+              <div class="reshint">每页降级：<b>2/12 页</b>（p3 表格结构降级 · p7 扫描页原文为图像、未移除且不可搜索）</div>
+              <div class="reshint">上传口径：本文为<b>本地引擎</b>，全文未离开本机。若用云端，本次会把全文文本分批发送至所选服务商（约 56 次调用）。</div>
+              <div class="reshint warn">表格与公式为纳入并尽力、失败显式降级并标注，可能存在位移或结构变化，请核对降级报告后再使用。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">右栏：<span class="live">整篇 · 结果</span> · 2 份产物</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · F4</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>完成即生成两个结果行；点「打开」在<b>新标签</b>打开对应 PDF。</li>
+          <li>结果区常驻 <b>「机器翻译 · 请核对」</b> 标记，不因「成功」样式被淡化；产物 PDF 每页页脚同样加极小标记（一般文档默认开启、可在设置中关闭；法律/医学高风险模板强制显示、不可关闭）。</li>
+          <li><b>可搜索校验</b>：导出后逐页校验译文可提取；异常页标注并计入「每页降级报告」。</li>
+          <li><b>每页降级报告</b>入口：显示降级页数、原因（表格/公式/裁切/缺字形/扫描叠加等）与不可搜索页。</li>
+          <li><b>聚合上传披露</b>：使用云端时明示「全文文本已分批发送」，不写「仅片段」。</li>
+          <li>Markdown 导出为可选附加产物，失败不影响 PDF 结果。</li>
+          <li>「再译一次」回到配置态并保留上次设置。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>产物命名：<code>原名-纯译文.pdf</code> / <code>原名-对照.pdf</code>；同名冲突加序号。</li>
+          <li>输出目录：每次新建 `AIPDF-日期-编号-翻译`，不覆盖源文件；默认根为用户文档目录。</li>
+          <li>dual 对齐不变量：<b>原文页 N ↔ 译文页 N</b>；跳过/失败页补空白页；默认译页紧跟原页，不自动左右。</li>
+          <li>降级报告：<code>译本-降级报告.json</code>（仅页码与原因，不含正文/密钥）。</li>
+          <li>可搜索：译文必须为真实文本 + ToUnicode；扫描叠加页天然不可搜索，需明示。</li>
+          <li>Markdown：默认不生成，勾选后才产出 <code>原名.md</code>。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F5 云端同意 ===================== -->
+  <div class="gtitle" id="f5">F5 · 云端首次同意模态</div>
+  <div class="gsub">首次使用云端翻译（整篇或批量）时弹出。列明服务商 + endpoint、上传范围（<strong>聚合口径</strong>）、传输方式、密钥存储；两项勾选（<strong>均默认未勾选</strong>）；提供「改用本地引擎」。<b>按「服务商 + endpoint」记住</b>；<b>endpoint 主机名/协议/端口任一变更必须重新同意</b>；勾选「记住我的选择」后同组合不再弹出（可在设置中更改或撤销）。</div>
+
+  <div class="stage">
+    <div class="app" style="height:460px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><span class="pg">1</span></div>
+        </div>
+        <div class="read">
+          <div class="pages"><div class="page"><div class="h2">一、核心指标</div><div class="p"><p>本季度产品整体保持稳健增长。</p></div></div></div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+        <div class="overlay">
+          <div class="modal consent">
+            <div class="ct serif">启用云端翻译</div>
+            <div class="cd">整篇与批量翻译将调用云端 LLM。<strong>本提示按「服务商 + endpoint」记住</strong>：<strong>endpoint 主机名/协议/端口任一变更必须重新同意</strong>；切换到不同服务商或更换密钥（指纹变化）也会重新提示。请明确知悉并同意以下各项：</div>
+            <div class="conslist">
+              <div class="consrow"><span class="ic">服</span><div><b>服务商 + endpoint</b><span>OpenAI 兼容端点（可在设置中更改；当前 <code style="color:var(--acct)">api.example.com</code>）</span></div></div>
+              <div class="consrow"><span class="ic">传</span><div><b>上传范围</b><span><strong>整篇翻译会把全文文本分批发送</strong>至该服务商（不是只发片段）；页面图片、批注、密码不发送。</span></div></div>
+              <div class="consrow"><span class="ic">网</span><div><b>传输</b><span>HTTPS 加密直达所选服务商，不经过 AIPDF 中转；本地引擎不联网。</span></div></div>
+              <div class="consrow"><span class="ic">钥</span><div><b>密钥存储</b><span>系统凭据管理器（OS 加密，跨会话读回）；<strong>仅经 stdin 传递</strong>；不写明文配置、不写日志、不进命令行参数、不写入子进程环境变量、不进崩溃转储 / 会话恢复 / 流程预设。</span></div></div>
+            </div>
+            <label class="ckbig"><span class="box"></span>我理解并同意将待译文本分批发送至上述服务商（默认未勾选，需你主动勾选）</label>
+            <label class="ckbig"><span class="box"></span>记住我的选择（按「服务商 + endpoint」记住；可在设置中更改或撤销）</label>
+            <div class="cfoot">
+              <button class="btn">改用本地引擎</button>
+              <button class="btn">取消</button>
+              <button class="btn primary">同意并继续</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · F5</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>仅在该 <strong>provider + endpoint</strong> 组合首次使用云端（且未记住）时弹出；同意后进入任务。</li>
+          <li>「记住我的选择」按 <strong>provider + endpoint</strong> 记忆；<strong>端点主机名/协议/端口任一变更 / 切换服务商 / 更换密钥 → 重新弹出</strong>；仅改模型名（端点和密钥不变）不重置。</li>
+          <li>未勾选「记住」→ 每个组合每次会话首次使用仍提示一次，但不要求重填 key。</li>
+          <li>同意记录带 <strong>TTL</strong>；过期自动重新提示。</li>
+          <li>「改用本地引擎」关闭模态并把引擎切为本地（无运行时则提示去配置）。</li>
+          <li>「取消」不发起任何网络请求，回到配置态。</li>
+          <li>拒绝记忆或拒绝同意 → 回退本地或停用云端入口（见全状态稿）。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>首项勾选：<b>默认未勾选</b>，须用户主动勾选才能继续；第二项也默认不勾。</li>
+          <li>服务商 + endpoint：默认第一个 OpenAI 兼容端点，可设置更改；变更端点需重新同意。</li>
+          <li>密钥：只写系统凭据管理器，<strong>仅经 stdin 传递</strong>；不写入子进程环境变量、不进崩溃转储/会话恢复/流程预设。</li>
+          <li>同意记录：仅存 `provider + endpoint + 密钥指纹 + 时间 + TTL`，不存密钥、不存正文；可在 设置 → 翻译 → 云端服务商 撤销（可同时清除凭据）或清除凭据。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F6 批量工具页 ===================== -->
+  <div class="gtitle" id="f6">F6 · 批量翻译工具页</div>
+  <div class="gsub">从起始页 / 工具箱进入的独立工具页，复用工具页范式：拖拽区 → 文件列表（带状态）→ 统一设置 → 开始。阅读器右栏仍只做划词 + 整篇。</div>
+
+  <div class="stage">
+    <div class="app" style="height:600px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">🧰 批量翻译 <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="toolpage">
+        <div class="tp-head">
+          <div class="crumb">工具箱 / 翻译</div>
+          <h2>批量翻译</h2>
+          <div class="d">多份 PDF 使用同一套语言 / 模板 / 术语表，逐件翻译并生成 mono + dual。</div>
+        </div>
+        <div class="tp-body">
+          <div class="tp-form">
+            <div class="dropzone"><span class="big">拖入 PDF，或 <span class="lnk">选择文件</span></span>支持多选 · 单次建议 ≤ 20 份</div>
+            <div class="fl-head"><span>文件 <b>3 个</b></span><span>共 56 页 · 7.6 MB</span></div>
+            <div class="fitem"><span class="fic">PDF</span><div class="fnm">季度运营报告.pdf<span>12 页 · 1.8 MB</span></div><span class="fst wait">待处理</span><button class="x">×</button></div>
+            <div class="fitem"><span class="fic">PDF</span><div class="fnm">供应商合同-v2.pdf<span>8 页 · 640 KB</span></div><span class="fst scan">含扫描页</span><button class="x">×</button></div>
+            <div class="fitem"><span class="fic">PDF</span><div class="fnm">员工手册.pdf<span>36 页 · 5.2 MB</span></div><span class="fst wait">待处理</span><button class="x">×</button></div>
+            <div class="uni">统一设置：<b>源自动检测 → 目标中文</b> · 模板 <b>学术</b> · 术语表「产品名」 · 引擎 <b>本地</b> · 输出 <b>mono + dual</b> · 成本上限 <b>云端 ≤ 2.0M token</b></div>
+            <div class="warnbanner">⚠ 检测到扫描页：将先 OCR 再翻译，仅白底图片页效果好，质量尽力而为。</div>
+          </div>
+          <div class="tp-side">
+            <div class="psummary">
+              <div class="h">本次任务</div>
+              <div class="r"><span>文件</span><b>3 个</b></div>
+              <div class="r"><span>总页数</span><b>56 页</b></div>
+              <div class="r"><span>含扫描页</span><b>1 份 · 2 页</b></div>
+              <div class="r"><span>预计云端调用</span><b>约 56 次</b></div>
+              <div class="r"><span>预计用时</span><b>≈ 6–9 分钟</b></div>
+            </div>
+            <div class="dsec" style="background:var(--field)">
+              <div class="h">输出</div>
+              <div style="font-size:12px;color:var(--t2)">每份生成 <b style="color:var(--t1)">纯译文</b> + <b style="color:var(--t1)">对照</b> 两份 PDF，完成后在阅读器新标签打开；可选 Markdown。</div>
+              <div class="reshint" style="margin-top:8px">D:\AIPDF\2026-09-13-0042-翻译\</div>
+            </div>
+            <div class="tipnote"><span style="color:var(--warntext)">!</span>表格/公式不保证，扫描件质量受限。</div>
+          </div>
+        </div>
+        <div class="runbar">
+          <span class="note">默认<b>本地引擎</b>；选云端则首次使用先弹同意说明</span>
+          <button class="btn">保存为流程预设</button>
+          <button class="btn primary">开始批量翻译</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · F6</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>文件项状态：待处理 / 含扫描页 / 处理中 / 完成 / 失败（可重试）。</li>
+          <li>统一设置作用于全部文件；单文件可移除、可单独重试。</li>
+          <li>开始后进入进度；<b>结果为列表，逐项按需打开</b>，<b>不逐件自动开标签</b>（避免 20×2=40 个标签）。</li>
+          <li>部分失败不中断整体，结束给汇总（见全状态稿）。</li>
+          <li>可从起始页工具网格、工具箱进入；也支持「打开结果目录」。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>源/目标语言 / 模板 / 引擎 / 输出 / 成本上限：与整篇共享默认与上次选择；引擎默认<b>本地</b>。</li>
+          <li>文件上限：单次建议 ≤ 20 份（超出提示分批）。</li>
+          <li>执行策略：复用全局任务队列；<b>默认「整篇/批量共用串行队列，不阻塞 UI 线程」</b>，单文件内部按 token 分块可并行发送（并发上限可配，默认 2），批量文件之间串行。</li>
+          <li>结果：列表呈现，支持「打开」「打开输出目录」「重试」；成功/失败/跳过计数。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="gsub" style="margin-top:18px"><b>F6b · 批量结果列表（按需打开）</b>：批量完成后结果以列表呈现，用户点哪份才开哪份；不逐件自动开标签。</div>
+  <div class="stage">
+    <div class="app" style="height:560px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">🧰 批量翻译 <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="toolpage">
+        <div class="tp-head">
+          <div class="crumb">工具箱 / 翻译</div>
+          <h2>批量翻译 · 结果</h2>
+          <div class="d">共 3 份：成功 2 · 失败 1。结果在下方列表，按需打开，不自动开标签。</div>
+        </div>
+        <div class="tp-body">
+          <div class="tp-form">
+            <div class="psummary" style="display:flex;gap:22px;align-items:center">
+              <div><span style="font-size:11px;color:var(--t3)">成功</span> <b style="color:var(--ok)">2</b></div>
+              <div><span style="font-size:11px;color:var(--t3)">失败</span> <b style="color:var(--err)">1</b></div>
+              <div><span style="font-size:11px;color:var(--t3)">跳过</span> <b style="color:var(--t3)">0</b></div>
+              <div style="margin-left:auto;font-size:11px;color:var(--t3)">执行：文件间串行 · 文件内分块并发 ≤ 2 · 后台队列不阻塞界面</div>
+            </div>
+            <div class="fitem"><span class="fic">PDF</span><div class="fnm">季度运营报告.pdf<span>mono + dual · 2/12 页降级（表格） · 可搜索通过</span></div><button class="abtn">打开 mono</button><button class="abtn">打开 dual</button></div>
+            <div class="fitem"><span class="fic">PDF</span><div class="fnm">员工手册.pdf<span>mono + dual · 无降级 · 可搜索通过</span></div><button class="abtn">打开 mono</button><button class="abtn">打开 dual</button></div>
+            <div class="fitem" style="border-color:var(--err)"><span class="fic">PDF</span><div class="fnm">供应商合同-v2.pdf<span>失败 · 需要打开密码（未提供）</span></div><button class="abtn">重试</button><button class="abtn">跳过</button></div>
+            <div class="tipnote"><span style="color:var(--warntext)">!</span>所有产物均带「机器翻译 · 请核对」标记；每份的降级报告随产物保存。</div>
+          </div>
+          <div class="tp-side">
+            <div class="psummary">
+              <div class="h">产物</div>
+              <div class="r"><span>目录</span><b>2026-09-13-0042-翻译</b></div>
+              <div class="r"><span>文件数</span><b>2 × (mono+dual)</b></div>
+              <div class="r"><span>默认</span><b>不自动打开</b></div>
+            </div>
+            <div class="dsec" style="background:var(--field)">
+              <div class="h">并发 / 串行</div>
+              <div style="font-size:12px;color:var(--t2)">批量文件<b>串行</b>；单个文件内分块<b>可并发</b>（默认 2）；批量与整篇共用后台队列，<b>不阻塞界面</b>。</div>
+            </div>
+          </div>
+        </div>
+        <div class="runbar">
+          <span class="note">结果列表按需打开；批量不自动开标签</span>
+          <button class="btn">打开输出目录</button>
+          <button class="btn primary">重试失败项</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F7 暗色示例 ===================== -->
+  <div class="gtitle" id="f7">F7 · 暗色示例</div>
+  <div class="gsub">暖暗色（暖黑而非纯灰，去饱和暖蓝强调）。整页可通过右上角按钮切换；本区固定展示暗色下划词 + 整篇关键组件的对比。</div>
+
+  <div class="darkwrap" data-theme="dark">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <button class="gear" style="margin-left:auto">⚙</button>
+      </div>
+      <div class="main">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><span class="pg">1</span></div>
+          <div class="hint">12 页 · 1.8 MB</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page">
+              <div class="h2">一、核心指标</div>
+              <div class="p"><p>Paid conversion reached <span class="sel">3.2%, up 0.4 percentage points</span>, annual membership 58%.</p></div>
+              <div class="tfloat" style="left:36%;top:58%"><button class="tb">译</button><span class="tip">学术 · 英→中</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span class="on">划词</span><span>整篇</span></div>
+          <div class="dbody">
+            <div class="dsec"><div class="dlbl"><span>原文</span><span class="meta">EN</span></div><div class="src">Paid conversion reached 3.2%, up 0.4 percentage points.</div></div>
+            <div class="darrow"><span class="ln"></span>学术 · 英→中<span class="ln"></span></div>
+            <div class="dsec"><div class="dlbl"><span>译文</span><span class="meta">1.2s</span></div><div class="out">付费转化率升至 3.2%，环比提升 0.4 个百分点。</div></div>
+            <div class="dsec"><div class="h">操作</div><div class="acts"><button class="abtn">复制</button><button class="abtn">替换标注</button><button class="abtn">加入术语</button><button class="abtn primary">重译</button></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>暗色下 `--readbg` 为暖黑 `#26221C`，阅读页仍保持与亮色一致的暖纸反差；强调色去饱和为暖蓝。</li>
+    <li>所有翻译组件只引用既有变量；切主题不改变任何布局尺寸。</li>
+  </ul>
+  <div class="spec">
+    <h4>规格说明 · F7</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>主题切换即时生效，与阅读器全局主题一致（同一设置项）。</li>
+          <li>划词浮钮、右栏卡片在暗色下仍用 accent / surface / warn 语义色。</li>
+          <li>不使用纯黑/纯白硬编码：正文色走 `--t1`，按钮前景走 `--onacc`。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>暗色值来自 A+C §1.2（`[data-theme="dark"]`）。</li>
+          <li>遮罩 `--mask` = `rgba(10,8,5,.56)`；`--onacc` = 暖白 `#FDFBF6`。</li>
+          <li>不新增任何暗色专用 token。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== F8 Token ===================== -->
+  <div class="gtitle" id="f8">F8 · Token 色卡（复用 / 新增）</div>
+  <div class="gsub">翻译区<strong>不新增主题 token</strong>：除遮罩与按钮前景复用 A+C 的两个新增候选外，其余全部为既有 token。色卡随右上角主题切换实时更新。</div>
+
+  <div class="sw-legend">左侧色块为变量当前值；文本显示变量名、对应 WPF 键与当前主题实际值。标记：<span class="tag-reuse">复用（既有）</span> / <span class="tag-newcand">复用（A+C 新增候选）</span>。</div>
+  <div class="swgrid" id="swgrid"></div>
+
+  <div class="spec" style="margin-top:18px">
+    <h4>规格说明 · F8</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>本区色值为运行时读取（随主题变化），与 WPF `DynamicResource` 一一对应。</li>
+          <li>翻译区未引入任何新颜色语义；警示复用 `ConverterWarn*`，成功复用 `Success*`。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>`--mask` → `Brush.OverlayMask`（A+C 新增候选）。</li>
+          <li>`--onacc` → `Brush.OnAccent`（A+C 新增候选）。</li>
+          <li>其余 25 项均为既有 token，键名与值不变。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 附录 ===================== -->
+  <div class="gtitle" id="appendix">附录 · 能力边界（诚实标注）</div>
+  <div class="gsub">设计稿呈现之前，先明确哪些做不到或做不稳，避免实现与使用预期错位。</div>
+  <div class="boundary">
+    <table>
+      <tr><th>项目</th><th>承诺级别</th><th>说明</th></tr>
+      <tr><td><b>表格</b></td><td>纳入并尽力、失败显式降级并标注</td><td>跨行合并、嵌套、无框线表格易错位或丢结构；失败时保留原文/可读文本并标 <code>table_fail</code>。</td></tr>
+      <tr><td><b>公式</b></td><td>纳入并尽力、失败显式降级并标注</td><td>可能位移、字号变化或转为文本；抽取乱码或无法适配时标 <code>formula_fail</code>，不写入错误内容。</td></tr>
+      <tr><td><b>扫描件 OCR</b></td><td>尽力且质量受限</td><td>仅白底纯图片页效果好；低对比、噪点、旋转页识别率下降。扫描页原文为图像，无法移除，仅叠加译文并标注。</td></tr>
+      <tr><td><b>版式 1:1</b></td><td>不承诺</td><td>复杂多栏、竖排、艺术字、图文混排以「可读」为目标；溢出按缩字→溢白→裁切处理并标注。</td></tr>
+      <tr><td><b>源文本抽取完整性</b></td><td>不保证</td><td>子集字体缺 ToUnicode、连字、CID/PUA 可能抽取乱码；低置信度页标 <code>extraction_low_conf</code>，不静默使用。</td></tr>
+      <tr><td><b>旋转 / 裁剪</b></td><td>支持但可能降级</td><td>按未旋转 + CropBox 归一回填；越界/裁剪页标 <code>rotation_crop</code>。</td></tr>
+      <tr><td><b>RTL / 竖排</b></td><td>不支持（V1）</td><td>阿拉伯/希伯来、竖排中文/日文检测到即保留原文并标注，不静默 LTR 错排。</td></tr>
+      <tr><td><b>字体与可搜索</b></td><td>可搜索为硬需求</td><td>输出用带 ToUnicode 的字体；缺字形标 <code>glyph_missing</code>、不可搜索页明示；不嵌入受限字体。</td></tr>
+      <tr><td><b>受限文档</b></td><td>需显式确认</td><td>仅权限加密（可打开、禁抽取/复制）默认不翻译；经确认后才处理并明示。</td></tr>
+      <tr><td><b>译文质量</b></td><td>受模型与 prompt 影响</td><td>术语表可约束专名；长句与语境仍可能不准确，需人工复核；结果区常驻「机器翻译 · 请核对」。</td></tr>
+      <tr><td><b>模型/字体下载</b></td><td>不做</td><td>不下载模型与字体；不引入 ONNX/DocLayout-YOLO。</td></tr>
+      <tr><td><b>翻译历史/项目库</b></td><td>不做（V1）</td><td>不提供历史记录、项目、跨会话复译与版本管理。</td></tr>
+    </table>
+  </div>
+
+  <div class="foot-note">
+    本文件为纯设计产物，未改动 <code>Sources/</code>、<code>tests/</code>、<code>App.xaml</code>。零外部网络资源、不内嵌字体；衬线仅用于展示标题，走系统回退链。
+    范围扩展说明（AGENTS.md / README.md 建议文本）、研究结论与未决项见同目录《需求总结.md》；非 happy path 全状态见《翻译-全状态设计参考.html》。
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  var btn=document.getElementById('themeToggle');
+  var lbl=document.getElementById('themeLabel');
+  var now=document.getElementById('themeNow');
+  function applyTheme(){
+    var dark=root.getAttribute('data-theme')==='dark';
+    lbl.textContent=dark?'切到亮色':'切到暖暗色';
+    now.textContent=dark?'暖暗色':'亮色';
+  }
+  btn.addEventListener('click',function(){
+    root.setAttribute('data-theme',root.getAttribute('data-theme')==='dark'?'light':'dark');
+    applyTheme();renderSw();
+  });
+  applyTheme();
+
+  /* Token 色卡：27 项主题变量（25 既有 + 2 复用 A+C 新增候选） */
+  var tokens=[
+    ['--win','Brush.Window','窗口底','reuse'],
+    ['--side','Brush.Sidebar','侧栏','reuse'],
+    ['--hov','Brush.Hover','悬停','reuse'],
+    ['--bd','Brush.Border','边框','reuse'],
+    ['--bdstrong','Brush.BorderStrong','强边框','reuse'],
+    ['--t1','Brush.TextPrimary','主文字','reuse'],
+    ['--t2','Brush.TextSecondary','次文字','reuse'],
+    ['--t3','Brush.TextTertiary','三级文字','reuse'],
+    ['--acc','Brush.Accent','强调','reuse'],
+    ['--acchov','Brush.AccentHover','强调悬停','reuse'],
+    ['--accpress','Brush.AccentPressed','强调按下','reuse'],
+    ['--accsoft','Brush.AccentSoft','强调浅底','reuse'],
+    ['--acct','Brush.AccentText','强调文字','reuse'],
+    ['--readbg','Brush.PreviewBg','阅读画布','reuse'],
+    ['--field','Brush.FieldBackground','输入底','reuse'],
+    ['--surf','Brush.Surface','表面','reuse'],
+    ['--toolbar','Brush.Toolbar','工具条','reuse'],
+    ['--ok','Brush.Success','成功','reuse'],
+    ['--err','Brush.Error','错误','reuse'],
+    ['--oksoft','Brush.SuccessSoft','成功浅底','reuse'],
+    ['--danger','Brush.Danger','危险','reuse'],
+    ['--dangersoft','Brush.DangerSoft','危险浅底','reuse'],
+    ['--neutralsoft','Brush.NeutralSoft','中性浅底','reuse'],
+    ['--warnbg','Brush.ConverterWarnBackground','警示底','reuse'],
+    ['--warntext','Brush.ConverterWarnText','警示文字','reuse'],
+    ['--mask','Brush.OverlayMask','遮罩','newcand'],
+    ['--onacc','Brush.OnAccent','按钮前景','newcand']
+  ];
+  var grid=document.getElementById('swgrid');
+  function renderSw(){
+    var cs=getComputedStyle(root), html='';
+    for(var i=0;i<tokens.length;i++){
+      var t=tokens[i];
+      var v=cs.getPropertyValue(t[0]).trim();
+      var tag=t[3]==='newcand'
+        ? '<span class="tag-newcand">复用·A+C 新增候选</span>'
+        : '<span class="tag-reuse">复用·既有</span>';
+      html+='<div class="swcard">'+
+        '<div class="swh"><i style="background:'+v+'" title="'+v+'"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>'+
+        '<div class="swm"><div class="k">'+t[0]+' · '+t[2]+'</div>'+
+        '<div class="v">'+t[1]+' = '+v+'</div>'+
+        '<div style="margin-top:3px;font-size:10.5px">'+tag+'</div></div></div>';
+    }
+    grid.innerHTML=html;
+  }
+  renderSw();
+})();
+</script>
+</body>
+</html>
