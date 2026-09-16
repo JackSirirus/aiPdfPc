@@ -438,7 +438,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         }
 
         // 云端未同意时先弹同意模态（宿主注入）；未同意 / 取消 → 不发起任何请求。
-        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync);
+        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync, Config.SelectedProvider);
         if (resolution.Config is not { } runtime)
         {
             _cts = null;
@@ -541,7 +541,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
         // F23：用 Resolve() 区分「无服务商 / 未同意 / 无凭据 / 非 loopback」，直接展示具体原因，
         // 不再用笼统的「尚未配置或同意已撤销」把不同缺口混为一谈。
-        var resolution = _configProvider.Resolve();
+        var resolution = _configProvider.Resolve(Config.SelectedProvider);
         if (resolution.Config is not { } runtime)
         {
             StatusMessage = resolution.Message;
@@ -589,7 +589,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         }
 
         // F23：同单文件重试，用 Resolve() 暴露具体未就绪原因。
-        var resolution = _configProvider.Resolve();
+        var resolution = _configProvider.Resolve(Config.SelectedProvider);
         if (resolution.Config is not { } runtime)
         {
             StatusMessage = resolution.Message;
@@ -885,7 +885,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
 
             // F22：每个文件执行前重新解析运行时配置——批量运行中途改端点 / 换凭据 / 撤销同意即时生效，
             // 不让后续文件沿用启动瞬间的旧配置。未就绪则停止剩余文件并返回具体原因（不静默发送）。
-            var resolution = _configProvider.Resolve();
+            var resolution = _configProvider.Resolve(Config.SelectedProvider);
             if (resolution.Config is not { } runtime)
             {
                 return resolution.Message;

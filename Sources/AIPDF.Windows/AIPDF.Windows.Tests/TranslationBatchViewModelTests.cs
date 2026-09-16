@@ -306,6 +306,8 @@ public sealed class TranslationBatchViewModelTests
         {
             ConsentCheckInterval = TimeSpan.FromMilliseconds(10),
         };
+        // 面板选中云端供应商：云端判定现在由「选中 id × 解析结果」派生（与生产配置一致）。
+        vm.Config.SelectedProvider = "deepseek";
         vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
 
         var start = vm.StartCommand.ExecuteAsync(null);
@@ -443,6 +445,96 @@ public sealed class TranslationBatchViewModelTests
 
         Assert.Equal(requestsAfterStart, bridge.Requests.Count); // 未就绪不再发起请求
         Assert.Contains("明确同意", vm.StatusMessage);
+    }
+
+    // ---------------------------------------------------------------- 选中供应商透传：4 个解析点必须携带 Config.SelectedProvider
+
+    /// <summary>
+    /// 记录每次 Resolve 收到的选中供应商 id：4 个调用点（启动 EnsureAsync / 单文件重试 / 全部重试 /
+    /// 每文件执行前）都必须透传面板选择，而非 null（null 会回退「本地优先」目的地）。
+    /// </summary>
+    private sealed class RecordingSelectedProviderConfigProvider(TranslationRuntimeConfig config)
+        : ITranslationRuntimeConfigProvider
+    {
+        public List<string?> ReceivedSelectedProviderIds { get; } = [];
+
+        public TranslationRuntimeConfig? Get() => config;
+
+        public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
+        {
+            ReceivedSelectedProviderIds.Add(selectedProviderId);
+            return new TranslationRuntimeConfigResolution(
+                TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint, false, "");
+        }
+    }
+
+    private static TranslationRuntimeConfig DeepSeekConfig()
+        => new("deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic");
+
+    [Fact]
+    public async Task Start_PassesPanelSelectedProvider_ToEnsureConsentAndPerFileResolve()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        var provider = new RecordingSelectedProviderConfigProvider(DeepSeekConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, bridge.Requests.Count);
+        Assert.Equal(3, provider.ReceivedSelectedProviderIds.Count); // EnsureAsync 1 次 + 每文件执行前 1 次
+        Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
+    }
+
+    [Fact]
+    public async Task RetryFile_PassesPanelSelectedProvider_ToResolve()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        var attempts = 0;
+        bridge.Handler = _ => Interlocked.Increment(ref attempts) == 1
+            ? new EngineResult { Ok = false, Error = "临时故障", ExitCode = 1 }
+            : RecordingBridge.Success();
+
+        var provider = new RecordingSelectedProviderConfigProvider(DeepSeekConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.Config.SelectedProvider = "deepseek";
+        vm.AddFiles([temp.CreatePdf("a.pdf")]);
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.Files[0].IsFailed);
+
+        provider.ReceivedSelectedProviderIds.Clear();
+
+        await vm.RetryFileCommand.ExecuteAsync(vm.Files[0]);
+
+        Assert.True(vm.Files[0].IsDone);
+        Assert.Equal(2, provider.ReceivedSelectedProviderIds.Count); // 单文件重试 1 次 + 文件执行前 1 次
+        Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
+    }
+
+    [Fact]
+    public async Task RetryAllFailed_PassesPanelSelectedProvider_ToResolve()
+    {
+        using var temp = new TempDirectory();
+        var bridge = new RecordingBridge();
+        bridge.Handler = _ => new EngineResult { Ok = false, Error = "临时故障", ExitCode = 1 };
+        var provider = new RecordingSelectedProviderConfigProvider(DeepSeekConfig());
+        var vm = new TranslationBatchViewModel(bridge, Tool(), provider);
+        vm.Config.SelectedProvider = "deepseek";
+        vm.AddFiles([temp.CreatePdf("a.pdf"), temp.CreatePdf("b.pdf")]);
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.FailedCount);
+
+        provider.ReceivedSelectedProviderIds.Clear();
+
+        await vm.RetryAllFailedCommand.ExecuteAsync(null);
+
+        Assert.Equal(3, provider.ReceivedSelectedProviderIds.Count); // 重试全部 1 次 + 每文件执行前 1 次
+        Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
     }
 
     /// <summary>测试用临时目录：释放时递归删除（句柄占用时容忍残留）。</summary>
