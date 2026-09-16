@@ -51,6 +51,9 @@ public sealed class SettingsDialog : Window
     private readonly TextBlock _detailSubtitle = new();
     private readonly TextBox _providerNameBox = new();
     private readonly TextBlock _providerIdText = new();
+    // 名称 / provider id 字段容器：S1 设计稿只对自定义项显示（内置项 id 放副标题）。
+    private StackPanel? _nameFieldPanel;
+    private StackPanel? _idFieldPanel;
     // 协议（T14）：分段按钮取代下拉，opencode-go 混合协议显示只读「混合（按模型）」
     private readonly Button _protocolOpenAiButton = NewProtocolButton(TranslationProviderCompliance.OpenAiLabel);
     private readonly Button _protocolAnthropicButton = NewProtocolButton(TranslationProviderCompliance.AnthropicLabel);
@@ -127,7 +130,7 @@ public sealed class SettingsDialog : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         SizeToContent = SizeToContent.Height;
-        Width = 820; // T11 主从双栏：左列表 + 右详情需更宽的工作区
+        Width = 880; // S1 设计稿：820 → 880，容纳 236 左列表 + 472 详情（T11 主从双栏）
         WindowStyle = WindowStyle.ToolWindow;
         FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI");
         Background = FindBrush("Brush.Window");
@@ -401,7 +404,7 @@ public sealed class SettingsDialog : Window
     private FrameworkElement BuildProviderMasterDetail()
     {
         var grid = new Grid { Margin = new Thickness(0, 6, 0, 4) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(212) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(236) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // ---- 左栏 ----
@@ -415,7 +418,7 @@ public sealed class SettingsDialog : Window
         _providerList.Background = Brushes.Transparent;
         _providerList.BorderThickness = new Thickness(0);
         _providerList.Padding = new Thickness(0);
-        _providerList.MaxHeight = 372;
+        _providerList.MaxHeight = 423;
         _providerList.SelectionChanged += OnProviderListSelectionChanged;
         _providerList.ItemContainerStyle = BuildProviderListItemStyle();
         left.Children.Add(_providerList);
@@ -435,7 +438,7 @@ public sealed class SettingsDialog : Window
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            MaxHeight = 420,
+            MaxHeight = 423,
             Content = BuildProviderDetail(),
         };
         Grid.SetColumn(right, 1);
@@ -488,55 +491,33 @@ public sealed class SettingsDialog : Window
         // T14：切换到标准 API 后的成功横幅（P42）
         panel.Children.Add(BuildStandardApiOkBanner());
 
-        // 名称（自定义可编辑；预设 / 本地只读）
+        // 名称 / provider id：仅自定义项显示（S1 内置项的 id 放副标题，S3 自定义项才有名称字段）。
         ApplyFieldStyle(_providerNameBox, double.NaN);
         _providerNameBox.TextChanged += (_, _) => UpdateProviderIdPreview();
-        panel.Children.Add(DetailField("名称", _providerNameBox,
-            "仅用于界面显示与面板切换；自定义项同时作为凭据 / 同意寻址的身份。"));
+        _nameFieldPanel = DetailField("名称", _providerNameBox,
+            "仅用于界面显示与面板切换；自定义项同时作为凭据 / 同意寻址的身份。");
+        panel.Children.Add(_nameFieldPanel);
 
         _providerIdText.FontSize = 12;
         _providerIdText.FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace");
         _providerIdText.Foreground = FindBrush("Brush.TextTertiary");
         _providerIdText.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(DetailField("provider id（自动生成）", _providerIdText,
-            "由名称派生；自定义项 PresetId 为空，请求只依赖地址 + 模型 + 协议 + Key。"));
+        _idFieldPanel = DetailField("provider id（自动生成）", _providerIdText,
+            "由名称派生；自定义项 PresetId 为空，请求只依赖地址 + 模型 + 协议 + Key。");
+        panel.Children.Add(_idFieldPanel);
 
-        // 协议（T14：OpenAI 兼容 / Anthropic 兼容 分段按钮；opencode-go 混合协议只读）
-        panel.Children.Add(DetailField("协议", BuildProtocolSelector(),
-            "OpenAI 兼容 = POST /chat/completions + Authorization: Bearer；Anthropic 兼容 = POST /v1/messages + x-api-key。切换协议会重置该端点的同意。"));
-
-        // API 地址（自由填写；保留路径）
-        ApplyFieldStyle(_endpointBox, double.NaN);
-        panel.Children.Add(DetailField("API 地址", _endpointBox,
-            "http(s) 绝对地址，可带自建路径（如 https://gw.corp/llm/v1）；保存时路径逐字保留，不会塌陷为域名。"));
-
-        // T12：本地服务端口建议 chips（设计稿 S2 注④：仅便利填充，不探测、不扫描端口）
-        _localPortPanel.Margin = new Thickness(0, -4, 0, 6);
-        _localPortPanel.Visibility = Visibility.Collapsed;
-        foreach (var (port, name) in LocalPortSuggestions)
-        {
-            var chip = new Button
-            {
-                Content = $"{port} {name}",
-                Style = FindStyle("SecondaryButton"),
-                FontSize = 11,
-                Padding = new Thickness(9, 3, 9, 3),
-                Margin = new Thickness(0, 0, 6, 0),
-            };
-            chip.Click += (_, _) => ApplyPortSuggestion(port);
-            _localPortPanel.Children.Add(chip);
-        }
-        panel.Children.Add(_localPortPanel);
-
-        // T12：本地服务 loopback 实时校验提示（非 loopback 标红并阻止保存，设计稿 P13–P15 / P20）
-        _localLoopbackHint.Style = FindStyle("FieldHint");
-        _localLoopbackHint.TextWrapping = TextWrapping.Wrap;
-        _localLoopbackHint.FontSize = 11.5;
-        _localLoopbackHint.Margin = new Thickness(0, -6, 0, 8);
-        _localLoopbackHint.Visibility = Visibility.Collapsed;
-        panel.Children.Add(_localLoopbackHint);
-
-        _endpointBox.TextChanged += (_, _) => OnEndpointChanged();
+        // API Key（S1 字段序：API Key → 模型 → 端点 → 协议 → 连接 → 同意状态）
+        ApplyPasswordStyle(_keyBox);
+        _storeKeyButton.Content = "保存到凭据管理器";
+        _storeKeyButton.Style = FindStyle("SecondaryButton");
+        _storeKeyButton.Margin = new Thickness(8, 0, 0, 0);
+        _storeKeyButton.Click += OnStoreKeyClick;
+        var keyRow = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel.SetDock(_storeKeyButton, Dock.Right);
+        keyRow.Children.Add(_storeKeyButton);
+        keyRow.Children.Add(_keyBox);
+        panel.Children.Add(DetailField("API Key", keyRow,
+            "仅保存到系统凭据管理器；界面不回显、设置文件不落盘。可留空（内网网关常无鉴权）。"));
 
         // 模型（自由输入 + 拉取）
         var modelRow = new DockPanel { LastChildFill = true };
@@ -577,18 +558,42 @@ public sealed class SettingsDialog : Window
         modelPanel.Children.Add(_modelHint);
         panel.Children.Add(modelPanel);
 
-        // API Key
-        ApplyPasswordStyle(_keyBox);
-        _storeKeyButton.Content = "保存到凭据管理器";
-        _storeKeyButton.Style = FindStyle("SecondaryButton");
-        _storeKeyButton.Margin = new Thickness(8, 0, 0, 0);
-        _storeKeyButton.Click += OnStoreKeyClick;
-        var keyRow = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
-        DockPanel.SetDock(_storeKeyButton, Dock.Right);
-        keyRow.Children.Add(_storeKeyButton);
-        keyRow.Children.Add(_keyBox);
-        panel.Children.Add(DetailField("API Key", keyRow,
-            "仅保存到系统凭据管理器；界面不回显、设置文件不落盘。可留空（内网网关常无鉴权）。"));
+        // API 地址（自由填写；保留路径）
+        ApplyFieldStyle(_endpointBox, double.NaN);
+        panel.Children.Add(DetailField("API 地址", _endpointBox,
+            "http(s) 绝对地址，可带自建路径（如 https://gw.corp/llm/v1）；保存时路径逐字保留，不会塌陷为域名。"));
+
+        // T12：本地服务端口建议 chips（设计稿 S2 注④：仅便利填充，不探测、不扫描端口）
+        _localPortPanel.Margin = new Thickness(0, -4, 0, 6);
+        _localPortPanel.Visibility = Visibility.Collapsed;
+        foreach (var (port, name) in LocalPortSuggestions)
+        {
+            var chip = new Button
+            {
+                Content = $"{port} {name}",
+                Style = FindStyle("SecondaryButton"),
+                FontSize = 11,
+                Padding = new Thickness(9, 3, 9, 3),
+                Margin = new Thickness(0, 0, 6, 0),
+            };
+            chip.Click += (_, _) => ApplyPortSuggestion(port);
+            _localPortPanel.Children.Add(chip);
+        }
+        panel.Children.Add(_localPortPanel);
+
+        // T12：本地服务 loopback 实时校验提示（非 loopback 标红并阻止保存，设计稿 P13–P15 / P20）
+        _localLoopbackHint.Style = FindStyle("FieldHint");
+        _localLoopbackHint.TextWrapping = TextWrapping.Wrap;
+        _localLoopbackHint.FontSize = 11.5;
+        _localLoopbackHint.Margin = new Thickness(0, -6, 0, 8);
+        _localLoopbackHint.Visibility = Visibility.Collapsed;
+        panel.Children.Add(_localLoopbackHint);
+
+        _endpointBox.TextChanged += (_, _) => OnEndpointChanged();
+
+        // 协议（T14：OpenAI 兼容 / Anthropic 兼容 分段按钮；opencode-go 混合协议只读）
+        panel.Children.Add(DetailField("协议", BuildProtocolSelector(),
+            "OpenAI 兼容 = POST /chat/completions + Authorization: Bearer；Anthropic 兼容 = POST /v1/messages + x-api-key。切换协议会重置该端点的同意。"));
 
         // 连接测试
         _testConnectionButton.Content = "测试连接";
@@ -604,11 +609,12 @@ public sealed class SettingsDialog : Window
         panel.Children.Add(DetailField("连接", testRow,
             "「拉取 / 测试连接」由你显式触发，不替代文档上传同意；本地 loopback 端点不发送密钥。"));
 
+        // 同意状态（S1：带标签字段 + 记忆口径说明）
         _consentStatus.FontSize = 12;
         _consentStatus.TextWrapping = TextWrapping.Wrap;
         _consentStatus.Foreground = FindBrush("Brush.TextSecondary");
-        _consentStatus.Margin = new Thickness(0, 0, 0, 4);
-        panel.Children.Add(_consentStatus);
+        panel.Children.Add(DetailField("同意状态", _consentStatus,
+            "按 服务商 + endpoint 记忆；撤销后同组合下次使用将重新弹同意。"));
 
         _translationMessage.FontSize = 12;
         _translationMessage.TextWrapping = TextWrapping.Wrap;
@@ -1016,23 +1022,17 @@ public sealed class SettingsDialog : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var text = new StackPanel();
-        text.Children.Add(new TextBlock
+        // S1 列表行：名称 + 可选 tag（已配置 / 本地）+ 状态点；不再逐行回显 provider id（id 见详情副标题）。
+        var name = new TextBlock
         {
             Text = entry.DisplayName,
             FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Foreground = FindBrush("Brush.TextPrimary"),
-        });
-        text.Children.Add(new TextBlock
-        {
-            Text = entry.Identity,
-            FontSize = 11,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Foreground = FindBrush("Brush.TextTertiary"),
-        });
-        Grid.SetColumn(text, 0);
-        grid.Children.Add(text);
+        };
+        Grid.SetColumn(name, 0);
+        grid.Children.Add(name);
 
         var status = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         if (entry.IsConfigured) status.Children.Add(StatusChip(entry));
@@ -1111,6 +1111,18 @@ public sealed class SettingsDialog : Window
                 ? "本机 OpenAI 兼容端点；API 地址须为 loopback（127.0.0.1 / ::1 / localhost）。"
                 : $"内置预设 {preset!.Id} · {PresetKindLabel(preset.Kind)}";
 
+        // S1/S3：只有自定义项显示「名称 / provider id」字段；内置 / 本地项的 id 已在副标题中给出。
+        var showProviderIdentity = entry.IsCustom;
+        if (_nameFieldPanel is not null)
+        {
+            _nameFieldPanel.Visibility = showProviderIdentity ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (_idFieldPanel is not null)
+        {
+            _idFieldPanel.Visibility = showProviderIdentity ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         _providerNameBox.Text = entry.DisplayName;
         _providerNameBox.IsReadOnly = !entry.IsCustom;
         UpdateProviderIdPreview();
@@ -1169,6 +1181,8 @@ public sealed class SettingsDialog : Window
         _detailTitle.Text = "未选择供应商";
         _detailBadge.Text = "";
         _detailSubtitle.Text = "在左侧选择一个供应商，或点「＋ 添加供应商」新建自定义供应商。";
+        if (_nameFieldPanel is not null) _nameFieldPanel.Visibility = Visibility.Collapsed;
+        if (_idFieldPanel is not null) _idFieldPanel.Visibility = Visibility.Collapsed;
         _providerNameBox.Text = "";
         _providerIdText.Text = "";
         _endpointBox.Text = "";

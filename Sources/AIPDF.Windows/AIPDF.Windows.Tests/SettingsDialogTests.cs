@@ -9,7 +9,9 @@
 //   F2 凭据 / 同意清理失败必须显式反馈，绝不静默当成功（全部清理成功后才移除配置项）；
 //   F3 选定供应商时默认模型 → 默认协议 → 默认端点同源，不产生 /v1/v1 重复版本段。
 using System.IO;
+using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.Tests.Services;
 using AIPDF.Windows.Views.Settings;
@@ -542,5 +544,171 @@ public sealed class SettingsDialogTests
         var messagesUrl = ProviderUrl.NormalizeRequestBase(endpoint, protocol) + "/v1/messages";
         Assert.Equal("https://opencode.ai/zen/go/v1/messages", messagesUrl);
         Assert.DoesNotContain("/v1/v1", messagesUrl, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ================================================================ S1 设计稿对齐（结构回归）：
+    // 对话框 880 宽、左列 236、左右 MaxHeight 423、字段序 API Key→模型→端点→协议→连接→同意状态，
+    // 列表行只保留「名称 + tag + 状态点」（不再逐行回显 provider id），名称 / provider id 仅自定义项可见。
+
+    /// <summary>S1 详情面板已知字段标签（用于按序断言，不与提示文案混淆）。</summary>
+    private static readonly string[] ProviderFieldLabels =
+        ["名称", "provider id（自动生成）", "API Key", "模型", "API 地址", "协议", "连接", "同意状态"];
+
+    private static App? _uiApp;
+
+    /// <summary>WPF 控件具有 UI 线程亲和性：构造与遍历统一跑在同一 STA 线程上。</summary>
+    private static void RunOnSta(Action body)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                body();
+            }
+            catch (Exception error)
+            {
+                failure = error;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null) throw failure;
+    }
+
+    private static void EnsureApplication()
+    {
+        if (Application.Current is not null) return;
+        _uiApp = new App();
+        _uiApp.InitializeComponent(); // 载入 App.xaml 应用级 token（Brush.* / FieldLabel 等）。
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root).OfType<DependencyObject>())
+        {
+            yield return child;
+            foreach (var nested in Descendants(child)) yield return nested;
+        }
+    }
+
+    private static (Grid Master, StackPanel Left, ScrollViewer Detail, ListBox List) FindProviderMasterDetail(
+        SettingsDialog dialog)
+    {
+        var master = Descendants(dialog)
+            .OfType<Grid>()
+            .Single(grid => grid.ColumnDefinitions.Count == 2 && grid.ColumnDefinitions[0].Width.Value == 236);
+        var left = master.Children.OfType<StackPanel>().Single(c => Grid.GetColumn(c) == 0);
+        var detail = master.Children.OfType<ScrollViewer>().Single(c => Grid.GetColumn(c) == 1);
+        var list = left.Children.OfType<ListBox>().Single();
+        return (master, left, detail, list);
+    }
+
+    /// <summary>详情面板内字段标签文本 + 其字段容器（DetailField）是否可见（按逻辑树先序遍历）。</summary>
+    private static List<(string Text, bool Visible)> DetailFieldLabels(ScrollViewer detail)
+    {
+        var result = new List<(string, bool)>();
+        foreach (var text in Descendants(detail).OfType<TextBlock>())
+        {
+            if (!ProviderFieldLabels.Contains(text.Text)) continue;
+            var container = LogicalTreeHelper.GetParent(text) as FrameworkElement;
+            result.Add((text.Text, container is null || container.Visibility == Visibility.Visible));
+        }
+
+        return result;
+    }
+
+    private static ListBoxItem FindProviderRow(ListBox list, string displayName)
+        => list.Items.OfType<ListBoxItem>()
+            .Where(item => item.Tag is not null)
+            .First(item => Descendants(item).OfType<TextBlock>().Any(t => t.Text == displayName));
+
+    private static void SelectLastProviderEntry(ListBox list)
+    {
+        for (var i = list.Items.Count - 1; i >= 0; i--)
+        {
+            if (list.Items[i] is ListBoxItem { Tag: not null } item)
+            {
+                list.SelectedItem = item;
+                return;
+            }
+        }
+
+        Assert.Fail("供应商列表中没有可选择的条目");
+    }
+
+    private static SettingsDialog NewDialog(SettingsStore store)
+    {
+        var credentials = new TranslationCredentialStore(new InMemoryCredentialBackend());
+        var consent = new TranslationConsentService(store, credentials);
+        return new SettingsDialog(store, translationConsent: consent, translationCredentials: credentials);
+    }
+
+    [Fact]
+    public void ProviderPane_DesignS1_MeasurementsAndBuiltInFieldOrder()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            Assert.Equal(880d, dialog.Width); // S1：矩形 880 × 560
+
+            var (_, _, detail, list) = FindProviderMasterDetail(dialog);
+            Assert.Equal(423d, list.MaxHeight);                 // S1：左列表 236 × 423
+            Assert.Equal(423d, detail.MaxHeight);               // S1：详情 472 × 423
+
+            // 选中内置云端预设 OpenAI（未配置）：名称 / provider id 字段隐藏，id 改由副标题呈现。
+            var openAiRow = FindProviderRow(list, "OpenAI");
+            list.SelectedItem = openAiRow;
+
+            var labels = DetailFieldLabels(detail);
+            Assert.Contains(labels, l => l is { Text: "名称", Visible: false });
+            Assert.Contains(labels, l => l is { Text: "provider id（自动生成）", Visible: false });
+
+            // S1 字段序：API Key → 模型 → API 地址 → 协议 → 连接 → 同意状态。
+            var visible = labels.Where(l => l.Visible).Select(l => l.Text).ToList();
+            Assert.Equal(
+                new[] { "API Key", "模型", "API 地址", "协议", "连接", "同意状态" },
+                visible);
+
+            // 列表行「名称 + tag + 状态点」：未配置内置项只有名称一行，不再有 provider id 第二行。
+            var rowTexts = Descendants(openAiRow).OfType<TextBlock>().Select(t => t.Text).ToList();
+            Assert.Equal(new[] { "OpenAI" }, rowTexts);
+        });
+    }
+
+    [Fact]
+    public void ProviderPane_DesignS3_CustomProviderShowsNameAndIdFields()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var store = fx.NewStore();
+            store.Save(new AppSettings
+            {
+                TranslationProviders =
+                [
+                    new TranslationProviderConfig
+                    {
+                        Provider = "我的网关",
+                        Endpoint = "https://gw.internal/v1",
+                        Model = "my-model",
+                    },
+                ],
+            });
+
+            var dialog = NewDialog(store);
+            var (_, _, detail, list) = FindProviderMasterDetail(dialog);
+            SelectLastProviderEntry(list); // 自定义项排在列表末尾
+
+            var visible = DetailFieldLabels(detail).Where(l => l.Visible).Select(l => l.Text).ToList();
+            Assert.Equal(
+                new[] { "名称", "provider id（自动生成）", "API Key", "模型", "API 地址", "协议", "连接", "同意状态" },
+                visible);
+        });
     }
 }
