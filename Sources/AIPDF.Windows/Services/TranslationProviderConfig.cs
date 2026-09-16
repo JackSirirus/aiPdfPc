@@ -40,6 +40,28 @@ public sealed class TranslationProviderConfig
     /// </summary>
     public const string LocalProviderName = "local";
 
+    /// <summary>
+    /// OpenAI 兼容协议标识（T4 引擎契约：<c>apiProtocol</c> 缺省值）。请求 <c>POST {base}/chat/completions</c>，
+    /// 鉴权 <c>Authorization: Bearer</c>。
+    /// </summary>
+    public const string ProtocolOpenAi = "openai";
+
+    /// <summary>
+    /// Anthropic Messages 协议标识。请求 <c>POST {base}/v1/messages</c>（base 不含 <c>/v1</c>），
+    /// 鉴权 <c>x-api-key</c> / <c>Authorization: Bearer</c> 之一 + <c>anthropic-version</c> 头（T4）。
+    /// </summary>
+    public const string ProtocolAnthropic = "anthropic";
+
+    /// <summary>
+    /// 协议归一化的<b>唯一真源</b>：<c>anthropic</c>（大小写不敏感、去首尾空白）命中即返回
+    /// <see cref="ProtocolAnthropic"/>，其余（含 null / 空白 / 未知值）回退引擎契约缺省
+    /// <see cref="ProtocolOpenAi"/>。设置层、合规层与视图模型一律委托本方法，不再各自实现。
+    /// </summary>
+    public static string NormalizeProtocol(string? value)
+        => string.Equals(value?.Trim(), ProtocolAnthropic, StringComparison.OrdinalIgnoreCase)
+            ? ProtocolAnthropic
+            : ProtocolOpenAi;
+
     /// <summary>被识别为密钥的查询参数名（大小写不敏感）。</summary>
     private static readonly string[] SecretQueryNames =
         ["key", "api_key", "apikey", "token", "access_token", "secret", "authorization"];
@@ -74,6 +96,28 @@ public sealed class TranslationProviderConfig
     public string Model { get; set; } = "";
 
     /// <summary>
+    /// v1.2 内置预设稳定 id（如 <c>openai</c> / <c>opencode-go</c> / <c>local</c>）；自定义供应商为 null。
+    /// 与显示名（<see cref="Provider"/>）分离：凭据寻址与同意定位以稳定 id + endpoint origin 为准（T8）。
+    /// 旧版 settings.json 无此字段 → null（由迁移回填，T2）。
+    /// </summary>
+    [JsonPropertyName("presetId")]
+    public string? PresetId { get; set; }
+
+    /// <summary>
+    /// API 协议（<c>openai</c> | <c>anthropic</c>），provider 级默认；缺省 <c>openai</c>（引擎契约 T4：
+    /// 字段缺失即按 openai）。按模型覆盖见 <see cref="ModelProtocols"/>。
+    /// </summary>
+    [JsonPropertyName("apiProtocol")]
+    public string ApiProtocol { get; set; } = ProtocolOpenAi;
+
+    /// <summary>
+    /// 按模型名覆盖协议（仅 opencode-go 等混合协议供应商非空）；未命中的模型回退
+    /// <see cref="ApiProtocol"/>。值为 <c>openai</c> / <c>anthropic</c>。
+    /// </summary>
+    [JsonPropertyName("modelProtocols")]
+    public Dictionary<string, string>? ModelProtocols { get; set; }
+
+    /// <summary>
     /// 端点校验失败原因（仅内存，不持久化）。归一化时由 <see cref="SettingsStore"/> 写入：
     /// 非空表示该配置**保留但不可用**，需用户在设置中修正端点（R5-3：不再静默丢弃用户配置）。
     /// </summary>
@@ -94,6 +138,12 @@ public sealed class TranslationProviderConfig
     /// </summary>
     [JsonIgnore]
     public bool IsLoopback => IsLoopbackEndpoint(Endpoint);
+
+    /// <summary>
+    /// 该配置是否为「本地服务」：稳定 id <see cref="PresetId"/> 命中 <c>local</c> 即为本地；
+    /// 旧数据（未回填 id）回退按显示名 <see cref="Provider"/> 判定（v1.2 T7：运行时本地 / 云端判定以稳定 id 为准）。
+    /// </summary>
+    public bool IsLocalService() => IsLocalService(PresetId, Provider);
 
     /// <summary>界面展示文案：<c>provider · endpoint</c>（不含模型与任何密钥）。</summary>
     public string DisplayName
@@ -154,6 +204,21 @@ public sealed class TranslationProviderConfig
     /// <summary>服务商标识是否表示「本地」引擎（大小写不敏感）。</summary>
     public static bool IsLocalProvider(string? provider)
         => string.Equals(provider?.Trim(), LocalProviderName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 稳定 preset id 是否表示「本地服务」（<c>local</c>，大小写不敏感）。v1.2 T7：本地 / 云端判定以稳定 id 为准，
+    /// 不再依赖可变的显示名。
+    /// </summary>
+    public static bool IsLocalPresetId(string? presetId)
+        => string.Equals(presetId?.Trim(), LocalProviderName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 运行时本地 / 云端判定：稳定 id（<paramref name="presetId"/>）命中 <c>local</c> 即为本地；
+    /// 旧数据（未回填 id）回退按显示名 <paramref name="providerName"/> 判定，保证升级前仍按本地处理。
+    /// </summary>
+    public static bool IsLocalService(string? presetId, string? providerName)
+        => IsLocalPresetId(presetId)
+           || (string.IsNullOrWhiteSpace(presetId) && IsLocalProvider(providerName));
 
     /// <summary>
     /// 端点是否为 loopback（127.0.0.1 / ::1 / localhost）。仅接受 http(s) 绝对地址；

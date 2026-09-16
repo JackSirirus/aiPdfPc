@@ -4,6 +4,7 @@
 //   - 端点必须为 http(s) 绝对地址；拒绝 userinfo / key·token 查询参数（防设置漫游泄漏密钥）；
 //   - 连接配置只含 provider + endpoint + model，模型名可为空；结构层不得出现密钥属性。
 using System.Net;
+using System.Text.Json;
 using AIPDF.Windows.Services;
 using Xunit;
 
@@ -224,4 +225,78 @@ public sealed class TranslationProviderConfigTests
     [InlineData("/v1/token-management", false)]    // 命名值无高熵特征（纯小写短词）
     public void LooksLikeSecretInPath_DetectsKeyLookingSegments(string path, bool expected)
         => Assert.Equal(expected, TranslationProviderConfig.LooksLikeSecretInPath(path));
+
+    // ---------------------------------------------------------------- v1.2 嵌套字段（T1：presetId / apiProtocol / modelProtocols）
+
+    /// <summary>与生产同口径的反序列化设置（大小写不敏感，容忍手工编辑差异）。</summary>
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    [Fact]
+    public void Json_SerializesNewNestedFieldsWithCamelCaseNames()
+    {
+        var json = JsonSerializer.Serialize(new TranslationProviderConfig
+        {
+            Provider = "opencode-go",
+            Endpoint = "https://opencode.ai/zen/go/v1",
+            Model = "minimax-m3",
+            PresetId = "opencode-go",
+            ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+            ModelProtocols = new Dictionary<string, string> { ["minimax-m3"] = TranslationProviderConfig.ProtocolAnthropic },
+        });
+
+        Assert.Contains("\"presetId\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"apiProtocol\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"modelProtocols\"", json, StringComparison.Ordinal);
+    }
+
+    // (e) 往返：新字段（含按模型协议覆盖）序列化 → 反序列化后逐项保持。
+    [Fact]
+    public void JsonRoundTrip_PreservesPresetIdApiProtocolAndModelProtocols()
+    {
+        var original = new TranslationProviderConfig
+        {
+            Provider = "opencode-go",
+            Endpoint = "https://opencode.ai/zen/go/v1",
+            Model = "minimax-m3",
+            PresetId = "opencode-go",
+            ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+            ModelProtocols = new Dictionary<string, string>
+            {
+                ["minimax-m3"] = TranslationProviderConfig.ProtocolAnthropic,
+                ["kimi-k3"] = TranslationProviderConfig.ProtocolOpenAi,
+            },
+        };
+
+        var restored = JsonSerializer.Deserialize<TranslationProviderConfig>(
+            JsonSerializer.Serialize(original), JsonOptions)!;
+
+        Assert.Equal("opencode-go", restored.PresetId);
+        Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, restored.ApiProtocol);
+        Assert.NotNull(restored.ModelProtocols);
+        Assert.Equal(2, restored.ModelProtocols!.Count);
+        Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, restored.ModelProtocols["minimax-m3"]);
+        Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, restored.ModelProtocols["kimi-k3"]);
+
+        // 既有字段语义不变。
+        Assert.Equal(original.Provider, restored.Provider);
+        Assert.Equal(original.Endpoint, restored.Endpoint);
+        Assert.Equal(original.Model, restored.Model);
+    }
+
+    // (f) 旧数据兼容：仅含 provider/endpoint/model 的 JSON → 新字段取默认值，零丢失。
+    [Fact]
+    public void Json_LegacyPayloadWithoutNewFields_UsesDefaults()
+    {
+        const string legacy =
+            """{"provider":"deepseek","endpoint":"https://api.deepseek.com/v1","model":"deepseek-chat"}""";
+
+        var config = JsonSerializer.Deserialize<TranslationProviderConfig>(legacy, JsonOptions)!;
+
+        Assert.Null(config.PresetId);                                                        // 待迁移回填（T2）
+        Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, config.ApiProtocol);          // 缺省 openai（T4 契约）
+        Assert.Null(config.ModelProtocols);
+        Assert.Equal("deepseek", config.Provider);
+        Assert.Equal("https://api.deepseek.com/v1", config.Endpoint);
+        Assert.Equal("deepseek-chat", config.Model);
+    }
 }
