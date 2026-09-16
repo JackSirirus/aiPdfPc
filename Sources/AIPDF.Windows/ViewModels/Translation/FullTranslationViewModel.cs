@@ -426,7 +426,7 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         }
 
         // 云端未同意时先弹同意模态（宿主注入）；确认后重新解析拿到配置，未确认则不发任何请求。
-        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync);
+        var resolution = await TranslationRuntimeConsentFlow.EnsureAsync(_configProvider, ConfirmCloudConsentAsync, Config.SelectedProvider);
         if (resolution.Config is not { } runtime)
         {
             StatusMessage = resolution.Message;

@@ -31,6 +31,26 @@ public sealed class FullTranslationViewModelTests
         public int ConsentGeneration => Generation;
     }
 
+    /// <summary>
+    /// 记录每次 Resolve 收到的选中供应商 id：整篇启动经 EnsureAsync 透传面板选择，
+    /// 必须携带 <c>Config.SelectedProvider</c> 原值（含 null 旧数据回退），
+    /// 否则目的地会退回「本地优先」而忽略面板选中的云端供应商。
+    /// </summary>
+    private sealed class RecordingSelectedProviderConfigProvider(TranslationRuntimeConfig config)
+        : ITranslationRuntimeConfigProvider
+    {
+        public List<string?> ReceivedSelectedProviderIds { get; } = [];
+
+        public TranslationRuntimeConfig? Get() => config;
+
+        public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
+        {
+            ReceivedSelectedProviderIds.Add(selectedProviderId);
+            return new TranslationRuntimeConfigResolution(
+                TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint, false, "");
+        }
+    }
+
     private sealed class FakeFullTranslationService : IFullTranslationService
     {
         public Func<FullTranslationRequest, IProgress<FullTranslationProgress>?, CancellationToken, Task<FullTranslationOutcome>> Handler
@@ -500,6 +520,8 @@ public sealed class FullTranslationViewModelTests
             OutputDir = Path.GetTempPath(),
             ConsentCheckInterval = TimeSpan.FromMilliseconds(10),
         };
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商（IsCloud 由选中 id 派生）
+
         service.Handler = async (_, _, token) =>
         {
             try
@@ -653,6 +675,50 @@ public sealed class FullTranslationViewModelTests
         Assert.Contains("输出文件夹", vm.StatusMessage);
     }
 
+    // ---------------------------------------------------------------- 选中供应商透传：整篇启动经 EnsureAsync 携带面板选择
+
+    [Fact]
+    public async Task Start_PassesPanelSelectedProvider_ToEnsureConsentResolve()
+    {
+        var service = new FakeFullTranslationService();
+        var provider = new RecordingSelectedProviderConfigProvider(
+            new TranslationRuntimeConfig("deepseek", "https://api.deepseek.com/v1", "deepseek-chat", "sk-cloud", "auto", "zh", "academic"));
+        var vm = new FullTranslationViewModel(service, provider)
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+        };
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Equal("deepseek", Assert.Single(provider.ReceivedSelectedProviderIds));
+    }
+
+    [Fact]
+    public async Task Start_NullPanelSelectedProvider_ForwardsNull_AndPreservesResolveFallback()
+    {
+        var service = new FakeFullTranslationService();
+        var provider = new RecordingSelectedProviderConfigProvider(RuntimeConfig());
+        var vm = new FullTranslationViewModel(service, provider)
+        {
+            ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
+            OutputDir = Path.GetTempPath(),
+        };
+
+        // 旧数据 / 面板从未选择：SelectedProvider 为 null。VM 必须原样透传 null，
+        // 交由 Resolve(null) 的既有回退（本地优先）决定目的地，而不是自行改写为其它值。
+        typeof(TranslationConfigViewModel)
+            .GetField("_selectedProvider", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(vm.Config, null);
+
+        await vm.StartCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, service.Calls);
+        Assert.Null(Assert.Single(provider.ReceivedSelectedProviderIds));
+    }
+
     // ---------------------------------------------------------------- F26：运行结束后资源清理（无泄漏）
 
     [Fact]
@@ -667,6 +733,7 @@ public sealed class FullTranslationViewModelTests
             ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
             OutputDir = Path.GetTempPath(),
         };
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商（IsCloud 由选中 id 派生）
 
         await vm.StartCommand.ExecuteAsync(null);
 
@@ -686,6 +753,7 @@ public sealed class FullTranslationViewModelTests
             ActiveDocumentPath = Path.Combine(Path.GetTempPath(), "source.pdf"),
             OutputDir = Path.GetTempPath(),
         };
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商（IsCloud 由选中 id 派生）
         service.Handler = async (_, _, token) =>
         {
             try
