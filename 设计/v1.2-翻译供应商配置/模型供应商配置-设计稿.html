@@ -1,0 +1,1997 @@
+<!-- AIPDF PDF 翻译 · 模型供应商配置设计稿 v1.2 · 2026-09-15
+     ============================================================================
+     方向：统一「模型供应商」配置，取代 v1.1 整篇面板里那组「云端 LLM / 本地」radio
+           （该 radio 从未真正驱动供应商选择）。两种范式：
+             · 云端 = 内置供应商列表 → 选名字 → 填 API Key → 选模型（对齐 opencode 供应商选择器）
+             · 本地 = 填 OpenAI 兼容 base URL → 「拉取模型」GET {base}/v1/models → 选模型
+                     （无原生 ollama 协议；默认无鉴权，服务器启用时才填 Key）
+             · 自定义 = 任意 base URL + 模型（内置列表只是便利，不设上限）
+     载体：设置页「翻译 → 模型供应商」= 主从双栏（方案 A）；翻译面板 = 就地展开快捷入口（方案 G）。
+     约束：
+        - 自包含单文件：零外部资源（无外部 URL / script src / link href / 内嵌字体）。
+        - token 层与 v1.1 完全一致，逐字复制，不新增、不修改任何主题 token。
+        - 本文件仅设计产物，不改动 Sources/、tests/、App.xaml。
+     覆盖：S1 云端 / S2 本地 / S3 自定义 / S4 面板快捷入口 / S5 暗色 / S7 编程套餐与协议（插在 S5 与 S6 之间）/
+           S6 token 色卡 / 附录 · 内置供应商预设表（14 个预设）。
+     ============================================================================ -->
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIPDF 模型供应商配置 · 设计稿 v1.2</title>
+<style>
+/* ==========================================================================
+   1) TOKEN 层：与 A+C 设计说明 §1.1 一致的 CSS 变量名（值取 §1.2）· 与 v1.1 逐字一致
+   ========================================================================== */
+:root{
+  --win:#FBFAF7;         /* Brush.Window */
+  --side:#F4F1EA;        /* Brush.Sidebar */
+  --hov:#ECE7DD;         /* Brush.Hover */
+  --bd:#E4DDCF;          /* Brush.Border */
+  --bdstrong:#C9C0AE;    /* Brush.BorderStrong */
+  --t1:#2A251E;          /* Brush.TextPrimary */
+  --t2:#6E6659;          /* Brush.TextSecondary */
+  --t3:#9C9384;          /* Brush.TextTertiary */
+  --acc:#3159D9;         /* Brush.Accent */
+  --acchov:#2749AE;      /* Brush.AccentHover */
+  --accpress:#1F3B8F;    /* Brush.AccentPressed */
+  --accsoft:#E7EBF8;     /* Brush.AccentSoft */
+  --acct:#2A4CBB;        /* Brush.AccentText */
+  --readbg:#ECE7DC;      /* Brush.PreviewBg */
+  --field:#FFFDF8;       /* Brush.FieldBackground */
+  --surf:#F7F4EC;        /* Brush.Surface */
+  --toolbar:#F4F1EA;     /* Brush.Toolbar */
+  --ok:#1F7A3D;          /* Brush.Success */
+  --err:#C4321F;         /* Brush.Error */
+  --oksoft:#E4F3E9;      /* Brush.SuccessSoft */
+  --danger:#B3382E;      /* Brush.Danger */
+  --dangersoft:#FBEAE8;  /* Brush.DangerSoft */
+  --neutralsoft:#EFEAE0; /* Brush.NeutralSoft */
+  --warnbg:#FBF2DF;      /* Brush.ConverterWarnBackground */
+  --warntext:#8A5300;    /* Brush.ConverterWarnText */
+  --mask:rgba(43,37,28,.45); /* Brush.OverlayMask（A+C 新增候选；翻译区复用） */
+  --onacc:#FFFFFF;       /* Brush.OnAccent（A+C 新增候选；翻译区复用） */
+  /* —— 纯 CSS 装饰（无 token 语义） —— */
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  --font-serif:"Source Han Serif SC","Noto Serif SC","Source Han Serif CN","Songti SC","SimSun","PingFang SC",Georgia,"Times New Roman",serif;
+  --shadow-page:0 1px 2px rgba(74,58,36,.08),0 2px 8px rgba(74,58,36,.06);
+  --shadow-pop:0 4px 18px rgba(60,46,26,.16);
+  --shadow-modal:0 10px 40px rgba(48,36,20,.28);
+  --ease:cubic-bezier(.22,.61,.36,1);
+  --dur:140ms;
+}
+[data-theme="dark"]{
+  --win:#1C1A17;
+  --side:#23201A;
+  --hov:#302C24;
+  --bd:#3A3529;
+  --bdstrong:#4C4636;
+  --t1:#EDE7DA;
+  --t2:#B3AA99;
+  --t3:#877F6F;
+  --acc:#7E9CD8;
+  --acchov:#90ACDF;
+  --accpress:#6B88C4;
+  --accsoft:#272F41;
+  --acct:#A9C0EA;
+  --readbg:#26221C;
+  --field:#262219;
+  --surf:#201D17;
+  --toolbar:#23201A;
+  --ok:#7FC08E;
+  --err:#E88B7D;
+  --oksoft:#1F2C22;
+  --danger:#E88B7D;
+  --dangersoft:#38231F;
+  --neutralsoft:#2C2820;
+  --warnbg:#3A2F1C;
+  --warntext:#E6B36A;
+  --mask:rgba(10,8,5,.56);
+  --onacc:#FDFBF6;
+  --shadow-page:0 1px 2px rgba(0,0,0,.35),0 2px 10px rgba(0,0,0,.28);
+  --shadow-pop:0 4px 18px rgba(0,0,0,.45);
+  --shadow-modal:0 10px 40px rgba(0,0,0,.55);
+}
+
+/* ==========================================================================
+   2) 基础
+   ========================================================================== */
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--font-ui);color:var(--t1);background:var(--win);font-size:13px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease);
+}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{
+  outline:2px solid var(--acc);outline-offset:2px;border-radius:6px;
+}
+.serif{font-family:var(--font-serif)}
+::selection{background:var(--accsoft);color:var(--acct)}
+
+.doc{max-width:1080px;margin:0 auto;padding:0 28px 96px}
+.masthead{padding:30px 0 14px;border-bottom:2px solid var(--bd);margin-bottom:8px}
+.masthead .kicker{font-size:11px;letter-spacing:.18em;color:var(--t3);text-transform:uppercase;font-weight:600}
+.masthead h1{font-family:var(--font-serif);font-size:30px;font-weight:700;letter-spacing:.01em;margin:6px 0 4px}
+.masthead .sub{font-size:12.5px;color:var(--t2);max-width:800px}
+.masthead .meta{font-size:11px;color:var(--t3);margin-top:8px}
+.toolrow{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb,var(--win) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--bd);padding:9px 0;margin-bottom:26px}
+.toolrow .sp{flex:1}
+.tbtn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--bd);background:var(--field);
+  color:var(--t1);border-radius:7px;padding:6px 13px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),transform var(--dur) var(--ease)}
+.tbtn:hover{background:var(--hov)}
+.tbtn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.tbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--onacc)}
+.chipbar{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--neutralsoft);color:var(--t2);border:1px solid var(--bd)}
+.chip b{color:var(--t1);font-weight:600}
+.toc{background:var(--surf);border:1px solid var(--bd);border-radius:10px;padding:14px 18px;margin-bottom:34px}
+.toc .t{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--t2);margin-bottom:8px}
+.toc ol{margin-left:20px;font-size:12.5px;color:var(--t2);columns:2;column-gap:34px}
+.toc a{color:var(--acct);text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.gtitle{font-family:var(--font-serif);font-size:19px;font-weight:700;margin:46px 0 3px;padding-top:14px;border-top:2px solid var(--bd)}
+.gsub{font-size:12px;color:var(--t2);margin-bottom:16px}
+.notes{font-size:12px;color:var(--t2);margin:12px 0 4px;padding-left:18px;max-width:1000px}
+.notes li{margin-bottom:4px}
+.notes b{color:var(--t1)}
+.notes code,.spec code{color:var(--acct);font-family:Consolas,monospace;font-size:11.5px}
+
+/* 规格说明块 */
+.spec{border:1px solid var(--bd);border-left:3px solid var(--acc);border-radius:8px;background:var(--surf);
+  padding:12px 16px;margin:12px 0 30px}
+.spec h4{font-family:var(--font-serif);font-size:13.5px;margin-bottom:7px}
+.spec .cols{display:grid;grid-template-columns:1fr 1fr;gap:4px 26px}
+.spec .col h5{font-size:10.5px;letter-spacing:.08em;color:var(--t3);text-transform:uppercase;margin-bottom:4px;font-weight:700}
+.spec ul{padding-left:16px;font-size:12px;color:var(--t2)}
+.spec li{margin-bottom:3px}
+.spec b{color:var(--t1)}
+
+/* ==========================================================================
+   3) 应用外壳（复用 A+C 几何：顶栏 44 / 左栏 200 / 右栏翻译 320 / 状态栏 32）
+   ========================================================================== */
+.stage{border:1px solid var(--bd);border-radius:10px;overflow:hidden;background:var(--win);
+  box-shadow:var(--shadow-page);margin-bottom:8px}
+.app{display:flex;flex-direction:column;height:640px;overflow:hidden}
+.tabbar{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:6px;padding:0 10px;
+  background:var(--side);border-bottom:1px solid var(--bd)}
+.brand{display:flex;align-items:center;gap:7px;padding:0 8px 0 2px;font-weight:700;font-size:13px;color:var(--t1)}
+.brand .mark{width:20px;height:20px;border-radius:5px;background:var(--acc);color:var(--onacc);font-size:11px;font-weight:800;
+  display:flex;align-items:center;justify-content:center}
+.tab{display:flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:6px 6px 0 0;font-size:13px;
+  color:var(--t2);cursor:default;user-select:none;white-space:nowrap;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+.tab.active{background:var(--win);color:var(--t1);box-shadow:inset 0 -2px 0 var(--acc)}
+.tab:not(.active):hover{background:var(--hov)}
+.tab .x{color:var(--t3);font-size:11px;margin-left:4px}
+.tab .newdot{width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:2px}
+.tab .trdot{width:6px;height:6px;border-radius:50%;background:var(--acc);margin-left:2px}
+.newtab{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:15px}
+.newtab:hover{background:var(--hov)}
+.search{margin-left:auto}
+.search input{width:200px;height:28px;padding:0 10px;font-size:13px;border:1px solid var(--bd);border-radius:6px;
+  background:var(--field);color:var(--t1);outline:none}
+.search input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--accsoft)}
+.gear{width:28px;height:28px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:14px}
+.gear:hover{background:var(--hov)}
+.main{flex:1;display:flex;min-height:0}
+.nav{width:200px;flex:0 0 200px;background:var(--side);border-right:1px solid var(--bd);padding:10px;overflow:hidden}
+.minitabs{display:flex;gap:2px;margin-bottom:12px}
+.minitabs span{flex:1;text-align:center;padding:5px 0;font-size:11px;border-radius:6px;color:var(--t2);cursor:default}
+.minitabs span.on{background:var(--win);color:var(--acct);font-weight:600}
+.thumb{position:relative;background:var(--win);border-radius:6px;box-shadow:var(--shadow-page);aspect-ratio:210/297;
+  margin-bottom:10px;padding:12px 9px}
+.thumb.on{outline:2px solid var(--acc);outline-offset:1px}
+.thumb .ln{height:4px;border-radius:2px;background:var(--bd);margin-bottom:6px}
+.thumb .ln.w60{width:60%}.thumb .ln.w80{width:80%}.thumb .ln.w90{width:90%}
+.thumb .pg{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--t3)}
+.nav .hint{font-size:11px;color:var(--t3);margin-top:4px}
+/* 阅读画布 */
+.read{flex:1;background-color:var(--readbg);overflow:hidden;padding:14px 0;min-width:0;position:relative}
+.pages{width:64%;margin:0 auto;display:flex;flex-direction:column;gap:14px;position:relative;z-index:1}
+.page{position:relative;background:var(--win);box-shadow:var(--shadow-page);aspect-ratio:210/297;padding:24px 28px;flex:0 0 auto}
+.h2{font-family:var(--font-serif);font-size:16px;font-weight:700;margin-bottom:12px}
+.p p{font-size:13px;line-height:1.85;margin-bottom:11px}
+.sel{background:var(--accsoft);box-shadow:inset 0 -2px 0 var(--acc);border-radius:2px}
+.p-title{font-family:var(--font-serif);font-size:24px;font-weight:700;text-align:center;margin-top:16%}
+.p-sub{text-align:center;font-size:13px;color:var(--t2);margin-top:8px}
+/* 划词浮出「译」按钮 */
+.tfloat{position:absolute;z-index:6;display:flex;align-items:center;gap:0;
+  background:var(--win);border:1px solid var(--bd);border-radius:8px;box-shadow:var(--shadow-pop);
+  animation:pop 130ms var(--ease)}
+.tfloat .tb{width:30px;height:30px;border:none;background:var(--acc);color:var(--onacc);font-size:14px;font-weight:700;
+  border-radius:7px;display:flex;align-items:center;justify-content:center}
+.tfloat .tb:hover{background:var(--acchov)}
+.tfloat .tip{font-size:11px;color:var(--t2);padding:0 9px 0 8px;white-space:nowrap}
+/* 右栏翻译 320 */
+.drawer{width:320px;flex:0 0 320px;background:var(--win);border-left:1px solid var(--bd);
+  overflow:hidden;display:flex;flex-direction:column}
+.drawer .outer{width:240px;flex:0 0 240px}
+.dtabs{display:flex;gap:0;height:40px;flex:0 0 40px;border-bottom:1px solid var(--bd);background:var(--side)}
+.dtabs span{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;color:var(--t2);cursor:default;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+.dtabs span.on{background:var(--win);color:var(--t1);font-weight:600;box-shadow:inset 0 -2px 0 var(--acc)}
+.dtabs span:not(.on):hover{background:var(--hov)}
+.dbody{flex:1;overflow:hidden;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.dsec{border:1px solid var(--bd);border-radius:9px;background:var(--surf);padding:11px 12px}
+.dsec .h{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--t3);text-transform:uppercase;margin-bottom:7px}
+.dlbl{font-size:11px;color:var(--t3);display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.dlbl .meta{color:var(--t3)}
+.src,.out{font-size:12.5px;line-height:1.7}
+.src{color:var(--t1)}
+.out{color:var(--t1)}
+.darrow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--t3);margin:2px 0}
+.darrow .ln{flex:1;height:1px;background:var(--bd)}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.abtn{border:1px solid var(--bd);background:var(--field);color:var(--t1);border-radius:7px;padding:5px 11px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease)}
+.abtn:hover{background:var(--hov)}
+.abtn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.abtn.primary:hover{background:var(--acchov)}
+.abtn.ghost{background:transparent;border-color:transparent;color:var(--acct);padding:5px 4px}
+.abtn.ghost:hover{background:var(--hov)}
+.abtn[disabled]{opacity:.45;cursor:default;pointer-events:none}
+.dfoot{font-size:11px;color:var(--t3);margin-top:2px}
+/* 整篇：纵向堆叠 */
+.cfg{display:flex;flex-direction:column;gap:0}
+.crow{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--bd)}
+.crow:last-of-type{border-bottom:none}
+.crow>label{font-size:12px;color:var(--t2)}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:7px;overflow:hidden}
+.seg span{font-size:12px;padding:4px 12px;color:var(--t2);background:var(--field)}
+.seg span.on{background:var(--accsoft);color:var(--acct);font-weight:600}
+.tmpl{display:flex;flex-wrap:wrap;gap:5px}
+.tmpl span{font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);background:var(--field);color:var(--t2)}
+.tmpl span.on{background:var(--accsoft);border-color:var(--acc);color:var(--acct);font-weight:600}
+.linkrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mini{border:1px solid var(--bd);background:var(--field);color:var(--acct);border-radius:6px;padding:2px 9px;font-size:11px}
+.mini:hover{background:var(--hov)}
+.engwrap{display:flex;flex-direction:column;gap:6px;min-width:0}
+.savedcfg{display:flex;align-items:center;gap:7px;background:var(--field);border:1px solid var(--bd);border-radius:7px;padding:5px 8px;font-size:11.5px;min-width:0}
+.savedcfg .st{font-size:9.5px;font-weight:800;letter-spacing:.04em;border-radius:5px;padding:2px 6px;background:var(--oksoft);color:var(--ok);flex:0 0 auto}
+.savedcfg .sn{color:var(--t1);font-weight:600;line-height:1.35;word-break:break-word;flex:1;min-width:0}
+.savedcfg .mini{margin-left:auto;flex:0 0 auto}
+.chk{display:flex;gap:10px;flex-wrap:wrap}
+.ck{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--t2)}
+.ck .box{width:14px;height:14px;border-radius:4px;border:1.5px solid var(--bdstrong);display:inline-flex;
+  align-items:center;justify-content:center;font-size:10px;color:var(--onacc);background:var(--field)}
+.ck.on{color:var(--t1)}
+.ck.on .box{background:var(--acc);border-color:var(--acc)}
+.startbtn{width:100%;height:36px;margin-top:11px;border:1px solid var(--acc);background:var(--acc);color:var(--onacc);
+  border-radius:8px;font-size:13px;font-weight:600;transition:background var(--dur) var(--ease)}
+.startbtn:hover{background:var(--acchov)}
+.tipnote{font-size:11px;color:var(--t3);margin-top:7px;display:flex;gap:6px;align-items:flex-start}
+/* 进度 */
+.proghead{display:flex;align-items:center;gap:8px;font-size:13px}
+.proghead .pct{margin-left:auto;color:var(--acct);font-weight:700}
+.progress{height:6px;border-radius:999px;background:var(--bd);overflow:hidden;margin:9px 0 6px}
+.progress>i{display:block;height:100%;background:var(--acc);border-radius:999px}
+.progmeta{font-size:11px;color:var(--t3)}
+.stages{margin-top:9px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.stages .st{display:flex;align-items:center;gap:7px;color:var(--t2)}
+.stages .st.done{color:var(--ok)}
+.stages .st.now{color:var(--acct);font-weight:600}
+.log{margin-top:8px;border:1px solid var(--bd);border-radius:7px;background:var(--field);padding:7px 9px;
+  font-family:Consolas,monospace;font-size:10.5px;color:var(--t2);line-height:1.65;max-height:74px;overflow:hidden}
+.progacts{display:flex;gap:8px;margin-top:9px}
+/* 结果 */
+.reshead{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ok);font-weight:600}
+.resrow{display:flex;align-items:center;gap:9px;border:1px solid var(--bd);border-radius:8px;background:var(--field);
+  padding:9px 10px;margin-top:8px}
+.badge{font-size:9.5px;font-weight:800;letter-spacing:.05em;border-radius:5px;padding:3px 7px;flex:0 0 auto;color:var(--onacc)}
+.badge.mono{background:var(--acc)}
+.badge.dual{background:var(--ok)}
+.resmeta{flex:1;min-width:0}
+.resmeta b{display:block;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.resmeta span{font-size:11px;color:var(--t3)}
+.resacts{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.reshint{font-size:10.5px;color:var(--t3);margin-top:8px;word-break:break-all}
+.reshint.warn{color:var(--warntext);background:var(--warnbg);border-radius:6px;padding:6px 8px}
+/* 状态栏 32 */
+.status{height:32px;flex:0 0 32px;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--side);
+  border-top:1px solid var(--bd);font-size:12px;color:var(--t2)}
+.sbtn{width:24px;height:24px;border:none;background:transparent;border-radius:6px;color:var(--t2);font-size:12px}
+.sbtn:hover{background:var(--hov)}
+.pageno b{color:var(--acc);font-weight:600}
+.pageno i{color:var(--t3);font-style:normal}
+.tstatus{margin-left:auto;font-size:11px;color:var(--t3)}
+.tstatus .live{color:var(--acct)}
+
+/* ==========================================================================
+   4) 模态 / 同意 / 工具页 / 状态组件
+   ========================================================================== */
+.overlay{position:absolute;inset:0;background:var(--mask);z-index:20;animation:fadein 160ms var(--ease);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--win);border:1px solid var(--bd);border-radius:12px;box-shadow:var(--shadow-modal);
+  animation:rise 150ms var(--ease)}
+.consent{width:480px;max-width:100%;padding:20px 22px}
+.consent .ct{font-family:var(--font-serif);font-size:19px;font-weight:700}
+.consent .cd{font-size:12px;color:var(--t2);margin:5px 0 13px}
+.conslist{display:flex;flex-direction:column;gap:0;border:1px solid var(--bd);border-radius:9px;overflow:hidden;margin-bottom:13px}
+.consrow{display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid var(--bd);background:var(--field)}
+.consrow:last-child{border-bottom:none}
+.consrow .ic{width:24px;height:24px;flex:0 0 24px;border-radius:7px;background:var(--accsoft);color:var(--acct);
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.consrow b{display:block;font-size:12px}
+.consrow span{font-size:11.5px;color:var(--t2)}
+.ckbig{display:flex;gap:9px;align-items:center;font-size:12px;color:var(--t2);padding:5px 0}
+.ckbig .box{width:16px;height:16px;flex:0 0 16px;border-radius:4px;border:1.5px solid var(--bdstrong);
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--onacc)}
+.ckbig.on{color:var(--t1)}
+.ckbig.on .box{background:var(--acc);border-color:var(--acc)}
+.cfoot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--bd)}
+.btn{border:1px solid var(--bd);background:var(--field);color:var(--t1);border-radius:8px;padding:8px 16px;font-size:12px;
+  transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.btn:hover{background:var(--hov)}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:var(--onacc);font-weight:600}
+.btn.primary:hover{background:var(--acchov)}
+/* 工具页 */
+.toolpage{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--win)}
+.tp-head{padding:18px 26px 11px;border-bottom:1px solid var(--bd)}
+.tp-head .crumb{font-size:11px;color:var(--t3);letter-spacing:.06em;margin-bottom:4px}
+.tp-head h2{font-family:var(--font-serif);font-size:22px;font-weight:700}
+.tp-head .d{font-size:12.5px;color:var(--t2);margin-top:2px}
+.tp-body{flex:1;display:flex;min-height:0}
+.tp-form{flex:1;padding:16px 26px;overflow:hidden;min-width:0}
+.tp-side{width:300px;flex:0 0 300px;border-left:1px solid var(--bd);background:var(--surf);padding:16px 18px;overflow:hidden}
+.dropzone{border:1.5px dashed var(--bdstrong);border-radius:10px;background:var(--field);padding:20px;text-align:center;
+  font-size:12.5px;color:var(--t2);margin-bottom:14px}
+.dropzone .big{font-size:14px;color:var(--t1);font-weight:600;display:block;margin-bottom:3px}
+.dropzone .lnk{color:var(--acct);font-weight:600}
+.fl-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--t2);margin-bottom:8px}
+.fl-head b{color:var(--t1)}
+.fitem{display:flex;align-items:center;gap:9px;border:1px solid var(--bd);border-radius:8px;background:var(--field);
+  padding:8px 10px;margin-bottom:6px}
+.fitem .fic{width:30px;height:30px;flex:0 0 30px;border-radius:7px;background:var(--accsoft);color:var(--acct);
+  font-size:9.5px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.fitem .fnm{flex:1;min-width:0;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fitem .fnm span{display:block;font-size:11px;color:var(--t3);font-weight:400}
+.fst{font-size:10.5px;border-radius:999px;padding:2px 9px;flex:0 0 auto}
+.fst.wait{background:var(--neutralsoft);color:var(--t2)}
+.fst.scan{background:var(--warnbg);color:var(--warntext)}
+.fst.done{background:var(--oksoft);color:var(--ok)}
+.fst.err{background:var(--dangersoft);color:var(--danger)}
+.fitem .x{width:22px;height:22px;border:none;background:transparent;color:var(--t3);border-radius:6px;font-size:14px}
+.fitem .x:hover{background:var(--hov)}
+.uni{font-size:11.5px;color:var(--t2);background:var(--neutralsoft);border-radius:8px;padding:9px 12px;margin-top:6px}
+.uni b{color:var(--t1)}
+.warnbanner{display:flex;align-items:flex-start;gap:8px;background:var(--warnbg);color:var(--warntext);font-size:11.5px;
+  border:1px solid color-mix(in srgb,var(--warntext) 28%,transparent);border-radius:8px;padding:8px 12px;margin-top:10px}
+.runbar{display:flex;align-items:center;gap:10px;padding:11px 26px;border-top:1px solid var(--bd);background:var(--toolbar)}
+.runbar .note{font-size:11px;color:var(--t3);margin-right:auto}
+.psummary{border:1px solid var(--bd);border-radius:9px;background:var(--field);padding:11px 13px;margin-bottom:10px}
+.psummary .h{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--t3);text-transform:uppercase;margin-bottom:6px}
+.psummary .r{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+.psummary .r span{color:var(--t3)}
+/* 状态组件 */
+.spinner{width:14px;height:14px;border:2px solid var(--accsoft);border-top-color:var(--acc);border-radius:50%;
+  animation:spin .8s linear infinite;display:inline-block;vertical-align:-2px;flex:0 0 auto}
+.skel{background:linear-gradient(90deg,var(--bd) 25%,var(--surf) 50%,var(--bd) 75%);background-size:200% 100%;
+  animation:sh 1.4s infinite;border-radius:4px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:150px;
+  text-align:center;color:var(--t3);gap:5px}
+.empty .eic{font-size:26px;opacity:.8}
+.empty .et{font-size:12.5px;color:var(--t2);font-weight:600}
+.empty .eh{font-size:11px;max-width:230px}
+/* Token 色卡 */
+.swgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.swcard{border:1px solid var(--bd);border-radius:10px;overflow:hidden;background:var(--win)}
+.swcard .swh{display:flex;height:38px}
+.swcard .swh>i{flex:1;display:block}
+.swcard .swm{padding:8px 10px;font-size:11px}
+.swcard .swm .v{color:var(--t3);font-family:Consolas,monospace;font-size:10.5px;margin-top:2px}
+.swcard .swm .k{font-weight:700}
+.tag-reuse{color:var(--ok);font-weight:700}
+.tag-newcand{color:var(--acct);font-weight:700}
+.sw-legend{font-size:11px;color:var(--t3);margin:6px 0 14px}
+/* 暗色示例容器 */
+.darkwrap{background:var(--win);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:8px;
+  color:var(--t1)}
+.darkwrap .app{height:440px;border:1px solid var(--bd);border-radius:8px}
+/* 附录 */
+.boundary{border:1px solid var(--bd);border-left:3px solid var(--warnbg);border-radius:8px;background:var(--surf);padding:14px 18px}
+.boundary table{border-collapse:collapse;width:100%;font-size:12px}
+.boundary th{text-align:left;background:var(--warnbg);color:var(--warntext);padding:7px 10px}
+.boundary td{padding:7px 10px;border-bottom:1px solid var(--bd);vertical-align:top;color:var(--t2)}
+.boundary td b{color:var(--t1)}
+.foot-note{margin-top:40px;padding-top:14px;border-top:2px solid var(--bd);font-size:11.5px;color:var(--t3)}
+
+/* ==========================================================================
+   5) v1.2 · 模型供应商配置（仅布局；仅引用 §1 既有 token，不新增主题 token）
+   ========================================================================== */
+.settings{width:880px;height:560px;max-width:100%;display:flex;flex-direction:column;overflow:hidden}
+.set-title{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:8px;padding:0 16px;
+  border-bottom:1px solid var(--bd);background:var(--surf)}
+.set-title .st{font-family:var(--font-serif);font-size:15px;font-weight:700;color:var(--t1)}
+.set-title .sp{flex:1}
+.set-body{flex:1;display:flex;min-height:0}
+.set-nav{width:170px;flex:0 0 170px;background:var(--side);border-right:1px solid var(--bd);padding:10px 8px}
+.set-nav .grp{font-size:10.5px;letter-spacing:.08em;color:var(--t3);text-transform:uppercase;font-weight:700;padding:4px 8px 7px}
+.set-nav .item{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--t2);padding:6px 9px;border-radius:7px;cursor:default}
+.set-nav .item:hover{background:var(--hov)}
+.set-nav .item.on{background:var(--accsoft);color:var(--acct);font-weight:600}
+.set-nav .item.sub{padding-left:22px;font-size:12px}
+.set-pane{flex:1;min-width:0;display:flex;flex-direction:column}
+.set-head{display:flex;align-items:baseline;gap:9px;padding:10px 16px 8px;border-bottom:1px solid var(--bd)}
+.set-head h3{font-family:var(--font-serif);font-size:16px;font-weight:700}
+.set-head .d{font-size:11.5px;color:var(--t3)}
+.set-foot{height:46px;flex:0 0 46px;display:flex;align-items:center;gap:8px;padding:0 16px;
+  border-top:1px solid var(--bd);background:var(--toolbar)}
+.set-foot .sp{flex:1}
+.set-foot .note{font-size:11px;color:var(--t3)}
+/* 主从双栏 */
+.master{flex:1;display:flex;min-height:0}
+.prov-list{width:236px;flex:0 0 236px;border-right:1px solid var(--bd);padding:8px 8px;overflow:auto}
+.prov-search{position:sticky;top:0;z-index:1;margin-bottom:2px;background:var(--win);padding-bottom:2px}
+.prov-search .inp{height:28px;border-radius:7px;color:var(--t3)}
+.prov-grp{font-size:10.5px;letter-spacing:.07em;color:var(--t3);font-weight:700;padding:7px 8px 2px}
+.prov-item{display:flex;align-items:center;gap:7px;padding:4px 9px;border-radius:7px;font-size:12.5px;color:var(--t2);cursor:default}
+.prov-item:hover{background:var(--hov)}
+.prov-item.on{background:var(--accsoft);color:var(--acct);font-weight:600}
+.prov-item .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prov-item .st{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.prov-item .st.ok{background:var(--ok)}
+.prov-item .st.idle{background:var(--bdstrong)}
+.prov-item .tag{font-size:9.5px;border-radius:999px;padding:1px 6px;background:var(--neutralsoft);color:var(--t3);flex:0 0 auto;font-weight:400}
+.prov-item .tag.loc{background:var(--warnbg);color:var(--warntext)}
+.prov-add{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:7px;padding:5px;
+  border:1.5px dashed var(--bdstrong);border-radius:8px;font-size:12px;color:var(--acct)}
+.prov-detail{flex:1;min-width:0;padding:10px 16px;overflow:hidden;display:flex;flex-direction:column}
+/* 详情头 */
+.dh-title{display:flex;align-items:center;gap:9px}
+.dh-title .logo{width:32px;height:32px;flex:0 0 32px;border-radius:9px;background:var(--accsoft);color:var(--acct);
+  font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.dh-title .nm{font-family:var(--font-serif);font-size:16px;font-weight:700}
+.dh-title .badge.cloud{background:var(--acc)}
+.dh-title .badge.local{background:var(--warnbg);color:var(--warntext)}
+.dh-sub{font-size:11.5px;color:var(--t2);margin:5px 0 8px}
+/* 字段 */
+.field{margin-bottom:7px}
+.field>label{display:block;font-size:11px;color:var(--t3);margin-bottom:3px}
+.inp{width:100%;height:30px;padding:0 10px;font-size:12.5px;border:1px solid var(--bd);border-radius:8px;
+  background:var(--field);color:var(--t1);display:flex;align-items:center}
+.inp.sel{justify-content:space-between;cursor:default}
+.inp .cv{color:var(--t3);font-size:10px}
+.inpline{display:flex;align-items:center;gap:6px}
+.inpline .inp{flex:1;min-width:0}
+.eye{width:30px;height:30px;flex:0 0 30px;border:1px solid var(--bd);border-radius:8px;background:var(--field);color:var(--t3);font-size:12px}
+.eye:hover{background:var(--hov)}
+.hint{font-size:11px;color:var(--t3);margin-top:3px;line-height:1.5}
+.dropdown{border:1px solid var(--bd);border-radius:8px;background:var(--field);box-shadow:var(--shadow-pop);
+  overflow:hidden;margin-top:4px}
+.opt{padding:5px 10px;font-size:12.5px;color:var(--t2);display:flex;align-items:center;gap:8px}
+.opt.on{background:var(--accsoft);color:var(--acct);font-weight:600}
+.opt .m{color:var(--t3);font-size:10.5px;margin-left:auto;font-weight:400}
+/* 端口建议 */
+.portchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.portchip{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);background:var(--field);color:var(--t2)}
+.portchip.on{background:var(--accsoft);border-color:var(--acc);color:var(--acct);font-weight:600}
+/* 测试 / 连接状态 */
+.testrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:0}
+.connstate{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600}
+.connstate.ok{color:var(--ok)}
+.connstate.err{color:var(--err)}
+.connstate.idle{color:var(--t3);font-weight:400}
+.okbanner{display:flex;align-items:flex-start;gap:7px;background:var(--oksoft);color:var(--ok);
+  border-radius:8px;padding:7px 10px;font-size:11.5px}
+.errbanner{display:flex;align-items:flex-start;gap:7px;background:var(--dangersoft);color:var(--danger);
+  border-radius:8px;padding:7px 10px;font-size:11.5px}
+/* 翻译面板 · 就地展开快捷入口 */
+.inlinecfg{border:1px solid var(--bd);border-radius:8px;background:var(--field);overflow:hidden}
+.ic-head{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:11.5px}
+.ic-head .t{flex:1;min-width:0;color:var(--t1);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ic-head .t i{font-style:normal;color:var(--t3);font-weight:400}
+.ic-head .mini{margin-left:auto;flex:0 0 auto}
+.ic-body{padding:8px 9px 9px;border-top:1px solid var(--bd);background:var(--surf)}
+.ic-body .cfg .crow{grid-template-columns:62px 1fr;padding:6px 0}
+.ic-foot{display:flex;justify-content:flex-end;margin-top:7px}
+/* 双栏并排 */
+.two-stage{display:flex;gap:14px;align-items:flex-start}
+.two-stage>.stage{flex:1;min-width:0}
+
+/* 动效 */
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes pop{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes sh{to{background-position:-200% 0}}
+@keyframes blink{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="masthead">
+    <div class="kicker">AIPDF · Windows WPF · Provider Config</div>
+    <h1 class="serif">模型供应商配置 · 设计稿</h1>
+    <div class="sub">把 PDF 翻译的「模型供应商」配置统一成一套：<strong>云端</strong>（内置供应商列表 → 选名字 → 填 Key → 选模型）、<strong>本地</strong>（填 OpenAI 兼容地址 →「拉取模型」→ 选模型）、<strong>自定义</strong>（任意 base URL + 模型）。设置页用<strong>主从双栏</strong>（方案 A）；翻译面板用<strong>就地展开快捷入口</strong>（方案 G），取代 v1.1 那组从未真正驱动供应商的「云端 LLM / 本地」radio。视觉复用 v1.1 暖纸体系，<strong>不新增主题 token</strong>。</div>
+    <div class="meta">版本 v1.2 · 2026-09-15 · token 基线 = v1.1《翻译-设计稿.html》（逐字复用）· 配套《翻译-设计稿.html》《翻译-全状态设计参考.html》</div>
+  </header>
+
+  <div class="toolrow">
+    <button class="tbtn primary" id="themeToggle" type="button"><span class="dot"></span><span id="themeLabel">切到暖暗色</span></button>
+    <span class="chipbar">
+      <span class="chip"><b>设置页</b> 主从双栏（方案 A）</span>
+      <span class="chip"><b>面板</b> 就地展开（方案 G）</span>
+      <span class="chip"><b>云端</b> 14 个内置供应商</span>
+      <span class="chip"><b>协议</b> OpenAI / Anthropic</span>
+      <span class="chip"><b>本地</b> 仅 OpenAI 兼容</span>
+      <span class="chip"><b>token</b> 复用不新增</span>
+      <span class="chip"><b>零</b> 外部资源</span>
+    </span>
+    <span class="sp"></span>
+    <span style="font-size:11px;color:var(--t3)">当前：<b id="themeNow" style="color:var(--t1)">亮色</b></span>
+  </div>
+
+  <div class="toc">
+    <div class="t">目录</div>
+    <ol>
+      <li><a href="#s1">S1 设置页 · 云端供应商</a></li>
+      <li><a href="#s2">S2 设置页 · 本地服务</a></li>
+      <li><a href="#s3">S3 设置页 · 自定义供应商</a></li>
+      <li><a href="#s4">S4 翻译面板 · 快捷入口（就地展开）</a></li>
+      <li><a href="#s5">S5 暗色示例</a></li>
+      <li><a href="#s7">S7 编程套餐与协议</a></li>
+      <li><a href="#s6">S6 Token 色卡（复用确认）</a></li>
+      <li><a href="#appendix">附录 · 内置供应商预设表</a></li>
+    </ol>
+  </div>
+
+  <!-- ===================== S1 设置页 · 云端供应商 ===================== -->
+  <div class="gtitle" id="s1">S1 · 设置页 · 云端供应商</div>
+  <div class="gsub">设置对话框（<b>880 × 560</b>）覆盖在应用之上。左栏分类：常规 / 外观 / 翻译（展开：<b>模型供应商</b> / 术语表 / 输出）/ 高级。右栏为主从双栏：左 236px 是搜索 + 分组供应商列表，右侧是所选供应商的配置详情。当前选中 <b>OpenAI</b>。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="nav">
+          <div class="minitabs"><span class="on">缩略图</span><span>目录</span><span>书签</span><span>搜索</span></div>
+          <div class="thumb on"><div class="ln w60"></div><div class="ln w90"></div><div class="ln w80"></div><div class="ln"></div><span class="pg">1</span></div>
+          <div class="thumb"><div class="ln w60"></div><div class="ln w90"></div><span class="pg">2</span></div>
+          <div class="hint">12 页 · 1.8 MB</div>
+        </div>
+        <div class="read">
+          <div class="pages">
+            <div class="page"><div class="p-title">2026 年第三季度产品运营报告</div><div class="p-sub">产品技术部 · 2026-09-08</div></div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">云端内置列表 · 本地 OpenAI 兼容 · 自定义任意端点</span>
+                </div>
+
+                <div class="master">
+                  <!-- 左：供应商列表 -->
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item on"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <!-- 右：配置详情 -->
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">◎</span>
+                      <span class="nm">OpenAI</span>
+                      <span class="badge cloud">云端</span>
+                    </div>
+                    <div class="dh-sub">官方 OpenAI API · provider id <b>openai</b>。整篇翻译会把待译文本分批发送至该服务商。</div>
+
+                    <div class="field">
+                      <label>API Key</label>
+                      <div class="inpline">
+                        <div class="inp">••••••••••••</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                      <div class="hint">密钥仅存系统凭据管理器，仅经 <b>stdin</b> 传递，不写入配置 / 日志 / 命令行 / 子进程环境变量 / 崩溃转储。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="inp sel">gpt-4o <span class="cv">▾</span></div>
+                    </div>
+
+                    <div class="field">
+                      <label>端点（base URL）</label>
+                      <div class="inp">https://api.openai.com/v1</div>
+                      <div class="hint">内置默认，可覆盖为自建网关（主机名 / 协议 / 端口任一变更 → 重新弹同意）。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>协议</label>
+                      <div class="seg"><span class="on">OpenAI 兼容</span><span>Anthropic 兼容</span></div>
+                      <div class="hint">该供应商默认使用的请求协议；可按模型覆盖。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>连接</label>
+                      <div class="testrow">
+                        <button class="abtn">测试连接</button>
+                        <span class="connstate ok">● 已连接 · 凭据有效</span>
+                      </div>
+                      <div class="tipnote"><span>ⓘ</span><span>测试连接为手动触发；仅向该端点发送一次最小请求以校验凭据，不发送文档内容；密钥不落盘、不入日志。</span></div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <label>同意状态</label>
+                      <div class="connstate idle">已记住（按 <b>服务商 + endpoint</b>）· 可在左下角「撤销同意」重新确认</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">撤销后同组合下次使用将重新弹同意</span>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商</span></span>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>① 为什么主从双栏</b>：供应商数量会随内置列表增长（现 14 个）且要容纳「本地 / 自定义」，纵向单列会撑爆对话框高度；左列分组列表可滚动，右侧只呈现当前项，改动集中在一处。</li>
+    <li><b>② 状态点语义</b>：绿点 = 已配置可用（Key / 地址已保存且最近测试通过）；灰点 = 未配置。列表右侧 <b>tag</b> 只做补充（「已配置」「本地」），不替代状态点。</li>
+    <li><b>③ 端点可覆盖</b>：即使云端内置供应商也允许覆盖 base URL（走自建网关 / 代理）。覆盖后按「服务商 + endpoint」重新触发同意。</li>
+    <li><b>④ 密钥</b>：只写系统凭据管理器，仅经 stdin 传递；界面回显固定掩码，不回读明文。</li>
+    <li><b>⑤ 与 v1.1 的差异</b>：本节取代 v1.1 的「云端服务商」单点配置，供应商本身成为一等对象；「云端 / 本地」不再由 radio 决定，而由所选供应商决定。</li>
+  </ul>
+
+  <div class="spec">
+    <h4>规格说明 · S1</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>对话框 880 × 560，覆盖应用；Esc / ✕ / 取消 关闭不保存。</li>
+          <li>左列搜索按显示名 / provider id 过滤；输入无匹配显示空态。</li>
+          <li>切供应商保留各自已填内容；未保存时点「取消」丢弃改动。</li>
+          <li>「测试连接」结果就地显示：<b>已连接 / 密钥无效 / 网络不可达 / 超时</b>，不改动已保存的状态点。</li>
+          <li>「撤销同意」清除该 <b>服务商 + endpoint</b> 的同意记录，不动其他组合。</li>
+          <li>保存后写入 settings；密钥另走入凭据管理器，不随 settings 落盘。</li>
+          <li>「测试连接 / 拉取模型」均为用户显式触发；云端会发送密钥但不发送文档内容；不替代文档上传同意。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>供应商：默认 <b>OpenAI</b>（首次启动预选首个内置供应商）。</li>
+          <li>API Key：掩码回显，空 = 未配置；「保存到凭据管理器」显式提交。</li>
+          <li>模型：来自该 provider 的预设列表，默认取其第一个（OpenAI = <b>gpt-4o</b>）。</li>
+          <li>端点：内置默认 base URL，可覆盖；变更需重新同意。</li>
+          <li>同意记录：存 <code>provider + endpoint + 密钥指纹 + 时间 + TTL</code>，不存密钥与正文。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== S2 设置页 · 本地服务 ===================== -->
+  <div class="gtitle" id="s2">S2 · 设置页 · 本地服务</div>
+  <div class="gsub">同一设置框架，左列选中「本地」组的 <b>Ollama（本地）</b>；右侧为本地表单：填 OpenAI 兼容地址 →「拉取模型」（<code>GET {base}/v1/models</code>）→ 选模型。无原生 ollama 协议，本地服务默认无鉴权。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 员工手册.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="read">
+          <div class="pages"><div class="page"><div class="h2">员工手册</div><div class="p"><p>本手册适用于全体全职员工……</p></div></div></div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span>云端 LLM</span><span class="on">本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">本地服务走 OpenAI 兼容接口，不需要额外协议</span>
+                </div>
+
+                <div class="master">
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item on"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">⌂</span>
+                      <span class="nm">Ollama（本地）</span>
+                      <span class="badge local">本地</span>
+                    </div>
+                    <div class="dh-sub">连接本机 Ollama / LM Studio / vLLM / llama.cpp 的 OpenAI 兼容端点。文本不出本机。</div>
+
+                    <div class="field">
+                      <label>API 地址</label>
+                      <div class="inp">http://127.0.0.1:11434/v1</div>
+                      <div class="hint">OpenAI 兼容地址；本地服务通常无需密钥。</div>
+                      <div class="portchips">
+                        <span class="portchip on">11434 Ollama</span>
+                        <span class="portchip">1234 LM Studio</span>
+                        <span class="portchip">8000 vLLM</span>
+                        <span class="portchip">8080 llama.cpp</span>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="testrow">
+                        <button class="abtn">拉取模型</button>
+                        <span class="connstate ok">● 已连接 · 发现 4 个模型</span>
+                      </div>
+                      <div class="tipnote"><span>ⓘ</span><span>本地请求不携带密钥；仅访问本机回环地址。</span></div>
+                      <div class="inp sel" style="margin-top:6px">qwen2.5:7b <span class="cv">▾</span></div>
+                    </div>
+
+                    <div class="field">
+                      <label>API Key（可选）</label>
+                      <div class="inpline">
+                        <div class="inp">（留空）</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                      <div class="hint">仅当本地服务启用了鉴权时填写；默认留空。</div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <div class="okbanner">
+                        <span>ⓘ</span>
+                        <span>地址在本机（loopback），文本不出本机；只有云端供应商才会上传文本。</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">本地供应商不产生同意记录</span>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>3</b><i>/36</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商 · 本地</span></span>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>① 统一协议</b>：不实现 ollama 原生 <code>/api/tags</code>、<code>/api/generate</code>；全部走 OpenAI 兼容 <code>GET {base}/v1/models</code>。多数本地运行时都提供该兼容层。</li>
+    <li><b>② 拉取模型</b>：仅枚举模型名，不下载、不拉取权重；不启动、不托管本地模型进程。</li>
+    <li><b>③ 地址判定</b>：<code>127.0.0.1</code> / <code>localhost</code> / <code>::1</code> 视为 loopback，界面明示「文本不出本机」；非 loopback 一律按云端口径处理（含同意）。</li>
+    <li><b>④ 端口建议</b>：chips 只是便利填充，不探测、不扫描端口；点击仅替换地址中的端口段。</li>
+    <li><b>⑤ 可选密钥</b>：留空表示不带 Authorization 头；填写后按凭据管理器规则保存。</li>
+  </ul>
+
+  <div class="spec">
+    <h4>规格说明 · S2</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>「拉取模型」调用 <code>GET {base}/v1/models</code>；成功列出模型，失败显示分类错误（不可达 / 401 / 404 / 超时）。</li>
+          <li>拉取成功才启用模型下拉；未拉取时下拉禁用并提示先拉取。</li>
+          <li>地址变更后旧模型列表失效（须重新拉取），避免选到不存在模型。</li>
+          <li>loopback 判定基于解析后的主机，不信任字符串前缀（<code>127.0.0.1.evil.com</code> 不算本机）。</li>
+          <li>不探测端口、不自动改地址、不自动重试拉取。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>API 地址：默认 <code>http://127.0.0.1:11434/v1</code>（Ollama）。</li>
+          <li>端口 chips：<b>11434 Ollama / 1234 LM Studio / 8000 vLLM / 8080 llama.cpp</b>。</li>
+          <li>模型：来自拉取结果，默认选中第一个（示例 <b>qwen2.5:7b</b>）。</li>
+          <li>API Key：默认空（不带鉴权头）。</li>
+          <li>同意：本地 loopback 不产生同意记录；非 loopback 按云端规则。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== S3 设置页 · 自定义供应商 ===================== -->
+  <div class="gtitle" id="s3">S3 · 设置页 · 自定义供应商</div>
+  <div class="gsub">自定义组选中。表单为：名称 + API 地址 + API Key + 模型（自由输入，带「拉取」）；适合自建网关 / 自建 OpenAI 兼容服务。名称由用户命名，用于面板显示。</div>
+
+  <div class="stage">
+    <div class="app">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 供应商合同-v2.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="read"><div class="pages"><div class="page"><div class="h2">供应商合同</div><div class="p"><p>本合同由以下双方订立……</p></div></div></div></div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">自定义 = 任意 OpenAI 兼容端点</span>
+                </div>
+
+                <div class="master">
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item on"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">✎</span>
+                      <span class="nm">我的网关</span>
+                      <span class="badge cloud">自定义端点</span>
+                    </div>
+                    <div class="dh-sub">任意 OpenAI 兼容服务：自建网关、公司内网代理、第三方兼容层均可。</div>
+
+                    <div class="field">
+                      <label>名称</label>
+                      <div class="inp">我的网关</div>
+                      <div class="hint">仅用于界面显示与面板切换，不影响请求。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>API 地址</label>
+                      <div class="inp">https://gw.internal/v1</div>
+                      <div class="hint">非 loopback 地址按云端口径处理：首次使用需同意，文本会上传。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>API Key</label>
+                      <div class="inpline">
+                        <div class="inp">••••••••••••••</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="inpline">
+                        <div class="inp">my-model</div>
+                        <button class="abtn">拉取</button>
+                      </div>
+                      <div class="hint">可自由输入模型 id；「拉取」尝试 <code>GET {base}/v1/models</code>，失败不阻断手填。</div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <label>连接</label>
+                      <div class="testrow">
+                        <button class="abtn">测试连接</button>
+                        <span class="connstate ok">● 已连接 · 凭据有效</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">删除自定义供应商需在列表右键</span>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/8</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商 · 自定义</span></span>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>内置列表只是便利，不是白名单</b>：任何 OpenAI 兼容端点都能用；自定义供应商与内置供应商在运行时走同一条代码路径，唯一差别是名称与默认 base URL 由谁提供。</li>
+    <li>自定义条目可增删（列表右键 → 删除）；内置条目不可删除，只可覆盖端点。</li>
+    <li>名称仅用于显示，重名会追加序号区分；请求只依赖 base URL + 模型 + Key。</li>
+  </ul>
+
+  <div class="spec">
+    <h4>规格说明 · S3</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>「＋ 自定义供应商」新增空白条目并选中；未填名称时显示「未命名供应商」。</li>
+          <li>「拉取」失败只提示，不覆盖已手填的模型 id。</li>
+          <li>端点非 loopback 时，保存即等同宣告云端用途，首次调用弹同意。</li>
+          <li>删除自定义条目同时询问是否清除其凭据。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>名称：用户输入，默认空 → 占位「未命名供应商」。</li>
+          <li>API 地址：无默认，必填；示例 <code>https://gw.internal/v1</code>。</li>
+          <li>API Key：可空（内网网关常无鉴权）。</li>
+          <li>模型：自由文本，无默认；可手填或拉取。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== S4 翻译面板 · 快捷入口 ===================== -->
+  <div class="gtitle" id="s4">S4 · 翻译面板 · 快捷入口（就地展开）</div>
+  <div class="gsub">整篇「引擎」行不再放「本地 / 云端」radio，改为一行紧凑的当前供应商摘要 +「更换 ▾」；点击后就地（inline）展开为小配置块。左：折叠态；右：展开态。</div>
+
+  <div class="two-stage">
+    <!-- 折叠 -->
+    <div class="stage">
+      <div class="app" style="height:820px">
+        <div class="tabbar">
+          <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+          <div class="tab active">📄 报告.pdf <span class="x">×</span></div>
+          <button class="newtab">＋</button>
+          <button class="gear" style="margin-left:auto">⚙</button>
+        </div>
+        <div class="main">
+          <div class="read">
+            <div class="pages" style="width:86%"><div class="page"><div class="p-title" style="font-size:15px;margin-top:26%">季度报告</div></div></div>
+          </div>
+          <div class="drawer">
+            <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+            <div class="dbody">
+              <div class="dsec" style="flex:1">
+                <div class="h">整篇翻译设置</div>
+                <div class="cfg">
+                  <div class="crow"><label>源语言</label><div class="seg"><span class="on">自动检测</span><span>英</span></div></div>
+                  <div class="crow"><label>目标语言</label><div class="seg"><span class="on">中文</span><span>English</span></div></div>
+                  <div class="crow"><label>Prompt 模板</label><div class="tmpl"><span class="on">学术</span><span>法律</span><span>通用</span><span>＋ 自定义</span></div></div>
+                  <div class="crow"><label>供应商</label>
+                    <div class="engwrap">
+                      <div class="inlinecfg">
+                        <div class="ic-head">
+                          <span class="t">供应商 · <b>OpenAI</b> <i>·</i> gpt-4o</span>
+                          <button class="mini">更换 ▾</button>
+                        </div>
+                      </div>
+                      <div class="hint">供应商本身决定本地还是云端；点「更换」就地展开配置。</div>
+                    </div>
+                  </div>
+                  <div class="crow"><label>术语表</label><div class="linkrow"><span style="font-size:12px;color:var(--t1)">产品名 · 12 条</span><button class="mini">编辑</button></div></div>
+                  <div class="crow"><label>输出</label><div class="chk">
+                    <label class="ck on"><span class="box">✓</span>纯译文 mono</label>
+                    <label class="ck on"><span class="box">✓</span>对照 dual</label>
+                  </div></div>
+                </div>
+                <button class="startbtn">开始整篇翻译</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 展开 -->
+    <div class="stage">
+      <div class="app" style="height:820px">
+        <div class="tabbar">
+          <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+          <div class="tab active">📄 报告.pdf <span class="x">×</span></div>
+          <button class="newtab">＋</button>
+          <button class="gear" style="margin-left:auto">⚙</button>
+        </div>
+        <div class="main">
+          <div class="read">
+            <div class="pages" style="width:86%"><div class="page"><div class="p-title" style="font-size:15px;margin-top:26%">季度报告</div></div></div>
+          </div>
+          <div class="drawer">
+            <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+            <div class="dbody">
+              <div class="dsec" style="flex:1">
+                <div class="h">整篇翻译设置</div>
+                <div class="cfg">
+                  <div class="crow"><label>源语言</label><div class="seg"><span class="on">自动检测</span><span>英</span></div></div>
+                  <div class="crow"><label>目标语言</label><div class="seg"><span class="on">中文</span><span>English</span></div></div>
+                  <div class="crow"><label>Prompt 模板</label><div class="tmpl"><span class="on">学术</span><span>法律</span><span>通用</span></div></div>
+                  <div class="crow"><label>供应商</label>
+                    <div class="engwrap">
+                      <div class="inlinecfg">
+                        <div class="ic-head">
+                          <span class="t">供应商 · <b>OpenAI</b> <i>·</i> gpt-4o</span>
+                          <button class="mini">收起 ▴</button>
+                        </div>
+                        <div class="ic-body">
+                          <div class="cfg">
+                            <div class="crow"><label>供应商</label><div class="inp sel">OpenAI <span class="cv">▾</span></div></div>
+                            <div class="dropdown">
+                              <div class="opt on">OpenAI <span class="m">云端</span></div>
+                              <div class="opt">Ollama（本地） <span class="m">本地</span></div>
+                              <div class="opt">自定义… <span class="m">任意端点</span></div>
+                            </div>
+                            <div class="crow"><label>API Key</label>
+                              <div class="inpline"><div class="inp">••••••••</div><button class="mini">保存</button></div>
+                            </div>
+                            <div class="crow"><label>模型</label><div class="inp sel">gpt-4o <span class="cv">▾</span></div></div>
+                            <div class="crow"><label>连接</label>
+                              <div class="testrow">
+                                <button class="mini">拉取 / 测试</button>
+                                <span class="connstate ok">● 已连接</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="ic-foot"><button class="mini">完成</button></div>
+                        </div>
+                      </div>
+                      <div class="hint">展开仅为快速切换；完整配置仍在 设置 → 翻译 → 模型供应商。</div>
+                    </div>
+                  </div>
+                  <div class="crow"><label>输出</label><div class="chk">
+                    <label class="ck on"><span class="box">✓</span>纯译文 mono</label>
+                    <label class="ck on"><span class="box">✓</span>对照 dual</label>
+                  </div></div>
+                </div>
+                <button class="startbtn">开始整篇翻译</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>它取代了什么</b>：v1.1 的「云端 LLM / 本地」radio 其实从没真正驱动供应商选择（切到本地仍需在别处配置运行时）。现在去掉 radio，<b>由供应商本身决定本地还是云端</b>：选 OpenAI 就是云端，选 Ollama 就是本地。</li>
+    <li><b>为什么就地展开而不是弹窗</b>：整篇配置是纵向单列，弹窗会打断「配置 → 开始」的连贯动线；就地展开不遮挡原文，改完即开始。</li>
+    <li><b>快捷 vs 完整</b>：展开块只放供应商 / 密钥 / 模型 / 拉取测试，覆盖高频切换；端点覆盖、另存、同意撤销等低频项留在设置页。</li>
+    <li><b>一致性</b>：快捷块与设置页读写同一份 provider 配置，改一处两处同步。</li>
+    <li><b>切换即校验</b>：切到未配置的供应商时，展开块内联提示「未配置」并禁用「开始」；切回已配置项立即恢复。</li>
+  </ul>
+
+  <div class="spec">
+    <h4>规格说明 · S4</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>折叠态只显示 <code>供应商 · 名称 · 模型</code>；点击「更换 ▾」就地展开，不改变抽屉宽度。</li>
+          <li>同一时刻只展开一个块；点「完成」或切换 Tab 收起。</li>
+          <li>展开期间可正常滚动与修改其他配置行。</li>
+          <li>切到未配置供应商 → 内联提示 + 禁用「开始整篇翻译」。</li>
+          <li>切到云端新组合 → 首次调用仍走同意流程（S1 的逻辑不变）。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>摘要行：<b>供应商名 + 模型名</b>，默认取上次使用者。</li>
+          <li>快捷项：供应商 / API Key / 模型 / 拉取·测试 / 完成。</li>
+          <li>状态点语义与设置页一致（绿 / 灰）。</li>
+          <li>展开块高度自适应，不撑破 320px 抽屉宽度。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== S5 暗色示例 ===================== -->
+  <div class="gtitle" id="s5">S5 · 暗色示例</div>
+  <div class="gsub">与 v1.1 同一套 token 的暖暗色（暖黑而非纯灰，强调色去饱和为暖蓝）。同一设置对话框在 <code>data-theme="dark"</code> 下的呈现。</div>
+
+  <div class="darkwrap" data-theme="dark">
+    <div class="modal settings" style="margin:0 auto">
+      <div class="set-title">
+        <span class="st serif">设置</span>
+        <span class="sp"></span>
+        <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+        <button class="sbtn" title="关闭">✕</button>
+      </div>
+      <div class="set-body">
+        <div class="set-nav">
+          <div class="grp">设置分类</div>
+          <div class="item">常规</div>
+          <div class="item">外观</div>
+          <div class="item on">翻译</div>
+          <div class="item sub on">模型供应商</div>
+          <div class="item sub">术语表</div>
+          <div class="item sub">输出</div>
+          <div class="item">高级</div>
+        </div>
+
+        <div class="set-pane">
+          <div class="set-head">
+            <h3>模型供应商</h3>
+            <span class="d">云端内置列表 · 本地 OpenAI 兼容 · 自定义任意端点</span>
+          </div>
+
+          <div class="master">
+            <div class="prov-list">
+              <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+              <div class="prov-grp">云端</div>
+              <div class="prov-item on"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+              <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+              <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+              <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+              <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+              <div class="prov-grp">本地</div>
+              <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+              <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+              <div class="prov-grp">自定义</div>
+              <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+              <div class="prov-add">＋ 自定义供应商</div>
+            </div>
+
+            <div class="prov-detail">
+              <div class="dh-title">
+                <span class="logo">◎</span>
+                <span class="nm">OpenAI</span>
+                <span class="badge cloud">云端</span>
+              </div>
+              <div class="dh-sub">官方 OpenAI API · provider id <b>openai</b>。整篇翻译会把待译文本分批发送至该服务商。</div>
+
+              <div class="field">
+                <label>API Key</label>
+                <div class="inpline">
+                  <div class="inp">••••••••••••</div>
+                  <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                  <button class="abtn">保存到凭据管理器</button>
+                </div>
+                <div class="hint">密钥仅存系统凭据管理器，仅经 <b>stdin</b> 传递，不写入配置 / 日志 / 命令行。</div>
+              </div>
+
+              <div class="field">
+                <label>模型</label>
+                <div class="inp sel">gpt-4o <span class="cv">▾</span></div>
+              </div>
+
+              <div class="field">
+                <label>端点（base URL）</label>
+                <div class="inp">https://api.openai.com/v1</div>
+                <div class="hint">内置默认，可覆盖为自建网关。</div>
+              </div>
+
+              <div class="field">
+                <label>连接</label>
+                <div class="testrow">
+                  <button class="abtn">测试连接</button>
+                  <span class="connstate ok">● 已连接 · 凭据有效</span>
+                </div>
+              </div>
+
+              <div class="field" style="margin-bottom:0">
+                <label>同意状态</label>
+                <div class="connstate idle">已记住（按 <b>服务商 + endpoint</b>）</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="set-foot">
+        <button class="btn">撤销同意</button>
+        <span class="sp"></span>
+        <span class="note">撤销后同组合下次使用将重新弹同意</span>
+        <button class="btn">取消</button>
+        <button class="btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li>暗色下 <code>--side</code> 为暖黑 <code>#23201A</code>，主从双栏的分区靠亮度差而非描边厚度区分。</li>
+    <li>状态点、tag、警示底全部走既有语义色（<code>--ok</code> / <code>--bdstrong</code> / <code>--warnbg</code> / <code>--warntext</code>），无暗色专用变量。</li>
+    <li>亮色与暗色来自同一组 token，切换不改变任何布局尺寸。</li>
+  </ul>
+
+  <div class="spec">
+    <h4>规格说明 · S5</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>主题切换即时生效，与阅读器全局主题共用同一设置项。</li>
+          <li>选中行、badge、状态点在暗色下仍走 accent / warn / neutral 语义色。</li>
+          <li>不使用纯黑 / 纯白硬编码：正文走 <code>--t1</code>，按钮前景走 <code>--onacc</code>。</li>
+          <li>输入掩码、提示文字在暗色下保持 ≥ 可读对比度，不靠加粗补偿。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>暗色值来自 A+C §1.2（<code>[data-theme="dark"]</code>），与 v1.1 逐字一致。</li>
+          <li>侧栏 <code>--side</code> = <code>#23201A</code>；输入底 <code>--field</code> = <code>#262219</code>。</li>
+          <li>「本地」badge：底 <code>--warnbg</code> / 字 <code>--warntext</code>，亮暗同一套语义。</li>
+          <li>未新增任何暗色专用 token。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== S7 编程套餐与协议 ===================== -->
+  <div class="gtitle" id="s7">S7 · 编程套餐与协议</div>
+  <div class="gsub">新增三类<strong>订阅 / 编程套餐</strong>供应商与一个协议维度：<code>apiProtocol</code>（<code>openai</code> | <code>anthropic</code>）为供应商级默认，可<strong>按模型覆盖</strong>（opencode go 属混合协议）。<strong>标准 API 端点为默认</strong>，编程套餐端点须显式选择，且合规警示常驻。</div>
+
+  <!-- ---------- S7-1 · GLM Coding Plan ---------- -->
+  <div class="stage">
+    <div class="app" style="height:920px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 季度运营报告.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="read">
+          <div class="pages"><div class="page"><div class="h2">季度运营报告</div><div class="p"><p>本报告覆盖 2026 年第三季度……</p></div></div></div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings" style="height:780px">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">订阅 / 编程套餐 · 协议可按模型覆盖</span>
+                </div>
+
+                <div class="master">
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">订阅 / 编程套餐</div>
+                    <div class="prov-item on"><span class="nm">GLM Coding Plan</span><span class="tag">套餐</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Kimi Code</span><span class="tag">套餐</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode go</span><span class="tag">订阅</span><span class="st ok"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">✦</span>
+                      <span class="nm">GLM Coding Plan</span>
+                      <span class="badge cloud">编程套餐</span>
+                    </div>
+                    <div class="dh-sub">智谱 GLM 编程套餐端点 · provider id <b>glm-coding-plan</b>。套餐 Key 与标准 API Key 的额度规则不同。</div>
+
+                    <div class="warnbanner">
+                      <span>⚠</span>
+                      <span>此端点属于订阅 / 编程套餐，仅限官方支持的工具使用。自建应用通过 API 调用可能不计入套餐额度（GLM 会返回 1113 Insufficient Balance）。如需在本应用使用，请改用标准 API 端点。</span>
+                      <button class="mini" style="margin-left:auto;flex:0 0 auto">改用标准 API</button>
+                    </div>
+
+                    <div class="field" style="margin-top:8px">
+                      <label>协议</label>
+                      <div class="seg"><span>OpenAI 兼容</span><span class="on">Anthropic 兼容</span></div>
+                      <div class="hint">套餐默认 Anthropic Messages；OpenAI 兼容端点为同域 <code>/api/coding/paas/v4</code>，海外走 <code>api.z.ai</code>。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="inp sel">glm-5.3 <span class="cv">▾</span></div>
+                      <div class="dropdown">
+                        <div class="opt on">glm-5.3 <span class="m">Anthropic</span></div>
+                        <div class="opt">glm-5.3-flash <span class="m">Anthropic</span></div>
+                      </div>
+                      <div class="hint">套餐仅含 <b>glm-5.3</b> / <b>glm-5.3-flash</b>。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>API Key（套餐专用）</label>
+                      <div class="inpline">
+                        <div class="inp">••••••••••••</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <label>端点（base URL）</label>
+                      <div class="inp">https://open.bigmodel.cn/api/anthropic</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">套餐端点须显式选择 · 默认标准 API</span>
+              <button class="btn">改用标准 API</button>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/12</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商 · 编程套餐</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- S7-2 · Kimi Code ---------- -->
+  <div class="stage">
+    <div class="app" style="height:920px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 员工手册.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="read">
+          <div class="pages"><div class="page"><div class="h2">员工手册</div><div class="p"><p>本手册适用于全体全职员工……</p></div></div></div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings" style="height:780px">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">订阅 / 编程套餐 · 协议可按模型覆盖</span>
+                </div>
+
+                <div class="master">
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">订阅 / 编程套餐</div>
+                    <div class="prov-item"><span class="nm">GLM Coding Plan</span><span class="tag">套餐</span><span class="st ok"></span></div>
+                    <div class="prov-item on"><span class="nm">Kimi Code</span><span class="tag">套餐</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode go</span><span class="tag">订阅</span><span class="st ok"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">☾</span>
+                      <span class="nm">Kimi Code</span>
+                      <span class="badge cloud">编程套餐</span>
+                    </div>
+                    <div class="dh-sub">月之暗面 Kimi Code 编程套餐端点 · provider id <b>kimi-code</b>。需 <code>sk-kimi-</code> 开头的套餐专用 Key。</div>
+
+                    <div class="warnbanner">
+                      <span>⚠</span>
+                      <span>此端点属于订阅 / 编程套餐，仅限官方支持的工具使用。自建应用通过 API 调用可能不计入套餐额度（GLM 会返回 1113 Insufficient Balance）。如需在本应用使用，请改用标准 API 端点。</span>
+                      <button class="mini" style="margin-left:auto;flex:0 0 auto">改用标准 API</button>
+                    </div>
+
+                    <div class="field" style="margin-top:8px">
+                      <label>协议</label>
+                      <div class="seg"><span>OpenAI 兼容</span><span class="on">Anthropic 兼容</span></div>
+                      <div class="hint">套餐默认 Anthropic Messages；同域另有 OpenAI 兼容端点 <code>/coding/v1</code>。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="inp sel">k3 <span class="cv">▾</span></div>
+                      <div class="dropdown">
+                        <div class="opt on">k3 <span class="m">Anthropic</span></div>
+                        <div class="opt">k3-256k <span class="m">Anthropic</span></div>
+                        <div class="opt">kimi-for-coding <span class="m">Anthropic</span></div>
+                        <div class="opt">kimi-for-coding-highspeed <span class="m">Anthropic</span></div>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <label>API Key（套餐专用）</label>
+                      <div class="inpline">
+                        <div class="inp">••••••••••••</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                      <div class="hint"><code>sk-kimi-</code> 专用 Key 仅在本端点有效；Moonshot 开放平台 Key 不同，不通用（标准平台端点 <code>api.moonshot.ai|cn/v1</code>）。</div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <label>端点（base URL）</label>
+                      <div class="inp">https://api.kimi.com/coding/</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">套餐端点须显式选择 · 默认标准 API</span>
+              <button class="btn">改用标准 API</button>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>3</b><i>/36</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商 · 编程套餐</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---------- S7-3 · opencode go（混合协议） ---------- -->
+  <div class="stage">
+    <div class="app" style="height:920px">
+      <div class="tabbar">
+        <div class="brand"><span class="mark serif">A</span>AIPDF</div>
+        <div class="tab active">📄 供应商合同-v2.pdf <span class="x">×</span></div>
+        <button class="newtab">＋</button>
+        <div class="search"><input type="text" placeholder="搜索全文… Ctrl+F"></div>
+        <button class="gear">⚙</button>
+      </div>
+      <div class="main" style="position:relative">
+        <div class="read">
+          <div class="pages"><div class="page"><div class="h2">供应商合同</div><div class="p"><p>本合同由以下双方订立……</p></div></div></div>
+        </div>
+        <div class="drawer">
+          <div class="dtabs"><span>划词</span><span class="on">整篇</span></div>
+          <div class="dbody"><div class="dsec"><div class="h">整篇翻译设置</div><div class="cfg"><div class="crow"><label>引擎</label><div class="seg"><span class="on">云端 LLM</span><span>本地</span></div></div></div></div></div>
+        </div>
+
+        <div class="overlay">
+          <div class="modal settings" style="height:780px">
+            <div class="set-title">
+              <span class="st serif">设置</span>
+              <span class="sp"></span>
+              <span class="note" style="font-size:11px;color:var(--t3)">Ctrl+,</span>
+              <button class="sbtn" title="关闭">✕</button>
+            </div>
+            <div class="set-body">
+              <div class="set-nav">
+                <div class="grp">设置分类</div>
+                <div class="item">常规</div>
+                <div class="item">外观</div>
+                <div class="item on">翻译</div>
+                <div class="item sub on">模型供应商</div>
+                <div class="item sub">术语表</div>
+                <div class="item sub">输出</div>
+                <div class="item">高级</div>
+              </div>
+
+              <div class="set-pane">
+                <div class="set-head">
+                  <h3>模型供应商</h3>
+                  <span class="d">订阅网关 · 混合协议（按模型）</span>
+                </div>
+
+                <div class="master">
+                  <div class="prov-list">
+                    <div class="prov-search"><div class="inp">搜索供应商…</div></div>
+
+                    <div class="prov-grp">云端</div>
+                    <div class="prov-item"><span class="nm">OpenAI</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Anthropic Claude</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Google Gemini</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">DeepSeek</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">阿里通义千问</span><span class="tag">已配置</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">智谱 GLM</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">月之暗面 Kimi</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Groq</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">MiniMax</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">Doubao 豆包</span><span class="st idle"></span></div>
+                    <div class="prov-item"><span class="nm">opencode Zen</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">订阅 / 编程套餐</div>
+                    <div class="prov-item"><span class="nm">GLM Coding Plan</span><span class="tag">套餐</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">Kimi Code</span><span class="tag">套餐</span><span class="st idle"></span></div>
+                    <div class="prov-item on"><span class="nm">opencode go</span><span class="tag">订阅</span><span class="st ok"></span></div>
+
+                    <div class="prov-grp">本地</div>
+                    <div class="prov-item"><span class="nm">Ollama（本地）</span><span class="tag loc">本地</span><span class="st ok"></span></div>
+                    <div class="prov-item"><span class="nm">LM Studio（本地）</span><span class="tag loc">本地</span><span class="st idle"></span></div>
+
+                    <div class="prov-grp">自定义</div>
+                    <div class="prov-item"><span class="nm">我的网关</span><span class="st ok"></span></div>
+
+                    <div class="prov-add">＋ 自定义供应商</div>
+                  </div>
+
+                  <div class="prov-detail">
+                    <div class="dh-title">
+                      <span class="logo">⬡</span>
+                      <span class="nm">opencode go</span>
+                      <span class="badge cloud">订阅网关</span>
+                    </div>
+                    <div class="dh-sub">opencode go 订阅网关 · provider id <b>opencode-go</b>，OpenAI 与 Anthropic 两种协议共用同一 base。</div>
+
+                    <div class="field" style="margin-top:8px">
+                      <div class="okbanner">
+                        <span>ⓘ</span>
+                        <span>订阅网关：额度随订阅账户计费，限速与可用模型由 opencode 侧控制，本应用不代管。</span>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <label>协议</label>
+                      <div class="seg"><span>OpenAI 兼容</span><span>Anthropic 兼容</span><span class="on">混合（按模型）</span></div>
+                      <div class="hint">该供应商不同模型使用不同协议，选择模型时自动切换。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>模型</label>
+                      <div class="inp sel">minimax-m3 <span class="cv">▾</span></div>
+                      <div class="dropdown">
+                        <div class="opt on">minimax-m3 <span class="m">Anthropic</span></div>
+                        <div class="opt">kimi-k3 <span class="m">OpenAI</span></div>
+                        <div class="opt">deepseek-v4-pro <span class="m">OpenAI</span></div>
+                        <div class="opt">qwen3.8-max <span class="m">Anthropic</span></div>
+                        <div class="opt">grok-4.6 <span class="m">OpenAI Responses</span></div>
+                      </div>
+                      <div class="hint">协议随所选模型切换。</div>
+                    </div>
+
+                    <div class="field">
+                      <label>API Key</label>
+                      <div class="inpline">
+                        <div class="inp">••••••••••••</div>
+                        <button class="eye" title="显示 / 隐藏密钥">👁</button>
+                        <button class="abtn">保存到凭据管理器</button>
+                      </div>
+                    </div>
+
+                    <div class="field" style="margin-bottom:0">
+                      <label>端点（base URL）</label>
+                      <div class="inp">https://opencode.ai/zen/go/v1</div>
+                      <div class="hint">OpenAI 兼容走 <code>/chat/completions</code>，Anthropic 走同 base 的 <code>/messages</code>。</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="set-foot">
+              <button class="btn">撤销同意</button>
+              <span class="sp"></span>
+              <span class="note">订阅网关：额度由 opencode 侧控制</span>
+              <button class="btn">取消</button>
+              <button class="btn primary">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="status">
+        <button class="sbtn">◀</button><span class="pageno"><b>1</b><i>/8</i></span><button class="sbtn">▶</button>
+        <span style="color:var(--t3)">100%</span>
+        <span class="tstatus">设置：<span class="live">翻译 · 模型供应商 · 订阅网关</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="spec">
+    <h4>规格说明 · S7</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>状态与行为</h5>
+        <ul>
+          <li>编程套餐端点<b>不默认选中</b>：内置预设默认走标准 API，套餐端点须在「协议 / 端点」处显式选择。</li>
+          <li>选中套餐端点后合规警示常驻详情页顶部，重开设置不消失、不可永久关闭。</li>
+          <li>协议按模型覆盖：<code>modelProtocols</code> 命中即覆盖 provider 级 <code>apiProtocol</code>（opencode go 混合协议）。</li>
+          <li>「改用标准 API」一键把端点切回该供应商标准 base（GLM → <code>open.bigmodel.cn/api/paas/v4</code>），并清除套餐端点的同意记录。</li>
+          <li>套餐端点配到非套餐 Key 时，错误分类提示「该 Key 不适用于订阅端点」，不误导为网络错误。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li><code>apiProtocol</code>：provider 级，取值 <code>openai</code> | <code>anthropic</code>；默认 <code>openai</code>（Anthropic / 编程套餐默认 <code>anthropic</code>）。</li>
+          <li><code>modelProtocols</code>：按模型覆盖表，命中即覆盖 <code>apiProtocol</code>。</li>
+          <li>coding 套餐 Key 与标准 Key 不通用：<code>sk-kimi-</code> 仅 Code 端点；GLM 套餐仅 <code>glm-5.3</code> / <code>glm-5.3-flash</code>。</li>
+          <li>端点：标准 API 为默认值，套餐端点为可选覆写值（GLM 海外 <code>api.z.ai/api/coding/paas/v4</code> / <code>api.z.ai/api/anthropic</code>）。</li>
+          <li>协议只决定请求路径（<code>/chat/completions</code> vs <code>/messages</code>），不改变 base URL。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <ul class="notes">
+    <li><b>① 合规警示常驻，不是一次性弹窗</b>：只要当前端点是订阅 / 编程套餐，详情页顶部即显示警示条；文案与「改用标准 API」按钮固定，用户无法永久关闭。</li>
+    <li><b>② 默认走标准 API</b>：内置预设的默认端点始终是标准 API；编程套餐端点必须由用户显式选择，避免误用导致不计额度（GLM 返回 <b>1113 Insufficient Balance</b>）。</li>
+    <li><b>③ 协议维度</b>：<code>apiProtocol</code> 为 provider 级默认，<code>modelProtocols</code> 可按模型覆盖；opencode go 同时含 OpenAI Chat Completions、Anthropic Messages、OpenAI Responses 三类模型，因此呈现为「混合（按模型）」。</li>
+    <li><b>④ Anthropic 协议适配落在 Python 引擎</b>：Anthropic Messages 与 OpenAI Chat Completions 的请求 / 响应结构不同，适配层将在 <code>backend/translate/llm.py</code> 实现；本设计稿只约定字段与默认值，不含实现。</li>
+    <li><b>⑤ 环境变量沿用既有约定</b>：<code>OPENCODE_API_KEY</code> 等仅作「在环境变量里找 Key」的命名约定；密钥仍只存系统凭据管理器，仅经 stdin 传递。</li>
+  </ul>
+
+  <!-- ===================== S6 Token 色卡 ===================== -->
+  <div class="gtitle" id="s6">S6 · Token 色卡（复用确认）</div>
+  <div class="gsub">本节确认 v1.2 <strong>没有新增任何主题 token</strong>：供应商配置所需的颜色全部来自 v1.1 既有变量。色块随右上角主题切换实时更新。</div>
+
+  <div class="sw-legend">全部复用 v1.1，无新增主题 token。左侧色块为变量当前值。</div>
+  <div class="swgrid">
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--acc)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--acc · Brush.Accent</div><div class="v">强调 · 选中行 / 主按钮</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--accsoft)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--accsoft · Brush.AccentSoft</div><div class="v">强调浅底 · 选中项底色</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--surf)"></i><i style="background:var(--win)"></i><i style="background:var(--side)"></i></div>
+      <div class="swm"><div class="k">--surf · Brush.Surface</div><div class="v">表面 · 对话框标题 / 展开块</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--field)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--field · Brush.FieldBackground</div><div class="v">输入底 · 字段 / 下拉</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--side)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--side · Brush.Sidebar</div><div class="v">侧栏 · 设置左栏 / 供应商列表</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--bd)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--bd · Brush.Border</div><div class="v">边框 · 分栏 / 字段描边</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--ok)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--ok · Brush.Success</div><div class="v">成功 · 已连接 / 状态点</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--danger)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--danger · Brush.Danger</div><div class="v">危险 · 密钥无效 / 测试失败</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--warnbg)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--warnbg · Brush.ConverterWarnBackground</div><div class="v">警示底 · 「本地」badge / tag</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--neutralsoft)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--neutralsoft · Brush.NeutralSoft</div><div class="v">中性浅底 · 列表 tag</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+    <div class="swcard">
+      <div class="swh"><i style="background:var(--t1)"></i><i style="background:var(--win)"></i><i style="background:var(--surf)"></i></div>
+      <div class="swm"><div class="k">--t1 · Brush.TextPrimary</div><div class="v">主文字 · 供应商名 / 字段值</div><div style="margin-top:3px;font-size:10.5px"><span class="tag-reuse">复用·既有</span></div></div>
+    </div>
+  </div>
+
+  <div class="spec" style="margin-top:18px">
+    <h4>规格说明 · S6</h4>
+    <div class="cols">
+      <div class="col">
+        <h5>复用确认</h5>
+        <ul>
+          <li>v1.2 新增的 CSS 仅<strong>布局</strong>类（宽度、栅格、圆角、内边距），颜色一律引用 §1 变量。</li>
+          <li>未引入任何新的颜色语义；「本地」复用警示底 + 警示文字。</li>
+          <li>色值随 <code>data-theme</code> 变化，与 WPF <code>DynamicResource</code> 一一对应。</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h5>字段与默认值</h5>
+        <ul>
+          <li>尺寸沿用 v1.1：13px 正文、11–12px 辅助、8–10px 圆角、44px 顶栏、32px 状态栏。</li>
+          <li>对话框固定 880 × 560；供应商列表列 236px；设置分类列 170px。</li>
+          <li>新增主题 token 数：<b>0</b>。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 附录 ===================== -->
+  <div class="gtitle" id="appendix">附录 · 内置供应商预设表</div>
+  <div class="gsub">内置列表只是便利预设，不是白名单；base URL 均为示意，实施前须逐家核对官方文档。</div>
+  <div class="boundary">
+    <table>
+      <tr><th>供应商</th><th>provider id</th><th>base URL（OpenAI 兼容 / Anthropic）</th><th>环境变量</th><th>默认模型（示例）</th><th>备注</th></tr>
+      <tr><td><b>OpenAI</b></td><td>openai</td><td>https://api.openai.com/v1</td><td>OPENAI_API_KEY</td><td>gpt-4o</td><td>标准 API</td></tr>
+      <tr><td><b>Anthropic Claude</b></td><td>anthropic</td><td>https://api.anthropic.com/v1</td><td>ANTHROPIC_API_KEY</td><td>claude-3-5-sonnet-latest</td><td>标准 API</td></tr>
+      <tr><td><b>Google Gemini</b></td><td>google</td><td>https://generativelanguage.googleapis.com/v1beta</td><td>GEMINI_API_KEY</td><td>gemini-1.5-pro</td><td>标准 API</td></tr>
+      <tr><td><b>DeepSeek</b></td><td>deepseek</td><td>https://api.deepseek.com/v1</td><td>DEEPSEEK_API_KEY</td><td>deepseek-chat</td><td>标准 API</td></tr>
+      <tr><td><b>阿里通义千问</b></td><td>qwen</td><td>https://dashscope.aliyuncs.com/compatible-mode/v1</td><td>DASHSCOPE_API_KEY</td><td>qwen-max</td><td>标准 API</td></tr>
+      <tr><td><b>智谱 GLM</b></td><td>zhipu</td><td>https://open.bigmodel.cn/api/paas/v4</td><td>ZHIPUAI_API_KEY</td><td>glm-4-plus</td><td>标准 API</td></tr>
+      <tr><td><b>月之暗面 Kimi</b></td><td>moonshot</td><td>https://api.moonshot.cn/v1</td><td>MOONSHOT_API_KEY</td><td>moonshot-v1-8k</td><td>标准 API</td></tr>
+      <tr><td><b>Groq</b></td><td>groq</td><td>https://api.groq.com/openai/v1</td><td>GROQ_API_KEY</td><td>llama-3.3-70b-versatile</td><td>标准 API</td></tr>
+      <tr><td><b>MiniMax</b></td><td>minimax</td><td>https://api.minimax.chat/v1</td><td>MINIMAX_API_KEY</td><td>abab6.5s-chat</td><td>标准 API</td></tr>
+      <tr><td><b>Doubao 豆包</b></td><td>doubao</td><td>https://ark.cn-beijing.volces.com/api/v3</td><td>ARK_API_KEY</td><td>doubao-pro-32k</td><td>标准 API</td></tr>
+      <tr><td><b>opencode Zen</b></td><td>opencode</td><td>https://opencode.ai/zen/v1</td><td>OPENCODE_API_KEY</td><td>zen-default</td><td>标准 API</td></tr>
+      <tr><td><b>opencode go</b></td><td>opencode-go</td><td>OpenAI https://opencode.ai/zen/go/v1<br>Anthropic 同上 base（<code>/messages</code>）</td><td>OPENCODE_API_KEY</td><td>minimax-m3 / kimi-k3 / glm-5.3 / deepseek-v4-pro / qwen3.8-max / grok-4.6 …（<b>混合协议</b>）</td><td>订阅网关 · 混合协议，按模型区分 OpenAI / Anthropic / Responses</td></tr>
+      <tr><td><b>GLM Coding Plan</b></td><td>glm-coding-plan</td><td>OpenAI https://open.bigmodel.cn/api/coding/paas/v4<br>Anthropic https://open.bigmodel.cn/api/anthropic</td><td>套餐专用 Key</td><td>glm-5.3 / glm-5.3-flash</td><td><b>编程套餐 · 需合规警示</b></td></tr>
+      <tr><td><b>Kimi Code</b></td><td>kimi-code</td><td>OpenAI https://api.kimi.com/coding/v1<br>Anthropic https://api.kimi.com/coding/</td><td><code>sk-kimi-</code> 专用 Key</td><td>k3 / k3-256k / kimi-for-coding / kimi-for-coding-highspeed</td><td><b>编程套餐 · 需合规警示</b></td></tr>
+    </table>
+  </div>
+  <ul class="notes">
+    <li><b>base URL 均为示意</b>：各家路径（<code>/v1</code>、<code>/v1beta</code>、<code>/compatible-mode/v1</code>、<code>/api/v3</code>）会随版本调整，实施前必须逐家核对官方文档并写进测试。</li>
+    <li><b>环境变量名</b>仅用于「在环境变量里找 Key」这一便利路径的命名约定，不表示应用会去读进程环境变量中的密钥（密钥仍走系统凭据管理器 + stdin）。</li>
+    <li>非 OpenAI 原生协议的供应商（如 Anthropic、Gemini）需要一个兼容适配层；Anthropic Messages 适配已确定在 Python 引擎 <code>backend/translate/llm.py</code> 内实现（见 S7），Gemini 等其余适配仍待确认。</li>
+    <li>默认模型仅为示例，实际以「拉取模型」结果为准；opencode Zen 等无公开模型清单者用手填。</li>
+    <li><b>编程套餐 / 订阅端点是订阅制端点，带工具限制</b>：<code>open.bigmodel.cn/api/coding/paas/v4</code>、<code>api.kimi.com/coding/</code>、<code>opencode.ai/zen/go/v1</code> 属官方订阅 / 编程套餐，仅限官方支持的工具使用；自建应用调用可能不计入套餐额度（GLM 返回 1113 Insufficient Balance）。默认使用标准 API 端点，套餐端点须显式选择并常驻合规警示。GLM 海外为 <code>api.z.ai/api/coding/paas/v4</code> / <code>api.z.ai/api/anthropic</code>；标准 Kimi 平台为 <code>api.moonshot.ai|cn/v1</code> / <code>.../anthropic</code>。</li>
+  </ul>
+
+  <div class="foot-note">
+    本文件为纯设计产物，未改动 <code>Sources/</code>、<code>tests/</code>、<code>App.xaml</code>。零外部网络资源、不内嵌字体；衬线仅用于展示标题，走系统回退链。
+    token 层与 v1.1《翻译-设计稿.html》逐字一致，不新增主题 token；配套《翻译-全状态设计参考.html》查看非 happy path。
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  var btn=document.getElementById('themeToggle');
+  var lbl=document.getElementById('themeLabel');
+  var now=document.getElementById('themeNow');
+  function applyTheme(){
+    var dark=root.getAttribute('data-theme')==='dark';
+    lbl.textContent=dark?'切到亮色':'切到暖暗色';
+    now.textContent=dark?'暖暗色':'亮色';
+  }
+  btn.addEventListener('click',function(){
+    root.setAttribute('data-theme',root.getAttribute('data-theme')==='dark'?'light':'dark');
+    applyTheme();
+  });
+  applyTheme();
+
+  /* 供应商列表：让选中项在列表内可见（真实实现里选中即滚动到可见） */
+  Array.prototype.forEach.call(document.querySelectorAll('.prov-list'),function(list){
+    var sel=list.querySelector('.prov-item.on');
+    if(!sel||list.scrollHeight<=list.clientHeight){ return; }
+    var lr=list.getBoundingClientRect(), sr=sel.getBoundingClientRect();
+    if(sr.top<lr.top+34||sr.bottom>lr.bottom){ list.scrollTop=Math.round(list.scrollTop+sr.top-lr.top-34); }
+  });
+})();
+</script>
+</body>
+</html>
