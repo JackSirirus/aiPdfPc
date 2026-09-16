@@ -420,4 +420,85 @@ public sealed class TranslationConfigViewModelTests
         var vm = new TranslationConfigViewModel();
         Assert.IsAssignableFrom<INotifyPropertyChanged>(vm);
     }
+
+    // ---- v1.2 后续修复：初始选中供应商（本地未配置时不再固定落回不可用的「本地服务」）----
+
+    [Fact]
+    public void InitialSelection_UnconfiguredLocal_PrefersFirstUsableSavedProvider()
+    {
+        var cloud = new TranslationProviderConfig
+        {
+            Provider = "deepseek",
+            Endpoint = "https://api.deepseek.com/v1",
+            Model = "deepseek-chat",
+            PresetId = "deepseek",
+        };
+
+        var vm = new TranslationConfigViewModel([cloud]);
+
+        Assert.Equal("deepseek", vm.SelectedProvider); // v1.1 只配云端：升级后默认即用
+        Assert.Equal("deepseek-chat", vm.SelectedModel);
+        Assert.False(vm.IsLocalProvider);
+        Assert.True(vm.IsCloudProvider);
+    }
+
+    [Fact]
+    public void InitialSelection_SavedCustomProvider_IsPreferredWhenLocalMissing()
+    {
+        var custom = new TranslationProviderConfig
+        {
+            Provider = "Corp 网关",
+            Endpoint = "https://gw.corp/llm/v1",
+            Model = "my-model",
+        };
+
+        var vm = new TranslationConfigViewModel([custom]);
+
+        Assert.Equal("corp 网关", vm.SelectedProvider); // 与 T8 凭据寻址同一身份键
+        Assert.Equal("my-model", vm.SelectedModel);
+    }
+
+    [Fact]
+    public void InitialSelection_ConfiguredLocal_StaysLocal()
+    {
+        var cloud = new TranslationProviderConfig
+        {
+            Provider = "deepseek",
+            Endpoint = "https://api.deepseek.com/v1",
+            Model = "deepseek-chat",
+            PresetId = "deepseek",
+        };
+        var local = new TranslationProviderConfig
+        {
+            Provider = "local",
+            Endpoint = "http://127.0.0.1:11434/v1",
+            Model = "qwen3",
+            PresetId = "local",
+        };
+
+        var vm = new TranslationConfigViewModel([cloud, local]);
+
+        Assert.Equal(TranslationConfigViewModel.DefaultProviderId, vm.SelectedProvider); // 决策 #15 不变
+        Assert.True(vm.IsLocalProvider);
+        Assert.Equal("qwen3", vm.SelectedModel);
+    }
+
+    [Fact]
+    public void InitialSelection_UnusableSavedEntries_FallBackToLocal()
+    {
+        var noEndpoint = new TranslationProviderConfig
+        {
+            Provider = "deepseek",
+            Endpoint = "",
+            Model = "deepseek-chat",
+            PresetId = "deepseek",
+        };
+
+        var vm = new TranslationConfigViewModel([noEndpoint]);
+
+        Assert.Equal(TranslationConfigViewModel.DefaultProviderId, vm.SelectedProvider); // 无可用项 → 本地
+        Assert.True(vm.IsLocalProvider);
+
+        Assert.Equal(TranslationConfigViewModel.DefaultProviderId, new TranslationConfigViewModel([]).SelectedProvider);
+    }
 }

@@ -92,7 +92,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // v1.1 T15：整篇翻译面板接线（配置复用 T13 共享面板；受限确认走模态；产物开新标签）。
         _fullTranslation = new FullTranslationViewModel(
             new EngineFullTranslationService((DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge()),
-            TranslationConfigProvider);
+            TranslationConfigProvider,
+            // v1.2 后续修复：把已保存供应商注入共享配置 VM，使默认选中项在本地未配置时落到首个可用供应商，
+            // 而不是固定的「本地服务」（旧云端用户升级后划词因此报「缺少端点地址」）。
+            new TranslationConfigViewModel(_settingsStore.Load().TranslationProviders));
         _fullTranslation.ConfirmRestrictedDocumentAsync = () => Task.FromResult(RestrictedDocumentDialog.Show(this));
         // 高风险模板（法律 / 医学）确认门禁：默认未勾选，必须显式确认才可开始（F2b）。
         _fullTranslation.ConfirmHighRiskTemplateAsync = label => Task.FromResult(HighRiskTemplateDialog.Show(this, label));

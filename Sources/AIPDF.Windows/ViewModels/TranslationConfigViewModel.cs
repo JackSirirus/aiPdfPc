@@ -139,7 +139,13 @@ public sealed partial class TranslationConfigViewModel : ObservableObject
         _targetLanguage = TargetLanguages[0];
         _selectedTemplate = Templates[0];
 
-        AvailableProviders = BuildProviderOptions(savedProviders);
+        var saved = savedProviders?.Where(config => config is not null).ToList();
+        AvailableProviders = BuildProviderOptions(saved);
+
+        // v1.2 后续修复：本地未配置（或不可用）时不再固定选中「本地」，改选设置顺序中的首个可用供应商，
+        // 避免 v1.1 只配过云端的用户升级后每次启动都落回不可用的本地项（划词报「缺少端点地址」）。
+        _selectedProvider = ResolveInitialProvider(saved);
+
         RefreshProviderState();
 
         // v1.2 T15：面板内联快捷入口（折叠 / 展开）只读跟随本 VM 的当前选择；纯逻辑，无 IO。
@@ -519,6 +525,48 @@ public sealed partial class TranslationConfigViewModel : ObservableObject
         var saved = SelectedSavedProvider?.ApiProtocol?.Trim();
         if (!string.IsNullOrEmpty(saved)) return saved;
         return SelectedPreset?.DefaultProtocol;
+    }
+
+    /// <summary>
+    /// 初始选中供应商：默认本地服务（决策 #15）；仅当设置里没有可用的本地项时，改选设置顺序中的首个可用供应商。
+    /// 目的：v1.1 只配置过云端的用户升级后默认选中项依然可用（此前固定 <c>local</c> 导致划词必然报「缺少端点地址」）。
+    /// 判定只看配置本身（provider + 端点，<see cref="TranslationProviderConfig.IsUsable"/>），不读凭据、不做 IO；
+    /// 找不到可用项时回退本地服务（与既有行为一致）。
+    /// </summary>
+    private static string ResolveInitialProvider(IReadOnlyList<TranslationProviderConfig>? savedProviders)
+    {
+        if (savedProviders is null or { Count: 0 })
+        {
+            return DefaultProviderId;
+        }
+
+        var localUsable = false;
+        string? firstUsableCloud = null;
+
+        foreach (var config in savedProviders)
+        {
+            if (!config.IsUsable)
+            {
+                continue;
+            }
+
+            var key = TranslationProviderIdentity.For(config);
+            if (key.Length == 0)
+            {
+                continue;
+            }
+
+            if (TranslationProviderConfig.IsLocalPresetId(key)
+                || TranslationProviderConfig.IsLocalService(config.PresetId, config.Provider))
+            {
+                localUsable = true;
+                continue;
+            }
+
+            firstUsableCloud ??= key;
+        }
+
+        return localUsable ? DefaultProviderId : firstUsableCloud ?? DefaultProviderId;
     }
 
     /// <summary>
