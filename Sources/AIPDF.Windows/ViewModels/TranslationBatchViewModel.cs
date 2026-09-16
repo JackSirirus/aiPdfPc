@@ -458,7 +458,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             $"正在批量翻译 {Files.Count} 份文件…",
             () => $"完成：{SummaryText}。结果在下方按需打开。",
             "已取消：批量翻译已停止，未采用半成品。",
-            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
+            watchConsent: resolution.IsCloud); // v1.2 T7：本地 / 云端由解析结果派生（稳定 id local）
     }
 
     /// <summary>取消批量翻译：取消令牌 → EngineBridge 终止当前子进程树，不采用半成品。</summary>
@@ -556,7 +556,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             $"正在重试 {item.Name}…",
             () => item.IsDone ? $"重试成功：{item.Name}。" : $"重试失败：{item.ResultText}",
             "已取消：重试已停止。",
-            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
+            watchConsent: resolution.IsCloud); // v1.2 T7：本地 / 云端由解析结果派生（稳定 id local）
     }
 
     private bool CanRetryFile(BatchTranslationFileItem? item) => !IsRunning && item is { CanRetry: true };
@@ -604,7 +604,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             $"正在重试 {failures.Count} 个失败项…",
             () => $"重试完成：{SummaryText}。",
             "已取消：重试已停止。",
-            watchConsent: !TranslationProviderConfig.IsLocalProvider(runtime.Provider));
+            watchConsent: resolution.IsCloud); // v1.2 T7：本地 / 云端由解析结果派生（稳定 id local）
     }
 
     private bool CanRetryAll => !IsRunning && HasFailedItems;
@@ -950,6 +950,7 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             runtime.Endpoint,
             runtime.Model,
             runtime.ApiKey,
+            runtime.ApiProtocol,
             Config.SourceLanguage?.Code ?? TranslationConfigViewModel.AutoDetectCode,
             Config.TargetLanguage?.Code ?? TranslationConfigViewModel.DefaultTargetCode,
             FullTranslationViewModel.ToEngineTemplate(Config.SelectedTemplate?.Id),
@@ -1004,6 +1005,9 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
     {
         StartCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+
+        // v1.2 T15 / P31：任务运行中禁用面板内联供应商切换，防止「一半用 A、一半用 B」。
+        Config.Inline.IsRunning = value;
     }
 
     private void OnBridgeProgress(object? sender, EngineProgressEventArgs e)

@@ -49,7 +49,7 @@ public sealed class TranslationBatchViewModelTests
 
         public TranslationRuntimeConfig? Get() => Resolve().Config;
 
-        public TranslationRuntimeConfigResolution Resolve() => _resolution();
+        public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null) => _resolution();
 
         private static TranslationRuntimeConfigResolution ResolutionOf(TranslationRuntimeConfig? config)
             => config is null
@@ -139,6 +139,8 @@ public sealed class TranslationBatchViewModelTests
             Assert.Equal("both", (string)r.Options["format"]!);
             Assert.Equal("zh", (string)r.Options["targetLang"]!);
             Assert.Equal("sk-test", (string)r.Options["apiKey"]!);
+            // v1.2 T6：协议随运行时配置贯通（默认 openai，T4 契约）。
+            Assert.Equal("openai", (string)r.Options["apiProtocol"]!);
         });
         Assert.All(vm.Files, f => Assert.True(f.IsDone));
         Assert.Equal(3, vm.SuccessCount);

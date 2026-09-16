@@ -253,6 +253,9 @@ public sealed partial class FullTranslationViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ShowBackgroundNotice))]
     private bool _isRunning;
 
+    /// <summary>任务运行中禁止面板内联供应商切换（T15 / P31），避免「一半用 A、一半用 B」。</summary>
+    partial void OnIsRunningChanged(bool value) => Config.Inline.IsRunning = value;
+
     /// <summary>是否已切到「后台继续」（任务仍在跑，仅视图收起）。</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(BackgroundContinueCommand))]
@@ -474,7 +477,8 @@ public sealed partial class FullTranslationViewModel : ObservableObject
         _cts = linked;
 
         // F21：云端任务运行期监视同意代次；撤销同意即取消，停止继续向已撤回同意的服务商发送请求。
-        if (!TranslationProviderConfig.IsLocalProvider(runtime.Provider))
+        // v1.2 T7：本地 / 云端由解析结果派生（稳定 id local），不再依赖 runtime.Provider 显示名。
+        if (resolution.IsCloud)
         {
             var generation = _configProvider.ConsentGeneration;
             _consentWatch = ConsentRevocationWatcher.Start(
@@ -602,6 +606,8 @@ public sealed partial class FullTranslationViewModel : ObservableObject
             Endpoint: runtime.Endpoint,
             Model: runtime.Model,
             ApiKey: runtime.ApiKey,
+            // 协议随运行时配置贯通到引擎 options（T4 契约，缺省 openai）。
+            ApiProtocol: runtime.ApiProtocol,
             GlossaryPath: string.IsNullOrWhiteSpace(Config.GlossaryPath) ? null : Config.GlossaryPath.Trim(),
             MaxTokens: Config.CostLimitEnabled ? (int)Math.Clamp(Config.CostLimitTokens, 1, int.MaxValue) : null,
             GenerateMono: Config.GenerateMono,
