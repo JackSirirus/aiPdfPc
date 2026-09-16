@@ -105,6 +105,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         _fullTranslation.RelocateArtifactHandler = RelocateArtifactFile;
         TranslationFullPanel.DataContext = _fullTranslation;
 
+        // v1.2 T10：划词只读跟随共享配置 VM 的当前供应商（显示名 + 协议徽章），不提供独立选择入口。
+        // 共享选择变化（SelectedProvider / 模型 / 协议）→ 只读投影刷新 → 划词卡片标签同步。
+        _selectionProviderReadout = new TranslationProviderReadout(SnapshotSelectionProvider, _fullTranslation.Config);
+        _selectionTranslation.FollowProvider(_selectionProviderReadout);
+
         // V3 T4：非 PDF 向导结果 Toast 点击 → 打开输出文件夹【ST-29】。
         QueueToast.MouseLeftButtonDown += OnWizardToastClick;
 
@@ -652,6 +657,13 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private readonly SelectionTranslationPanelViewModel _selectionTranslation = new();
 
     /// <summary>
+    /// v1.2 T10：划词只读跟随的供应商展示（显示名 + 协议徽章）。快照来自运行时解析；
+    /// T15 接入面板内联选择后，只需把 <see cref="SnapshotSelectionProvider"/> 的数据源指向
+    /// 共享 <c>TranslationConfigViewModel</c> 的选中供应商（本字段接线不变）。
+    /// </summary>
+    private readonly TranslationProviderReadout _selectionProviderReadout;
+
+    /// <summary>
     /// 翻译运行时配置来源（生产实现：读设置 + 系统凭据管理器 + 同意记录；懒建并与 <see cref="TranslationConsent"/>
     /// 共享同一同意服务实例，使「宿主授予同意」与「提供者校验同意」看到同一份会话态）。
     /// </summary>
@@ -943,13 +955,33 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         EnsureTranslationSidebarVisible();
         ShowTranslationTab("selection");
 
-        var resolution = TranslationConfigProvider.Resolve();
-        var engineLabel = resolution.Config is { } resolved
-            ? (IsCloudProvider(resolved.Provider) ? "云端" : "本地")
-            : "未配置";
-        var card = _selectionTranslation.AddCard(e.Text, "auto", "zh", "generic", engineLabel, e.PageIndex, e.Rect);
+        // v1.2 T10：划词只读显示当前生效供应商（不再显示「本地 / 云端」引擎口径）；
+        // 建卡入口不接收供应商参数，划词没有独立选择入口。
+        _selectionProviderReadout.Refresh();
+        var card = _selectionTranslation.AddCardForCurrentProvider(
+            e.Text, "auto", "zh", "generic", e.PageIndex, e.Rect);
         _ = RunSelectionTranslationAsync(card);
         SetStatus($"正在翻译选中文字（{e.Text.Length} 字）");
+    }
+
+    /// <summary>
+    /// v1.2 T10：当前供应商只读快照——优先取共享配置 VM（面板 / 设置页双向同步）的选中供应商，
+    /// 选择尚未就绪时回退运行时解析（T7 供应商驱动）；划词据此只读展示，且目的地与展示同源。
+    /// </summary>
+    private TranslationProviderSnapshot SnapshotSelectionProvider()
+    {
+        var config = _fullTranslation.Config;
+        var selectedId = config.SelectedProvider?.Trim() ?? "";
+        if (selectedId.Length > 0)
+        {
+            return new TranslationProviderSnapshot(
+                selectedId, config.ProviderDisplayName, config.SelectedModel, config.Protocol);
+        }
+
+        var resolution = TranslationConfigProvider.Resolve();
+        return resolution.Config is { } resolved
+            ? new TranslationProviderSnapshot(resolution.ProviderId, resolved.Provider, resolved.Model, resolved.ApiProtocol)
+            : new TranslationProviderSnapshot("", "", "", "");
     }
 
     /// <summary>F1b：无文本层页拖选 → 划词不可用，显式给出替代路径（不做「框选没反应」）。</summary>
@@ -990,7 +1022,18 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     /// <summary>解析运行时配置，并在云端未同意时弹 F5 征求同意（同意后重新解析）。</summary>
     private Task<TranslationRuntimeConfigResolution> EnsureTranslationRuntimeAsync()
-        => TranslationRuntimeConsentFlow.EnsureAsync(TranslationConfigProvider, ConfirmCloudConsentAsync);
+        => TranslationRuntimeConsentFlow.EnsureAsync(
+            TranslationConfigProvider, ConfirmCloudConsentAsync, SelectedTranslationProviderId());
+
+    /// <summary>
+    /// v1.2 T10：划词目的地跟随共享面板的选中供应商（稳定 id）；
+    /// 未选择 → null，保留 T7 对旧数据 / 未接线宿主的既有回退。
+    /// </summary>
+    private string? SelectedTranslationProviderId()
+    {
+        var selectedId = _fullTranslation.Config.SelectedProvider?.Trim();
+        return string.IsNullOrEmpty(selectedId) ? null : selectedId;
+    }
 
     /// <summary>
     /// F5 同意委托（划词 + 整篇共用）：弹模态 → 用户同意则从凭据管理器读密钥并按指纹授予同意
@@ -1002,8 +1045,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         var decision = CloudConsentDialog.Show(this, request);
         if (decision.Choice == CloudConsentChoice.UseLocal)
         {
-            _fullTranslation.Config.Engine = TranslationEngineKind.Local;
-            SetStatus("已改用本地引擎；若尚未配置本地运行时，请在「设置 → 翻译」中配置。");
+            // v1.2 T7：目的地由「选中的供应商」驱动（Resolve(selectedProviderId)），旧的 Engine 单选不再影响翻译，
+            // 故不再写只读的 Engine 字段；引导用户在设置中选择本地服务（T11 主从双栏）。
+            SetStatus("已选择改用本地服务；请在「设置 → 翻译」中将「本地服务」设为当前供应商后重试。");
             return Task.FromResult(false);
         }
 
@@ -1014,14 +1058,18 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         try
         {
-            var key = _translationCredentials.Get(request.Provider, request.Endpoint);
+            // T8：凭据读取 / 授予同意一律以稳定身份键寻址（ProviderId 缺省回退显示名，服务层再收敛一次）。
+            var identity = string.IsNullOrWhiteSpace(request.ProviderId)
+                ? TranslationProviderIdentity.Canonical(request.Provider)
+                : request.ProviderId;
+            var key = _translationCredentials.Get(identity, request.Endpoint);
             if (string.IsNullOrEmpty(key))
             {
                 SetStatus("未找到该服务商的密钥，请在「设置 → 翻译」中填写 API Key 后重试。");
                 return Task.FromResult(false);
             }
 
-            TranslationConsent.GrantConsent(request.Provider, request.Endpoint, key, remember: decision.Remember);
+            TranslationConsent.GrantConsent(identity, request.Endpoint, key, remember: decision.Remember);
             return Task.FromResult(true);
         }
         catch (Exception ex) when (ex is CredentialStoreUnavailableException or ArgumentException)
@@ -1137,11 +1185,6 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             PageEnd = page,
         });
     }
-
-    private static bool IsCloudProvider(string provider)
-        => !string.IsNullOrWhiteSpace(provider)
-           && !provider.Contains("local", StringComparison.OrdinalIgnoreCase)
-           && !provider.Contains("本地", StringComparison.Ordinal);
 
     // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
 

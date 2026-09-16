@@ -88,6 +88,11 @@ public partial class App : Application
             }
         }
 
+        // T8：本实例将创建主窗口 —— 先把 v1.1 按显示名寻址的翻译凭据 / 同意迁移到稳定身份键
+        // （幂等；凭据管理器不可用时跳过，不阻塞启动 —— 后续读取会给出「凭据不可用」的既有提示）。
+        // 放在第二实例转发出局之后：第二实例不做无谓迁移，也避免重复实例并发改写。
+        MigrateTranslationIdentity();
+
         _mainWindow = new MainWindow();
         MainWindow = _mainWindow;
         _mainWindow.Show();
@@ -100,6 +105,24 @@ public partial class App : Application
         }
 
         DrainPendingPaths();
+    }
+
+    /// <summary>
+    /// T8 一次性身份迁移：凭据 target / 同意记录 → 稳定供应商 id。失败（凭据管理器不可用 / 设置不可写）
+    /// 只记 Trace 不抛出：迁移是尽力而为，跳过不影响其余功能，也不会丢失任何密钥（旧 target 原样保留）。
+    /// </summary>
+    private static void MigrateTranslationIdentity()
+    {
+        try
+        {
+            var settings = new SettingsStore();
+            var credentials = new TranslationCredentialStore();
+            new TranslationIdentityMigrator(settings, credentials).Migrate();
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"[App] 翻译身份迁移跳过: {ex.Message}");
+        }
     }
 
     /// <summary>
