@@ -459,6 +459,192 @@ public sealed class SettingsStoreTests
             AppSettings.TranslationTemplateIds);
     }
 
+    // ---------------------------------------------------------------- v1.2 预设迁移（T2）
+
+    /// <summary>
+    /// v1.1 形状（schemaVersion=2，无 presetId / apiProtocol / modelProtocols 嵌套字段）的合成 fixture：
+    /// 2 个 provider —— 一个命中预设（deepseek），一个自定义网关（endpoint 带 /llm/v1 路径）；另含 1 条同意记录。
+    /// </summary>
+    private const string LegacyV11SettingsJson = """
+    {
+      "schemaVersion": 2,
+      "translationDefaultSourceLanguage": "en",
+      "translationProviders": [
+        { "provider": "deepseek", "endpoint": "https://api.deepseek.com/v1", "model": "deepseek-chat" },
+        { "provider": "corp-gateway", "endpoint": "https://gw.corp.example.com/llm/v1", "model": "my-model" }
+      ],
+      "translationConsents": [
+        {
+          "provider": "deepseek",
+          "endpoint": "https://api.deepseek.com",
+          "keyFingerprint": "0123456789abcdef",
+          "grantedAt": "2026-01-01T00:00:00+08:00",
+          "ttlDays": 180
+        }
+      ]
+    }
+    """;
+
+    [Fact]
+    public void Load_LegacyV11Providers_BackfillsPresetId_WithoutTouchingEndpoints()
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw(LegacyV11SettingsJson);
+
+        var loaded = fx.NewStore().Load();
+
+        Assert.Equal(AppSettings.CurrentSchema, loaded.Schema); // 2：嵌套新增，不 bump
+
+        Assert.Equal(2, loaded.TranslationProviders.Count); // provider 数量不变（零丢失）
+
+        var preset = loaded.TranslationProviders[0];
+        Assert.Equal("deepseek", preset.Provider);
+        Assert.Equal("https://api.deepseek.com/v1", preset.Endpoint); // 端点逐字不变
+        Assert.Equal("deepseek-chat", preset.Model);
+        Assert.Equal("deepseek", preset.PresetId);                    // 命中预设 → 回填稳定 id
+        Assert.Equal("openai", preset.ApiProtocol);                   // 旧数据缺省 = openai（T4 引擎契约）
+        Assert.Null(preset.ModelProtocols);                           // 迁移不臆造按模型覆盖
+
+        var custom = loaded.TranslationProviders[1];
+        Assert.Equal("corp-gateway", custom.Provider);
+        Assert.Equal("https://gw.corp.example.com/llm/v1", custom.Endpoint); // 含路径：绝不塌陷为 origin
+        Assert.Equal("my-model", custom.Model);
+        Assert.Null(custom.PresetId);                                        // 未命中预设 → 自定义
+        Assert.Equal("openai", custom.ApiProtocol);
+
+        Assert.Equal("en", loaded.TranslationDefaultSourceLanguage);         // 顶层字段零丢失
+        var consent = Assert.Single(loaded.TranslationConsents);             // 同意记录零丢失
+        Assert.Equal("deepseek", consent.Provider);
+        Assert.Equal("https://api.deepseek.com", consent.Endpoint);
+        Assert.Equal("0123456789abcdef", consent.KeyFingerprint);
+    }
+
+    [Fact]
+    public void Load_LegacyV11Providers_MigrationIsIdempotent_AcrossSaveLoad()
+    {
+        using var fx = new Fixture();
+        fx.WriteRaw(LegacyV11SettingsJson);
+        var store = fx.NewStore();
+
+        store.Save(store.Load()); // 迁移结果再次落盘（等价于设置对话框保存路径）
+        var again = store.Load();
+
+        Assert.Equal(2, again.TranslationProviders.Count);
+        Assert.Equal("deepseek", again.TranslationProviders[0].PresetId);
+        Assert.Equal("https://api.deepseek.com/v1", again.TranslationProviders[0].Endpoint);
+        Assert.Equal("https://gw.corp.example.com/llm/v1", again.TranslationProviders[1].Endpoint);
+        Assert.Null(again.TranslationProviders[1].PresetId);
+        Assert.Single(again.TranslationConsents);
+        Assert.Equal(2, again.Schema);
+    }
+
+    [Theory]
+    [InlineData("deepseek", "https://api.deepseek.com/v1", "deepseek")]   // 旧名 = 稳定 id
+    [InlineData("OpenAI", "https://api.unknown.example/v1", "openai")]    // 旧名 = 显示名（大小写不敏感）
+    [InlineData("月之暗面 Kimi", "https://api.unknown.example/v1", "kimi")] // 旧名 = 中文显示名
+    [InlineData("moonshot", "https://api.moonshot.cn/v1", "kimi")]        // 别名名 → 端点兜底
+    [InlineData("my-gateway", "https://api.openai.com/v1", "openai")]     // 自定义名 → 预设端点兜底
+    [InlineData("local", "http://127.0.0.1:11434/v1", "local")]           // 本地稳定 id
+    [InlineData("本地服务", "http://localhost:1234/v1", "local")]          // 本地显示名
+    [InlineData("claude", "https://api.anthropic.com/v1", "anthropic")]   // Anthropic base + /v1 兜底
+    public void NormalizePresetId_BackfillsFromLegacyNameOrEndpoint(string name, string endpoint, string expected)
+        => Assert.Equal(expected, SettingsStore.NormalizePresetId(null, name, endpoint));
+
+    [Theory]
+    [InlineData("corp-gateway", "https://gw.corp.example.com/llm/v1")] // 自建网关带路径
+    [InlineData("my-gateway", "https://api.deepseek.com/v2")]          // 同主机但非预设 base
+    public void NormalizePresetId_UnmatchedLegacyEntries_StayCustom(string name, string endpoint)
+        => Assert.Null(SettingsStore.NormalizePresetId(null, name, endpoint));
+
+    [Fact]
+    public void NormalizePresetId_ExplicitIdWins_AndCanonicalizesKnownCase()
+    {
+        // 显式稳定 id 优先于名称 / 端点匹配（改名 / 换端点不迁移身份）。
+        Assert.Equal("deepseek", SettingsStore.NormalizePresetId(" DeepSeek ", "other-name", "https://gw.corp.example.com/v1"));
+        Assert.Equal("opencode-go", SettingsStore.NormalizePresetId("OPENCODE-GO", "x", "https://x"));
+        Assert.Equal("local", SettingsStore.NormalizePresetId(" Local ", "x", "https://x"));
+    }
+
+    [Fact]
+    public void NormalizePresetId_UnknownExplicitId_IsPreservedVerbatim()
+    {
+        // 未知 id（更新版本写入 / 手工编辑）不做身份改写，交消费方按自定义处理（不删既有设置字段）。
+        Assert.Equal("future-preset", SettingsStore.NormalizePresetId(" future-preset ", "x", "https://x"));
+    }
+
+    [Theory]
+    [InlineData(null, "openai")]
+    [InlineData("", "openai")]
+    [InlineData("  ", "openai")]
+    [InlineData(" OpenAI ", "openai")]
+    [InlineData("ANTHROPIC", "anthropic")]
+    [InlineData("responses", "openai")] // 未建模协议 → 引擎缺省 openai
+    public void NormalizeApiProtocol_CanonicalizesAndFallsBackToOpenAi(string? stored, string expected)
+        => Assert.Equal(expected, SettingsStore.NormalizeApiProtocol(stored));
+
+    [Fact]
+    public void NormalizeModelProtocols_KeepsOnlyValidEntries()
+    {
+        var cleaned = SettingsStore.NormalizeModelProtocols(new Dictionary<string, string>
+        {
+            ["minimax-m3"] = " Anthropic ",
+            ["kimi-k3"] = "openai",
+            ["broken"] = "responses", // 非法协议 → 丢弃
+            ["  "] = "openai",        // 空模型名 → 丢弃
+        });
+
+        Assert.NotNull(cleaned);
+        Assert.Equal(2, cleaned!.Count);
+        Assert.Equal("anthropic", cleaned["minimax-m3"]); // 值收敛为小写规范形式
+        Assert.Equal("openai", cleaned["kimi-k3"]);
+
+        Assert.Null(SettingsStore.NormalizeModelProtocols(null));
+        Assert.Null(SettingsStore.NormalizeModelProtocols(new Dictionary<string, string>()));
+        Assert.Null(SettingsStore.NormalizeModelProtocols(new Dictionary<string, string> { [""] = "openai" }));
+    }
+
+    [Fact]
+    public void SaveLoad_Roundtrip_PreservesV12ProviderFields_AndSchemaStaysAtTwo()
+    {
+        using var fx = new Fixture();
+        var store = fx.NewStore();
+
+        store.Save(new AppSettings
+        {
+            TranslationProviders =
+            [
+                new TranslationProviderConfig
+                {
+                    Provider = "opencode go",
+                    Endpoint = "https://opencode.ai/zen/go/v1",
+                    Model = "minimax-m3",
+                    PresetId = "opencode-go",
+                    ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+                    ModelProtocols = new Dictionary<string, string>
+                    {
+                        ["minimax-m3"] = TranslationProviderConfig.ProtocolAnthropic,
+                        ["kimi-k3"] = TranslationProviderConfig.ProtocolOpenAi,
+                    },
+                },
+            ],
+        });
+
+        var raw = File.ReadAllText(fx.SettingsPath);
+        Assert.Contains("\"schemaVersion\": 2", raw, StringComparison.Ordinal); // 不 bump（嵌套新增）
+        Assert.Contains("\"presetId\": \"opencode-go\"", raw, StringComparison.Ordinal);
+        Assert.Contains("\"apiProtocol\": \"anthropic\"", raw, StringComparison.Ordinal);
+        Assert.Contains("\"modelProtocols\"", raw, StringComparison.Ordinal);
+
+        var provider = Assert.Single(store.Load().TranslationProviders);
+        Assert.Equal("opencode-go", provider.PresetId);
+        Assert.Equal("anthropic", provider.ApiProtocol);
+        Assert.NotNull(provider.ModelProtocols);
+        Assert.Equal(2, provider.ModelProtocols!.Count);
+        Assert.Equal("anthropic", provider.ModelProtocols["minimax-m3"]);
+        Assert.Equal("openai", provider.ModelProtocols["kimi-k3"]);
+        Assert.Equal("https://opencode.ai/zen/go/v1", provider.Endpoint);
+    }
+
     // ---------------------------------------------------------------- 无密码红线
 
     [Fact]

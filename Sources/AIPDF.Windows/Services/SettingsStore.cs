@@ -7,6 +7,9 @@
 //   - 7 项设置（FR-38 三项 net-new + 裁决 Q6 四项）在 Load 与 Save 双向归一化 / 钳制；
 //   - v1.1 翻译：schema 升到 2，新增 translationConsents（只存 provider+endpoint+密钥指纹+时间+TTL，
 //     绝不存密钥 / 正文）；Load 接受旧 schema（1..Current），缺失列表即空 = 全部未同意（决策 #14/#15/#21）；
+//   - v1.2 供应商（T2）：translationProviders 新增嵌套字段 presetId / apiProtocol / modelProtocols，
+//     旧条目在归一化路径按名 / 端点回填稳定 presetId（未命中 = 自定义），endpoint 逐字保留；
+//     不改顶层 schema（仍为 2，新增均为嵌套字段）；
 //   - DefaultRenderDpi 仅覆盖渲染基准 DPI，不改「zoom ≥150% → HighDpi=150」阈值阶梯
 //     （PageLayoutCalculator.DpiForZoom 语义不变，注入方式见 T5）；
 //   - DefaultOutputDir 仅作工具 VM 的 OutputDir 初始种子，不改变引擎「输出任务目录 + 不覆盖源文件」语义。
@@ -370,6 +373,8 @@ public sealed class SettingsStore
 
     /// <summary>
     /// 同意记录归一化：丢弃 provider / endpoint / 指纹缺项的损坏记录；endpoint 归一为 origin；
+    /// provider 收敛为稳定身份键（T8：内置预设显示名 → 表内 id，自定义 → 小写规范名，
+    /// 与 <see cref="TranslationCredentialStore"/> 寻址同源，防显示名大小写造成同意「失效」）；
     /// TTL 钳制；同一目的地保留最近授予的一条（防手工编辑产生重复导致行为歧义）。
     /// </summary>
     internal static List<TranslationConsent> NormalizeConsents(List<TranslationConsent>? consents)
@@ -382,7 +387,7 @@ public sealed class SettingsStore
         {
             if (consent is null) continue;
 
-            var provider = consent.Provider?.Trim() ?? "";
+            var provider = TranslationProviderIdentity.Canonical(consent.Provider);
             var endpoint = TranslationConsent.NormalizeEndpoint(consent.Endpoint);
             var fingerprint = consent.KeyFingerprint?.Trim() ?? "";
             if (provider.Length == 0 || endpoint.Length == 0 || fingerprint.Length == 0) continue;
@@ -488,6 +493,9 @@ public sealed class SettingsStore
     /// 端点校验失败的条目【保留】并写入 <see cref="TranslationProviderConfig.ValidationError"/>
     /// （不再静默丢配置，R5-3），由运行时（<c>IsUsable</c>）跳过、由设置界面提示用户修正；
     /// 同一 provider + endpoint origin 只保留一条（可用条目优先，避免失效旧条目遮蔽已修正条目）。
+    /// v1.2（T2）：同路径回填 / 收敛 <see cref="TranslationProviderConfig.PresetId"/>，并归一化
+    /// <see cref="TranslationProviderConfig.ApiProtocol"/> / <see cref="TranslationProviderConfig.ModelProtocols"/>；
+    /// <b>Provider / Endpoint 原样保留</b>（含路径，绝不塌陷为 origin）。
     /// </summary>
     internal static List<TranslationProviderConfig> NormalizeTranslationProviders(List<TranslationProviderConfig>? providers)
     {
@@ -507,6 +515,9 @@ public sealed class SettingsStore
             provider.Provider = name;
             provider.Endpoint = endpoint;
             provider.Model = model;
+            provider.PresetId = NormalizePresetId(provider.PresetId, name, endpoint);
+            provider.ApiProtocol = NormalizeApiProtocol(provider.ApiProtocol);
+            provider.ModelProtocols = NormalizeModelProtocols(provider.ModelProtocols);
             provider.ValidationError = TranslationProviderConfig.ValidateEndpoint(endpoint);
             cleaned.Add(provider);
         }
@@ -522,4 +533,94 @@ public sealed class SettingsStore
 
         return result;
     }
+
+    // ------------------------------------------------------------------ v1.2 供应商迁移（T2，不 bump schema）
+
+    /// <summary>
+    /// 迁移候选预设 = 14 家云端内置预设 + 本地服务（本地在 <see cref="TranslationProviderPreset.All"/> 之外）。
+    /// </summary>
+    private static readonly TranslationProviderPreset[] MigratablePresets =
+        [.. TranslationProviderPreset.All, TranslationProviderPreset.Local];
+
+    /// <summary>
+    /// 稳定预设 id 归一化 + v1.1→v1.2 迁移（T2）：
+    ///   1. 显式 <paramref name="presetId"/> 命中预设表 → 收敛为表内规范 id（大小写不敏感）；
+    ///      非空但未知 → 原样保留（跨版本往返不静默改写身份，交由消费方按自定义处理）；
+    ///   2. 缺失 → 按 provider 名（稳定 id / 显示名）或 endpoint base URL 匹配内置预设回填；
+    ///   3. 未命中 → null（自定义供应商）。
+    /// 迁移只读写 <c>PresetId</c>，绝不改写 <c>Provider</c> / <c>Endpoint</c>（端点含路径须逐字保留）。
+    /// </summary>
+    internal static string? NormalizePresetId(string? presetId, string provider, string endpoint)
+    {
+        var value = presetId?.Trim() ?? "";
+        if (value.Length > 0) return TranslationProviderPreset.Find(value)?.Id ?? value;
+
+        // 名称优先：稳定 id / 显示名精确匹配（大小写不敏感；显示名仅供展示，但旧数据由用户手填）。
+        // 与 T8 凭据 / 同意定位共用 TranslationProviderPreset.FindIdByName，保证身份解析同源。
+        if (TranslationProviderPreset.FindIdByName(provider) is { } byName) return byName;
+
+        // 端点兜底：与预设 base URL（或 Anthropic base + /v1）精确匹配；旧数据的 endpoint 可能是别名域名。
+        var target = TrimEndpointForMatch(endpoint);
+        if (target.Length == 0) return null;
+
+        foreach (var preset in MigratablePresets)
+        {
+            if (EndpointBaseMatches(target, preset.OpenAiBaseUrl)) return preset.Id;
+            if (EndpointBaseMatches(target, preset.AnthropicBaseUrl)) return preset.Id;
+
+            // Anthropic 预设存的 base 不含 /v1（引擎自行拼接）；旧数据可能逐字存了带 /v1 的官方地址。
+            if (preset.AnthropicBaseUrl is { } anthropic && EndpointBaseMatches(target, anthropic + "/v1"))
+            {
+                return preset.Id;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// API 协议归一化（T4 引擎契约）：<c>openai</c> / <c>anthropic</c>（大小写不敏感，收敛为小写规范值）；
+    /// 缺失 / 未知 → <c>openai</c>（迁移旧配置不改变既有传输行为，引擎缺省亦为 openai）。
+    /// <b>薄委托</b>：归一化语义的唯一真源是 <see cref="TranslationProviderConfig.NormalizeProtocol"/>，
+    /// 本方法仅为既有调用点 / 测试保留入口。
+    /// </summary>
+    internal static string NormalizeApiProtocol(string? protocol)
+        => TranslationProviderConfig.NormalizeProtocol(protocol);
+
+    /// <summary>
+    /// 按模型协议覆盖归一化：丢弃空模型名与非法协议值（只允许 openai / anthropic，收敛为小写）；
+    /// 空表 / 无有效项 → null（无覆盖，运行回退 provider 级协议）。字典大小写不敏感（模型名查表口径一致）。
+    /// </summary>
+    internal static Dictionary<string, string>? NormalizeModelProtocols(Dictionary<string, string>? protocols)
+    {
+        if (protocols is null || protocols.Count == 0) return null;
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (model, protocol) in protocols)
+        {
+            var key = model?.Trim() ?? "";
+            if (key.Length == 0) continue;
+
+            var value = protocol?.Trim() ?? "";
+            if (!string.Equals(value, TranslationProviderConfig.ProtocolOpenAi, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(value, TranslationProviderConfig.ProtocolAnthropic, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            result[key] = NormalizeApiProtocol(value);
+        }
+
+        return result.Count == 0 ? null : result;
+    }
+
+    /// <summary>端点与预设 base 的比较口径：忽略大小写与尾斜杠（仅用于匹配，不改写存储值）。</summary>
+    private static bool EndpointBaseMatches(string target, string? baseUrl)
+    {
+        var value = TrimEndpointForMatch(baseUrl);
+        return value.Length > 0 && string.Equals(target, value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string TrimEndpointForMatch(string? endpoint)
+        => (endpoint?.Trim() ?? "").TrimEnd('/');
 }
