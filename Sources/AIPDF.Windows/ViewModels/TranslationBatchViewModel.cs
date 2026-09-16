@@ -743,9 +743,10 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
             return outputError;
         }
 
-        return _configProvider.Get() is null
-            ? "翻译服务尚未配置，请在「设置 → 翻译」中配置服务商与语言后重试。"
-            : null;
+        // F3：必须按面板选中的供应商解析（Resolve(Config.SelectedProvider)），不能用 Get()——
+        // Get() = Resolve(null) 回退「本地优先」，会忽略面板选择并把批量向导发往非预期目的地。
+        var resolution = _configProvider.Resolve(Config.SelectedProvider);
+        return resolution.Config is null ? ReadableRuntimeMessage(resolution) : null;
     }
 
     /// <summary>
@@ -756,8 +757,19 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
     {
         ArgumentNullException.ThrowIfNull(stagedFiles);
         WizardAdapterSupport.ResolveOutputDir(OutputDir, stagedFiles, out var outputDir);
-        var runtime = _configProvider.Get();
-        var options = BuildEngineOptions(runtime ?? new TranslationRuntimeConfig("", "", "", "", "", "", ""));
+
+        // F3：同 ValidateParameters，按面板选中的供应商解析；不再用 Get()（= Resolve(null) 本地优先）。
+        var resolution = _configProvider.Resolve(Config.SelectedProvider);
+        if (resolution.Config is not { } runtime)
+        {
+            // 快照签名（IWizardToolAdapter）没有错误通道：与三个执行入口同口径，把具体原因落到
+            // StatusMessage（参数步的 ValidateParameters 已返回同一原因，此处兜底防直接调用），
+            // 并返回空列表——不构造空配置、不产生指向非预期目的地的提交项。
+            StatusMessage = ReadableRuntimeMessage(resolution);
+            return [];
+        }
+
+        var options = BuildEngineOptions(runtime);
         return [.. stagedFiles.Select(file => new WizardSubmitItem(Tool.Name, [file], options, outputDir))];
     }
 
@@ -798,6 +810,15 @@ public sealed partial class TranslationBatchViewModel : ObservableObject, IToolD
         // 运行时配置（含云端同意）在 StartAsync 里经 EnsureAsync 解析/征求同意，故不在此同步校验。
         return null;
     }
+
+    /// <summary>
+    /// 解析结果 → 可直接展示的原因文案：提供商未给具体原因（空串，如默认接口实现之外的极简替身）时
+    /// 回退通用未配置文案，保证向导校验 / 快照拿到的 reason 始终可读非空。
+    /// </summary>
+    private static string ReadableRuntimeMessage(TranslationRuntimeConfigResolution resolution)
+        => string.IsNullOrWhiteSpace(resolution.Message)
+            ? TranslationRuntimeConfigResolution.NotConfiguredMessage
+            : resolution.Message;
 
     /// <summary>
     /// 三个执行入口（开始 / 单文件重试 / 全部重试）共用的运行与收尾骨架：

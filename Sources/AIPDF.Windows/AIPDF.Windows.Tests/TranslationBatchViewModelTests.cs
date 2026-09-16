@@ -537,6 +537,72 @@ public sealed class TranslationBatchViewModelTests
         Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
     }
 
+    // ---------------------------------------------------------------- V3 向导路径：校验 / 快照也必须携带面板选择（F3 审计回归）
+
+    /// <summary>
+    /// 记录每次 <c>Resolve</c> 收到的选中供应商 id，并可切换解析结果（负向用）：
+    /// 覆盖向导参数步 ValidateParameters 与提交快照 BuildSubmitItems 两个解析点。
+    /// </summary>
+    private sealed class RecordingResolutionConfigProvider(TranslationRuntimeConfigResolution initial)
+        : ITranslationRuntimeConfigProvider
+    {
+        private TranslationRuntimeConfigResolution _resolution = initial;
+
+        public List<string?> ReceivedSelectedProviderIds { get; } = [];
+
+        public void SetResolution(TranslationRuntimeConfigResolution next) => _resolution = next;
+
+        public TranslationRuntimeConfig? Get() => _resolution.Config;
+
+        public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
+        {
+            ReceivedSelectedProviderIds.Add(selectedProviderId);
+            return _resolution;
+        }
+    }
+
+    private static TranslationRuntimeConfigResolution ConfiguredResolution(TranslationRuntimeConfig config)
+        => new(
+            TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint, IsCloud: false, "");
+
+    [Fact]
+    public void WizardPath_ValidateAndBuildSubmitItems_UsePanelSelectedProvider()
+    {
+        using var temp = new TempDirectory();
+        var provider = new RecordingResolutionConfigProvider(ConfiguredResolution(DeepSeekConfig()));
+        var vm = new TranslationBatchViewModel(new RecordingBridge(), Tool(), provider);
+        vm.Config.SelectedProvider = "deepseek"; // 面板选中云端供应商
+        var staged = new[] { temp.CreatePdf("a.pdf") };
+
+        Assert.Null(vm.ValidateParameters(staged));
+
+        var item = Assert.Single(vm.BuildSubmitItems(staged));
+
+        Assert.Equal(2, provider.ReceivedSelectedProviderIds.Count); // 校验 1 次 + 快照 1 次
+        Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
+        var endpoint = (string)item.Options["endpoint"]!;
+        Assert.Equal("https://api.deepseek.com/v1", endpoint); // 目的地 = 面板选中，而非本地优先
+        Assert.DoesNotContain("127.0.0.1", endpoint); // Get() / Resolve(null) 会回退本地，此处必须不发生
+    }
+
+    [Fact]
+    public void WizardPath_UnusableSelectedProvider_SurfacesReadableReason_AndProducesNoSubmitItems()
+    {
+        using var temp = new TempDirectory();
+        var provider = new RecordingResolutionConfigProvider(NoConsentResolution());
+        var vm = new TranslationBatchViewModel(new RecordingBridge(), Tool(), provider);
+        vm.Config.SelectedProvider = "deepseek";
+        var staged = new[] { temp.CreatePdf("a.pdf") };
+
+        var error = vm.ValidateParameters(staged);
+
+        Assert.False(string.IsNullOrWhiteSpace(error)); // 可读非空原因
+        Assert.Contains("明确同意", error); // 具体原因原样展示，而非笼统文案
+        Assert.Empty(vm.BuildSubmitItems(staged)); // 无提交项 → 绝不回退本地 / 发往非预期目的地
+        Assert.Contains("明确同意", vm.StatusMessage); // 快照无错误通道：原因落到同页状态
+        Assert.All(provider.ReceivedSelectedProviderIds, id => Assert.Equal("deepseek", id));
+    }
+
     /// <summary>测试用临时目录：释放时递归删除（句柄占用时容忍残留）。</summary>
     private sealed class TempDirectory : IDisposable
     {
