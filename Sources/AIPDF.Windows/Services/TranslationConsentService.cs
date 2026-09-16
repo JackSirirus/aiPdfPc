@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 AIPDF contributors
 // v1.1 翻译 · 云端同意判定（决策 #14 / #15；云端配置复用 (c)(d)(g)(i)）：
-//   - 同意绑定「provider + endpoint origin + 密钥指纹」三者全等且 TTL 未过期，才视为已同意；
+//   - 同意绑定「provider 身份键 + endpoint origin + 密钥指纹」三者全等且 TTL 未过期，才视为已同意；
+//   - v1.2（T8）：provider 参数一律经 TranslationProviderIdentity 收敛为稳定身份键（内置预设 → 表内 id，
+//     自定义 → 小写规范名），与凭据寻址同源 —— 显示名 / 大小写不再影响定位（消除历史不对称）；
 //   - endpoint 主机名 / 协议 / 端口变更（origin 变）或密钥指纹变化 → 未同意，需重新征求；
 //   - 仅改模型名（origin 与密钥不变）不重置同意；
 //   - 「记住我的选择」勾选 → 落 AppSettings；未勾选 → 仅本次会话内存有效（每次会话首次提示一次）；
@@ -36,6 +38,7 @@ public sealed class TranslationConsentService
     /// <summary>
     /// 该 <paramref name="provider"/> + <paramref name="endpoint"/> + <paramref name="apiKey"/> 是否已获同意。
     /// 三者任一不匹配、密钥为空、或记录过期均返回 false。
+    /// <paramref name="provider"/> 为供应商身份键（显示名 / 稳定 id 均可，内部收敛）。
     /// </summary>
     public bool IsConsented(string provider, string endpoint, string? apiKey)
         => FindValidConsent(provider, endpoint, apiKey) is not null;
@@ -53,14 +56,15 @@ public sealed class TranslationConsentService
     /// </summary>
     public bool IsConsentedUsingStoredKey(string provider, string endpoint)
     {
-        var key = _credentials.Get(provider, endpoint);
-        return !string.IsNullOrEmpty(key) && IsConsented(provider, endpoint, key);
+        var identity = TranslationProviderIdentity.Canonical(provider);
+        var key = _credentials.Get(identity, endpoint);
+        return !string.IsNullOrEmpty(key) && IsConsented(identity, endpoint, key);
     }
 
     /// <summary>返回命中的有效同意记录（会话内存优先，其次持久记录）；无则 null。</summary>
     public TranslationConsent? FindValidConsent(string provider, string endpoint, string? apiKey)
     {
-        var normalizedProvider = provider?.Trim() ?? "";
+        var normalizedProvider = TranslationProviderIdentity.Canonical(provider);
         var normalizedEndpoint = TranslationConsent.NormalizeEndpoint(endpoint);
         var fingerprint = TranslationConsent.ComputeFingerprint(apiKey);
         if (normalizedProvider.Length == 0 || normalizedEndpoint.Length == 0 || fingerprint.Length == 0)
@@ -88,6 +92,7 @@ public sealed class TranslationConsentService
     /// <summary>
     /// 记录一次明确同意。<paramref name="remember"/> 为 true 时写入设置跨会话复用（同目的地旧记录被替换）；
     /// 为 false 时仅本次会话内存有效（决策 (c)：未勾选「记住」则每次会话首次使用提示一次）。
+    /// <paramref name="provider"/> 为供应商身份键（显示名 / 稳定 id 均可，内部收敛）——与凭据寻址同源。
     /// </summary>
     public TranslationConsent GrantConsent(
         string provider,
@@ -96,7 +101,7 @@ public sealed class TranslationConsentService
         int? ttlDays = null,
         bool remember = true)
     {
-        var normalizedProvider = provider?.Trim() ?? "";
+        var normalizedProvider = TranslationProviderIdentity.Canonical(provider);
         if (normalizedProvider.Length == 0)
         {
             throw new ArgumentException("服务商标识不能为空。", nameof(provider));
@@ -144,7 +149,7 @@ public sealed class TranslationConsentService
     /// </summary>
     public bool RevokeConsent(string provider, string endpoint, bool alsoClearCredential = false)
     {
-        var normalizedProvider = provider?.Trim() ?? "";
+        var normalizedProvider = TranslationProviderIdentity.Canonical(provider);
         var normalizedEndpoint = TranslationConsent.NormalizeEndpoint(endpoint);
         if (normalizedProvider.Length == 0 || normalizedEndpoint.Length == 0) return false;
 
@@ -175,12 +180,12 @@ public sealed class TranslationConsentService
 
     private bool Matches(TranslationConsent consent, string provider, string endpoint, string fingerprint)
         => !consent.IsExpired(_clock())
-           && string.Equals(consent.Provider, provider, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(TranslationProviderIdentity.Canonical(consent.Provider), provider, StringComparison.Ordinal)
            && string.Equals(consent.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase)
            && string.Equals(consent.KeyFingerprint, fingerprint, StringComparison.Ordinal);
 
     private static bool SameDestination(TranslationConsent consent, string provider, string endpoint)
-        => string.Equals(consent.Provider, provider, StringComparison.OrdinalIgnoreCase)
+        => string.Equals(TranslationProviderIdentity.Canonical(consent.Provider), provider, StringComparison.Ordinal)
            && string.Equals(consent.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase);
 
     private static string SessionKey(string provider, string endpoint)

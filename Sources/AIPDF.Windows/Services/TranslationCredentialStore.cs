@@ -2,7 +2,11 @@
 // Copyright (C) 2026 AIPDF contributors
 // v1.1 翻译 · 云端 API Key 存储（决策 #9 / #14 / #21；云端配置复用 (b)(g)(i)）：
 //   - 密钥交 Windows 凭据管理器（advapi32 CredRead/CredWrite/CredDelete/CredEnumerate + CredFree）加密保存；
-//   - 命名空间 AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 16 位 hex}，不同目的地互不覆盖；
+//   - 命名空间 AIPDF-Translate-{providerId}-{sha256(endpoint origin) 前 16 位 hex}；
+//     v1.2（T8）起 {providerId} 为稳定身份键（TranslationProviderIdentity）：
+//     内置预设收敛为表内稳定 id、显示名大小写不敏感、自定义名统一小写 —— 同一逻辑目的地只有一条凭据；
+//   - 旧版（v1.1）按 provider 显示名、大小写敏感写入的目标名由 MigrateToCanonicalTargets 就地重键，
+//     密钥零丢失、迁移幂等（见 TranslationIdentityMigrator）；
 //   - 后端 ICredentialBackend 可注入：生产为 Win32CredentialBackend，测试用内存替身（不碰真实凭据管理器）；
 //   - DeleteAll 只清理 AIPDF-Translate-* 前缀（卸载清理），不影响用户其他凭据。
 //
@@ -200,7 +204,7 @@ public sealed class Win32CredentialBackend : ICredentialBackend
 }
 
 /// <summary>
-/// 云端翻译 API Key 存储：按「服务商 + 端点 origin」寻址系统凭据管理器中的通用凭据。
+/// 云端翻译 API Key 存储：按「供应商身份键 + 端点 origin」寻址系统凭据管理器中的通用凭据。
 /// 与 <see cref="SessionCredentialStore"/>（PDF 文档密码，仅内存、不落盘）刻意分离：本类是长期凭据，交 OS 加密保存。
 /// </summary>
 public sealed class TranslationCredentialStore
@@ -214,27 +218,30 @@ public sealed class TranslationCredentialStore
     public TranslationCredentialStore(ICredentialBackend? backend = null)
         => _backend = backend ?? new Win32CredentialBackend();
 
-    /// <summary>保存（覆盖）某服务商 + 端点的 API Key。密钥仅进入系统凭据管理器。</summary>
-    public void Store(string provider, string endpoint, string key)
+    /// <summary>
+    /// 保存（覆盖）某供应商 + 端点的 API Key。密钥仅进入系统凭据管理器。
+    /// <paramref name="providerId"/> 为稳定身份键（显示名亦可，经 <see cref="TranslationProviderIdentity"/> 收敛）。
+    /// </summary>
+    public void Store(string providerId, string endpoint, string key)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerId);
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
-        _backend.Write(TargetName(provider, endpoint), key);
+        _backend.Write(TargetName(providerId, endpoint), key);
     }
 
-    /// <summary>读取某服务商 + 端点的 API Key；未保存返回 null。</summary>
-    public string? Get(string provider, string endpoint)
+    /// <summary>读取某供应商 + 端点的 API Key；未保存返回 null。</summary>
+    public string? Get(string providerId, string endpoint)
     {
-        if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(endpoint)) return null;
-        return _backend.Read(TargetName(provider, endpoint));
+        if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(endpoint)) return null;
+        return _backend.Read(TargetName(providerId, endpoint));
     }
 
-    /// <summary>删除某服务商 + 端点的 API Key；原本不存在返回 false。</summary>
-    public bool Delete(string provider, string endpoint)
+    /// <summary>删除某供应商 + 端点的 API Key；原本不存在返回 false。</summary>
+    public bool Delete(string providerId, string endpoint)
     {
-        if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(endpoint)) return false;
-        return _backend.Delete(TargetName(provider, endpoint));
+        if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(endpoint)) return false;
+        return _backend.Delete(TargetName(providerId, endpoint));
     }
 
     /// <summary>清除全部 <c>AIPDF-Translate-*</c> 凭据（显式卸载 / 用户在设置中清除）。返回删除条数。</summary>
@@ -250,15 +257,86 @@ public sealed class TranslationCredentialStore
     }
 
     /// <summary>
-    /// 凭据目标名：<c>AIPDF-Translate-{provider}-{sha256(endpoint origin) 前 16 位 hex}</c>。
+    /// v1.1 → v1.2 凭据重键（T8）：把 <c>AIPDF-Translate-{旧名}-{hash}</c> 就地迁到
+    /// <c>AIPDF-Translate-{身份键}-{hash}</c>（hash 为 endpoint origin 指纹，语义与值均不变）。
+    /// <paramref name="resolveProviderId"/>：旧名 → 身份键（设置驱动的映射优先，缺省按预设表名称解析）；
+    /// 返回实际发生重键的条数。行为：
+    ///   1. 新目标已存在 → 只删除旧目标（新目标为准，绝不覆盖已有密钥）；
+    ///   2. 新目标不存在 → 复制密钥到新目标后删除旧目标；
+    ///   3. 已规范化 / 非本命名空间格式 / 旧名无法解析 → 跳过。
+    /// 幂等：重复调用不产生重复条目；密钥只在内存与本类后端的 Read/Write 之间传递，不写日志 / 设置。
+    /// </summary>
+    public int MigrateToCanonicalTargets(Func<string, string>? resolveProviderId = null)
+    {
+        var resolver = resolveProviderId ?? TranslationProviderIdentity.Canonical;
+        var migrated = 0;
+
+        foreach (var target in _backend.Enumerate(TargetPrefix).ToList())
+        {
+            if (!TryParseTarget(target, out var legacyName, out var fingerprint)) continue;
+
+            var identity = resolver(legacyName)?.Trim() ?? "";
+            if (identity.Length == 0) continue;
+
+            var newTarget = TargetPrefix + identity + "-" + fingerprint;
+            if (string.Equals(newTarget, target, StringComparison.Ordinal)) continue;
+
+            if (_backend.Read(newTarget) is null)
+            {
+                var secret = _backend.Read(target);
+                if (secret is null) continue; // 枚举与读取之间被移除：无可迁移内容
+                _backend.Write(newTarget, secret);
+            }
+
+            _backend.Delete(target);
+            migrated++;
+        }
+
+        return migrated;
+    }
+
+    /// <summary>
+    /// 解析本命名空间目标名：<c>AIPDF-Translate-{providerName}-{16 位小写 hex 指纹}</c>。
+    /// providerName 允许含连字符（按【最后一个】连字符切分）；格式不符（长度 / 非 hex / 空名）返回 false。
+    /// </summary>
+    internal static bool TryParseTarget(string? target, out string providerName, out string fingerprint)
+    {
+        providerName = "";
+        fingerprint = "";
+
+        if (target is null || !target.StartsWith(TargetPrefix, StringComparison.Ordinal)) return false;
+
+        var rest = target[TargetPrefix.Length..];
+        var separator = rest.LastIndexOf('-');
+        if (separator <= 0) return false;
+
+        providerName = rest[..separator];
+        fingerprint = rest[(separator + 1)..];
+        if (fingerprint.Length != TranslationConsent.FingerprintLength) return false;
+
+        foreach (var ch in fingerprint)
+        {
+            if (!Uri.IsHexDigit(ch)) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 凭据目标名：<c>AIPDF-Translate-{providerId}-{sha256(endpoint origin) 前 16 位 hex}</c>。
+    /// <paramref name="providerId"/> 经 <see cref="TranslationProviderIdentity.Canonical"/> 收敛为稳定身份键
+    /// （预设显示名 → 表内 id；自定义名 → 小写），使凭据寻址与同意匹配同源、大小写无关。
     /// endpoint 归一为 origin，使同一目的地的密钥不被路径 / 查询串差异切成多条。
     /// 指纹长度与 <see cref="TranslationConsent.FingerprintLength"/> 统一为 16 位，避免凭据目标与同意指纹长度不一致。
     /// </summary>
-    internal static string TargetName(string provider, string endpoint)
+    internal static string TargetName(string providerId, string endpoint)
     {
+        var identity = TranslationProviderIdentity.Canonical(providerId);
+        if (identity.Length == 0) identity = providerId.Trim();
+
         var origin = TranslationConsent.NormalizeEndpoint(endpoint);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(origin));
         var shortHash = Convert.ToHexString(hash).ToLowerInvariant()[..TranslationConsent.FingerprintLength];
-        return $"{TargetPrefix}{provider.Trim()}-{shortHash}";
+        return $"{TargetPrefix}{identity}-{shortHash}";
     }
 }

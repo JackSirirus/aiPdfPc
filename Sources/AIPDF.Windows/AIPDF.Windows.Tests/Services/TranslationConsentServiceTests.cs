@@ -135,6 +135,22 @@ public sealed class TranslationConsentServiceTests
     }
 
     [Fact]
+    public void ProviderDisplayName_MatchesStableId()
+    {
+        using var fx = new Fixture();
+        const string endpoint = "https://api.openai.com/v1";
+
+        // T8：内置预设显示名与稳定 id 收敛为同一身份键 —— 授予与校验互见。
+        fx.Credentials.Store("OpenAI", endpoint, Key);
+        fx.Service.GrantConsent("OpenAI", endpoint, Key);
+
+        Assert.True(fx.Service.IsConsented("openai", endpoint, Key));
+        Assert.True(fx.Service.IsConsented("OPENAI", endpoint, Key));
+        Assert.True(fx.Service.IsConsentedUsingStoredKey("openai", endpoint)); // 与凭据寻址同源
+        Assert.Equal("openai", Assert.Single(fx.Settings.Load().TranslationConsents).Provider);
+    }
+
+    [Fact]
     public void MissingOrBlankKey_NotConsented()
     {
         using var fx = new Fixture();

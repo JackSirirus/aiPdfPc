@@ -157,6 +157,21 @@ public sealed class TranslationCredentialStoreTests
     }
 
     [Fact]
+    public void TargetName_CanonicalizesPresetDisplayNameAndCase_SameDestinationOneTarget()
+    {
+        // T8：凭据寻址以稳定身份键为准 —— 显示名 / 大小写不同但同一预设 → 同一目标名。
+        Assert.Equal(
+            TranslationCredentialStore.TargetName("deepseek", Endpoint),
+            TranslationCredentialStore.TargetName("DeepSeek", Endpoint));
+        Assert.Equal(
+            TranslationCredentialStore.TargetName("deepseek", Endpoint),
+            TranslationCredentialStore.TargetName("DEEPSEEK", Endpoint));
+        Assert.Equal(
+            TranslationCredentialStore.TargetName("openai", "https://api.openai.com/v1"),
+            TranslationCredentialStore.TargetName("OpenAI", "https://api.openai.com/v1"));
+    }
+
+    [Fact]
     public void DifferentEndpoints_DoNotCollide()
     {
         var store = NewStore(out var backend);
