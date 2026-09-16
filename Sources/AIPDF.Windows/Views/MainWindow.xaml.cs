@@ -1011,7 +1011,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         var request = new SelectionTranslationRequest(
-            card.SourceText, card.SourceLang, card.TargetLang, card.TemplateCode);
+            card.SourceText, card.SourceLang, card.TargetLang, card.TemplateCode,
+            SelectedTranslationProviderId());
         var result = await SelectionTranslationService.TranslateAsync(request, timeout.Token);
         if (result.Ok)
         {

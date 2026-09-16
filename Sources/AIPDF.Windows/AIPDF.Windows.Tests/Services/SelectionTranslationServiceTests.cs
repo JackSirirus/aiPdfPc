@@ -37,6 +37,41 @@ public class SelectionTranslationServiceTests
         public TranslationRuntimeConfig? Get() => _config;
     }
 
+    /// <summary>
+    /// 模拟生产 <c>SettingsTranslationRuntimeConfigProvider</c> 的寻址语义：按选中稳定 id 选择目的地；
+    /// id 为 null / 未知时回退 <see cref="Fallback"/>（本地优先）。
+    /// </summary>
+    private sealed class SelectedIdConfigProvider : ITranslationRuntimeConfigProvider
+    {
+        private readonly IReadOnlyDictionary<string, TranslationRuntimeConfig> _configs;
+
+        public SelectedIdConfigProvider(
+            IReadOnlyDictionary<string, TranslationRuntimeConfig> configs,
+            TranslationRuntimeConfig fallback)
+        {
+            _configs = configs;
+            Fallback = fallback;
+        }
+
+        public TranslationRuntimeConfig Fallback { get; }
+
+        public TranslationRuntimeConfig? Get() => Fallback;
+
+        public TranslationRuntimeConfigResolution Resolve(string? selectedProviderId = null)
+        {
+            if (selectedProviderId is not null && _configs.TryGetValue(selectedProviderId, out var config))
+            {
+                return new TranslationRuntimeConfigResolution(
+                    TranslationRuntimeConfigStatus.Configured, config, config.Provider, config.Endpoint,
+                    !TranslationProviderConfig.IsLocalService(selectedProviderId, config.Provider), "");
+            }
+
+            return new TranslationRuntimeConfigResolution(
+                TranslationRuntimeConfigStatus.Configured, Fallback, Fallback.Provider, Fallback.Endpoint,
+                !TranslationProviderConfig.IsLocalService(null, Fallback.Provider), "");
+        }
+    }
+
     private static EngineResult Ok(string translation, double elapsed = 1.0)
         => new()
         {
@@ -154,5 +189,51 @@ public class SelectionTranslationServiceTests
         Assert.False(result.Ok);
         Assert.Contains("尚未接入", result.Message);
         Assert.Empty(store.GetAll());
+    }
+
+    [Fact]
+    public async Task Translate_WithSelectedCloudProvider_SendsSelectedProviderEndpoint()
+    {
+        var bridge = new StubBridge(Ok("你好"));
+        var local = new TranslationRuntimeConfig(
+            "local", "http://127.0.0.1:11434/v1", "qwen", "", "en", "zh", "generic");
+        var deepseek = new TranslationRuntimeConfig(
+            "deepseek", "https://api.deepseek.com/chat/completions", "deepseek-chat", "sk-test",
+            "en", "zh", "generic");
+        var provider = new SelectedIdConfigProvider(
+            new Dictionary<string, TranslationRuntimeConfig> { ["deepseek"] = deepseek }, local);
+        var service = new EngineSelectionTranslationService(bridge, provider);
+
+        var result = await service.TranslateAsync(
+            new SelectionTranslationRequest("Hello", "en", "zh", "generic", SelectedProviderId: "deepseek"));
+
+        Assert.True(result.Ok);
+        Assert.NotNull(bridge.LastRequest);
+        var endpoint = Assert.IsType<string>(bridge.LastRequest!.Options["endpoint"]);
+        Assert.Contains("api.deepseek.com", endpoint);
+        Assert.Equal("sk-test", bridge.LastRequest.Options["apiKey"]);
+    }
+
+    [Fact]
+    public async Task Translate_WithoutSelectedProviderId_FallsBackToLocalEndpoint()
+    {
+        var bridge = new StubBridge(Ok("你好"));
+        var local = new TranslationRuntimeConfig(
+            "local", "http://127.0.0.1:11434/v1", "qwen", "", "en", "zh", "generic");
+        var deepseek = new TranslationRuntimeConfig(
+            "deepseek", "https://api.deepseek.com/chat/completions", "deepseek-chat", "sk-test",
+            "en", "zh", "generic");
+        var provider = new SelectedIdConfigProvider(
+            new Dictionary<string, TranslationRuntimeConfig> { ["deepseek"] = deepseek }, local);
+        var service = new EngineSelectionTranslationService(bridge, provider);
+
+        var result = await service.TranslateAsync(
+            new SelectionTranslationRequest("Hello", "en", "zh", "generic", SelectedProviderId: null));
+
+        Assert.True(result.Ok);
+        Assert.NotNull(bridge.LastRequest);
+        var endpoint = Assert.IsType<string>(bridge.LastRequest!.Options["endpoint"]);
+        Assert.Contains("127.0.0.1", endpoint);
+        Assert.DoesNotContain("api.deepseek.com", endpoint);
     }
 }

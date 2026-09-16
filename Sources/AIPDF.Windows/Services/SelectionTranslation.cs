@@ -13,7 +13,13 @@ using AIPDF.Windows.Rendering;
 namespace AIPDF.Windows.Services;
 
 /// <summary>一次划词翻译请求（语言 / 模板为空则回退运行时配置）。</summary>
-public sealed record SelectionTranslationRequest(string Text, string SourceLang, string TargetLang, string Template);
+/// <param name="SelectedProviderId">面板选中的稳定供应商 id；null 保留本地优先回退（未接线宿主 / 旧调用方行为不变）。</param>
+public sealed record SelectionTranslationRequest(
+    string Text,
+    string SourceLang,
+    string TargetLang,
+    string Template,
+    string? SelectedProviderId = null);
 
 /// <summary>划词翻译结果。<see cref="Ok"/> 为 false 时 <see cref="Error"/> 为可直接展示的原因。</summary>
 public sealed record SelectionTranslationResult(bool Ok, string Translation, string? Error, double ElapsedSeconds);
@@ -172,7 +178,8 @@ public sealed class EngineSelectionTranslationService : ISelectionTranslationSer
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var resolution = _configProvider.Resolve();
+        // v1.2 修复：目的地必须随「面板选中的供应商」解析（Read 路径），否则云端选择被本地优先回退吞掉。
+        var resolution = _configProvider.Resolve(request.SelectedProviderId);
         if (resolution.Config is not { } config)
         {
             return new SelectionTranslationResult(false, "", resolution.Message, 0);
