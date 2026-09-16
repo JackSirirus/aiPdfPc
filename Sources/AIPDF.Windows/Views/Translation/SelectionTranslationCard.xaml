@@ -77,10 +77,24 @@
                         Height="1"
                         VerticalAlignment="Center"
                         Background="{DynamicResource Brush.Border}" />
-                <TextBlock Grid.Column="1"
-                           Margin="7,0"
-                           Text="{Binding RouteLabel}"
-                           Style="{StaticResource CardMeta}" />
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Margin="7,0"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="{Binding RouteLabel}"
+                               Style="{StaticResource CardMeta}" />
+                    <!-- v1.2 T10：当前供应商协议徽章（只读跟随；未知协议不展示） -->
+                    <Border Margin="6,0,0,0"
+                            Padding="5,1"
+                            CornerRadius="7"
+                            VerticalAlignment="Center"
+                            Background="{DynamicResource Brush.AccentSoft}"
+                            Visibility="{Binding ShowProtocolBadge, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock FontSize="10"
+                                   Foreground="{DynamicResource Brush.AccentText}"
+                                   Text="{Binding ProtocolBadge}" />
+                    </Border>
+                </StackPanel>
                 <Border Grid.Column="2"
                         Height="1"
                         VerticalAlignment="Center"

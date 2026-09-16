@@ -73,6 +73,8 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
     private string _translation = "";
     private string _errorMessage = "";
     private string _elapsedLabel = "";
+    private string _engineLabel;
+    private string _protocolBadge = "";
 
     public SelectionTranslationCardViewModel(
         string sourceText,
@@ -87,13 +89,10 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
         SourceLang = sourceLang ?? "";
         TargetLang = targetLang ?? "";
         TemplateCode = templateCode ?? "";
-        EngineLabel = engineLabel ?? "";
+        _engineLabel = engineLabel ?? "";
         PageIndex = pageIndex;
         Rect = rect;
         SourceMeta = $"{TranslationLabels.Language(SourceLang)} · {TranslationLabels.CountWords(SourceText)} 字";
-        RouteLabel =
-            $"{TranslationLabels.Template(TemplateCode)} · " +
-            $"{TranslationLabels.Language(SourceLang)}→{TranslationLabels.Language(TargetLang)} · {EngineLabel}";
     }
 
     /// <summary>原文全文（仅本次会话内存，不写入任何持久化文件）。</summary>
@@ -108,8 +107,44 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
     /// <summary>模板代码。</summary>
     public string TemplateCode { get; }
 
-    /// <summary>引擎来源展示名（本地 / 云端）。</summary>
-    public string EngineLabel { get; }
+    /// <summary>
+    /// 引擎来源展示名（v1.2：当前生效供应商显示名，如「Kimi Code」/「本地服务」；未配置为「未配置」）。
+    /// 只读跟随共享供应商选择，划词不提供独立选择入口（<see cref="FollowProvider"/> 由宿主推送）。
+    /// </summary>
+    public string EngineLabel
+    {
+        get => _engineLabel;
+        private set
+        {
+            if (_engineLabel == value) return;
+            _engineLabel = value;
+            Raise(nameof(EngineLabel));
+            Raise(nameof(RouteLabel));
+        }
+    }
+
+    /// <summary>协议徽章（v1.2：OpenAI 兼容 / Anthropic 兼容；未知为空串）。只读。</summary>
+    public string ProtocolBadge
+    {
+        get => _protocolBadge;
+        private set
+        {
+            if (_protocolBadge == value) return;
+            _protocolBadge = value;
+            Raise(nameof(ProtocolBadge));
+            Raise(nameof(ShowProtocolBadge));
+        }
+    }
+
+    /// <summary>是否展示协议徽章（未知协议不展示，不臆造）。</summary>
+    public bool ShowProtocolBadge => ProtocolBadge.Length > 0;
+
+    /// <summary>只读跟随共享供应商标签（宿主在共享选择变化时推送；卡片自身不参与选择）。</summary>
+    public void FollowProvider(string engineLabel, string protocolBadge)
+    {
+        EngineLabel = engineLabel ?? "";
+        ProtocolBadge = protocolBadge ?? "";
+    }
 
     /// <summary>选区所在页（0 起；未知为 -1）。用于「替换标注」定位。</summary>
     public int PageIndex { get; }
@@ -120,8 +155,10 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
     /// <summary>原文标题右侧元信息（语言 · 字数）。</summary>
     public string SourceMeta { get; }
 
-    /// <summary>原文与译文之间的路由行（模板 · 语言对 · 引擎）。</summary>
-    public string RouteLabel { get; }
+    /// <summary>原文与译文之间的路由行（模板 · 语言对 · 供应商；随只读跟随实时刷新）。</summary>
+    public string RouteLabel =>
+        $"{TranslationLabels.Template(TemplateCode)} · " +
+        $"{TranslationLabels.Language(SourceLang)}→{TranslationLabels.Language(TargetLang)} · {EngineLabel}";
 
     /// <summary>当前状态。</summary>
     public SelectionTranslationState State
@@ -206,16 +243,86 @@ public sealed class SelectionTranslationCardViewModel : System.ComponentModel.IN
 
 /// <summary>
 /// 「划词」Tab 的面板模型：卡片堆叠（新卡置顶，上限 20）+ 无文本层态（F1b）+ 空态。
+/// v1.2 T10：额外只读跟随当前生效供应商（<see cref="FollowProvider"/>）——划词不提供独立的供应商选择入口，
+/// 切换发生在设置页或整篇面板的内联快捷入口，本面板只同步展示。
 /// </summary>
-public sealed class SelectionTranslationPanelViewModel : System.ComponentModel.INotifyPropertyChanged
+public sealed class SelectionTranslationPanelViewModel : System.ComponentModel.INotifyPropertyChanged, IDisposable
 {
     /// <summary>卡片堆叠上限（设计：划词 Tab 最多保留 20 条）。</summary>
     public const int MaxCards = 20;
 
     private bool _noTextLayer;
+    private TranslationProviderReadout? _providerReadout;
+    private string _providerLabel = "";
+    private string _providerProtocolBadge = "";
 
     /// <summary>按时间倒序的卡片集合（索引 0 为最新）。</summary>
     public System.Collections.ObjectModel.ObservableCollection<SelectionTranslationCardViewModel> Cards { get; } = [];
+
+    /// <summary>当前生效供应商的只读显示名（跟随共享选择；无跟随来源时为空串）。</summary>
+    public string ProviderLabel
+    {
+        get => _providerLabel;
+        private set
+        {
+            if (_providerLabel == value) return;
+            _providerLabel = value;
+            Raise(nameof(ProviderLabel));
+            Raise(nameof(HasProviderLabel));
+        }
+    }
+
+    /// <summary>当前生效供应商的协议徽章（只读；未知为空串）。</summary>
+    public string ProviderProtocolBadge
+    {
+        get => _providerProtocolBadge;
+        private set
+        {
+            if (_providerProtocolBadge == value) return;
+            _providerProtocolBadge = value;
+            Raise(nameof(ProviderProtocolBadge));
+        }
+    }
+
+    /// <summary>是否已有可展示的供应商标签。</summary>
+    public bool HasProviderLabel => ProviderLabel.Length > 0;
+
+    /// <summary>是否已接入只读跟随来源（不代表可选择——划词没有选择入口）。</summary>
+    public bool IsFollowingProvider => _providerReadout is not null;
+
+    /// <summary>
+    /// 接入共享供应商的只读跟随来源：来源刷新时同步面板标签与全部已有卡片。
+    /// <b>只读</b>——本方法只挂接展示来源，不提供任何供应商选择 / 切换能力。
+    /// </summary>
+    public void FollowProvider(TranslationProviderReadout readout)
+    {
+        ArgumentNullException.ThrowIfNull(readout);
+
+        if (ReferenceEquals(_providerReadout, readout))
+        {
+            ApplyProviderReadout();
+            return;
+        }
+
+        if (_providerReadout is not null)
+        {
+            _providerReadout.PropertyChanged -= OnProviderReadoutChanged;
+        }
+
+        _providerReadout = readout;
+        _providerReadout.PropertyChanged += OnProviderReadoutChanged;
+        ApplyProviderReadout();
+    }
+
+    /// <summary>反订阅只读来源（窗口关闭 / 测试清理用）。</summary>
+    public void Dispose()
+    {
+        if (_providerReadout is not null)
+        {
+            _providerReadout.PropertyChanged -= OnProviderReadoutChanged;
+            _providerReadout = null;
+        }
+    }
 
     /// <summary>当前页无文本层 → 划词不可用（F1b）。</summary>
     public bool IsNoTextLayer
@@ -242,13 +349,32 @@ public sealed class SelectionTranslationPanelViewModel : System.ComponentModel.I
     /// <summary>退出无文本层态（选中/翻译成功/切换文档后恢复）。</summary>
     public void ExitNoTextLayer() => IsNoTextLayer = false;
 
-    /// <summary>新增一张卡片（置顶）；超过 <see cref="MaxCards"/> 时丢弃最旧一张。</summary>
+    /// <summary>新增一张卡片（置顶）；超过 <see cref="MaxCards"/> 时丢弃最旧一张。显式标签供测试 / 特殊宿主使用。</summary>
     public SelectionTranslationCardViewModel AddCard(
         string sourceText, string sourceLang, string targetLang, string templateCode, string engineLabel,
         int pageIndex = -1, PdfRect rect = default)
+        => AddCardCore(sourceText, sourceLang, targetLang, templateCode, engineLabel, "", pageIndex, rect);
+
+    /// <summary>
+    /// 按当前生效供应商（只读跟随来源）新增卡片（置顶）；未接入来源或无配置时为「未配置」。
+    /// 划词唯一的建卡入口——不接收供应商选择参数，从根上杜绝独立选择入口。
+    /// </summary>
+    public SelectionTranslationCardViewModel AddCardForCurrentProvider(
+        string sourceText, string sourceLang, string targetLang, string templateCode,
+        int pageIndex = -1, PdfRect rect = default)
+        => AddCardCore(
+            sourceText, sourceLang, targetLang, templateCode,
+            _providerReadout?.DisplayLabel ?? "",
+            _providerReadout?.ProtocolBadge ?? "",
+            pageIndex, rect);
+
+    private SelectionTranslationCardViewModel AddCardCore(
+        string sourceText, string sourceLang, string targetLang, string templateCode,
+        string engineLabel, string protocolBadge, int pageIndex, PdfRect rect)
     {
         var card = new SelectionTranslationCardViewModel(
             sourceText, sourceLang, targetLang, templateCode, engineLabel, pageIndex, rect);
+        card.FollowProvider(engineLabel, protocolBadge);
         Cards.Insert(0, card);
         while (Cards.Count > MaxCards)
         {
@@ -259,6 +385,23 @@ public sealed class SelectionTranslationPanelViewModel : System.ComponentModel.I
         Raise(nameof(HasCards));
         Raise(nameof(ShowEmptyHint));
         return card;
+    }
+
+    private void OnProviderReadoutChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        => ApplyProviderReadout();
+
+    /// <summary>把只读来源的当前标签推送到面板与全部已有卡片（切换供应商 → 划词标签同步）。</summary>
+    private void ApplyProviderReadout()
+    {
+        var label = _providerReadout?.DisplayLabel ?? "";
+        var badge = _providerReadout?.ProtocolBadge ?? "";
+        ProviderLabel = label;
+        ProviderProtocolBadge = badge;
+
+        foreach (var card in Cards)
+        {
+            card.FollowProvider(label, badge);
+        }
     }
 
     /// <summary>清空全部卡片（切换文档时调用；不写回源文件）。</summary>
