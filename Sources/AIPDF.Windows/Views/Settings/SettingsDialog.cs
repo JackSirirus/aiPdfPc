@@ -105,6 +105,21 @@ public sealed class SettingsDialog : Window
     private ProviderEntry? _selectedEntry;
     private TranslationProviderConfig? _draftConfig;
     private bool _suppressProviderSelection;
+    private bool _suppressNavSelection;
+
+    // ---- 分类导航（T3/T4/T5） ----
+    private static string? _lastCategory;
+    private ListBox _navList = new();
+    private TextBlock _paneHeadTitle = new();
+    private TextBlock _paneHeadDesc = new();
+
+    // 6 个分类面板（Visibility 切换，不重建控件）
+    private FrameworkElement _paneGeneral = default!;
+    private FrameworkElement _paneAppearance = default!;
+    private FrameworkElement _paneTranslationProviders = default!;
+    private FrameworkElement _paneTranslationGlossary = default!;
+    private FrameworkElement _paneTranslationOutput = default!;
+    private FrameworkElement _paneAdvanced = default!;
 
     /// <summary>保存成功后的已归一化设置；取消 / 关闭为 null。</summary>
     public AppSettings? SavedSettings { get; private set; }
@@ -146,33 +161,34 @@ public sealed class SettingsDialog : Window
 
     private UIElement BuildContent(AppSettings current)
     {
-        // ---- 内容区：设置网格（控件均为实例字段，必须构建一次） ----
-        var rows = new Grid { Margin = new Thickness(20, 12, 20, 8) };
-        rows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        rows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // ====================================================================
+        // 6 个分类面板：Visibility 切换，控件均为实例字段且只构建一次（T4）
+        // ====================================================================
 
-        var row = 0;
+        // ---- Pane 1: 常规（general）----
+        var generalGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
+        generalGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        generalGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var generalRow = 0;
 
-        // 1. 默认缩放（FR-38 项 1）
+        // 1. 默认缩放
         AddComboItem(_zoomBox, "适配宽度", AppSettings.ZoomFitWidth);
         AddComboItem(_zoomBox, "适配页面", AppSettings.ZoomFitPage);
         foreach (var percent in AppSettings.ZoomLadderPercent)
-        {
             AddComboItem(_zoomBox, $"{percent}%", percent.ToString(CultureInfo.InvariantCulture));
-        }
         SelectComboValue(_zoomBox, current.DefaultZoom);
-        AddRow(rows, ref row, "默认缩放",
+        AddRow(generalGrid, ref generalRow, "默认缩放",
             "新打开文档的初始缩放；文件已有阅读记录时以阅读记录为准。", _zoomBox);
 
-        // 2. 默认左栏面板（FR-38 项 2）
+        // 2. 默认左栏面板
         AddComboItem(_panelBox, "缩略图", AppSettings.PanelThumbs);
         AddComboItem(_panelBox, "目录", AppSettings.PanelOutline);
         AddComboItem(_panelBox, "书签", AppSettings.PanelBookmarks);
         SelectComboValue(_panelBox, current.DefaultPanelKey);
-        AddRow(rows, ref row, "默认左栏面板",
+        AddRow(generalGrid, ref generalRow, "默认左栏面板",
             "新打开文档的初始面板；文件已有阅读记录时以阅读记录为准（搜索面板由 Ctrl+F 激活，不在此列）。", _panelBox);
 
-        // 3. 最近文件上限（FR-38 项 3）
+        // 3. 最近文件上限
         _recentSlider.Minimum = AppSettings.RecentFilesLimitMin;
         _recentSlider.Maximum = AppSettings.RecentFilesLimitMax;
         _recentSlider.TickFrequency = 1;
@@ -189,23 +205,10 @@ public sealed class SettingsDialog : Window
         var recentRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         recentRow.Children.Add(_recentSlider);
         recentRow.Children.Add(_recentValue);
-        AddRow(rows, ref row, "最近文件上限",
+        AddRow(generalGrid, ref generalRow, "最近文件上限",
             $"起始页「最近打开」保留条数（{AppSettings.RecentFilesLimitMin}–{AppSettings.RecentFilesLimitMax}）。", recentRow);
 
-        // 4. 主题（Q6/C2）
-        AddComboItem(_themeBox, "跟随系统", AppSettings.ThemeSystem);
-        AddComboItem(_themeBox, "亮色", AppSettings.ThemeLight);
-        AddComboItem(_themeBox, "暗色", AppSettings.ThemeDark);
-        SelectComboValue(_themeBox, current.Theme);
-        AddRow(rows, ref row, "主题", "外观主题：亮色 / 暗色 / 跟随系统；保存后立即生效（无需重启）。", _themeBox);
-
-        // 5. 打印 DPI（Q6/Q11）
-        _printDpiBox.Text = current.PrintDpi.ToString(CultureInfo.InvariantCulture);
-        ApplyFieldStyle(_printDpiBox, 120);
-        AddRow(rows, ref row, "打印 DPI",
-            $"打印渲染 DPI（{AppSettings.PrintDpiMin}–{AppSettings.PrintDpiMax}，默认 {AppSettings.PrintDpiDefault}）。", _printDpiBox);
-
-        // 6. 默认输出目录（Q6）
+        // 4. 默认输出目录
         _outputDirBox.Text = current.DefaultOutputDir;
         ApplyFieldStyle(_outputDirBox, double.NaN);
         var browse = new Button
@@ -219,40 +222,140 @@ public sealed class SettingsDialog : Window
         DockPanel.SetDock(browse, Dock.Right);
         outputRow.Children.Add(browse);
         outputRow.Children.Add(_outputDirBox);
-        AddRow(rows, ref row, "默认输出目录",
+        AddRow(generalGrid, ref generalRow, "默认输出目录",
             "工具页输出目录的初始值；留空 = 沿用页面「选择输出文件夹」（引擎仍每次生成新任务目录、不覆盖源文件）。", outputRow);
 
-        // 7. 默认渲染 DPI（Q6）
-        _renderDpiBox.Text = current.DefaultRenderDpi.ToString("0.#", CultureInfo.InvariantCulture);
-        ApplyFieldStyle(_renderDpiBox, 120);
-        AddRow(rows, ref row, "默认渲染 DPI",
-            $"阅读渲染基准 DPI（{AppSettings.RenderDpiMin:0}–{AppSettings.RenderDpiMax:0}，默认 {AppSettings.RenderDpiDefault:0}）；不改变高倍率渲染阈值，也不参与打印。",
-            _renderDpiBox);
+        _paneGeneral = generalGrid;
 
-        // 8. 翻译 · 模型供应商（T11 主从双栏骨架 + T13 自定义详情；S1/S3/P22–P23）
-        AddSectionHeader(rows, ref row, "翻译");
-        AddSpanningRow(rows, ref row, new TextBlock
+        // ---- Pane 2: 外观（appearance）----
+        var appearanceGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
+        appearanceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        appearanceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var appearanceRow = 0;
+
+        AddComboItem(_themeBox, "跟随系统", AppSettings.ThemeSystem);
+        AddComboItem(_themeBox, "亮色", AppSettings.ThemeLight);
+        AddComboItem(_themeBox, "暗色", AppSettings.ThemeDark);
+        SelectComboValue(_themeBox, current.Theme);
+        AddRow(appearanceGrid, ref appearanceRow, "主题", "外观主题：亮色 / 暗色 / 跟随系统；保存后立即生效（无需重启）。", _themeBox);
+
+        _paneAppearance = appearanceGrid;
+
+        // ---- Pane 3: 翻译·模型供应商（translation.providers）----
+        var providersPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
+        providersPanel.Children.Add(new TextBlock
         {
             Text = "管理翻译服务商：内置预设、本地服务与自定义供应商。密钥只交 Windows 凭据管理器，设置文件绝不含密钥；供应商改动即时生效。",
             Style = FindStyle("FieldHint"),
+            TextWrapping = TextWrapping.Wrap,
         });
-        AddSpanningRow(rows, ref row, BuildProviderMasterDetail());
+        providersPanel.Children.Add(BuildProviderMasterDetail());
+        RefreshProviderList();
+        _paneTranslationProviders = providersPanel;
 
-        // 产物页脚标记（§9.3）：一般文档可关；法律 / 医学高风险模板强制显示、不受此开关影响。
+        // ---- Pane 4: 术语表（translation.glossary）----
+        var glossaryPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
+        glossaryPanel.Children.Add(new TextBlock
+        {
+            Text = "术语表用于强制固定术语翻译。术语表文件在翻译面板 / 批量翻译工具中按任务选择，本设置页面不提供术语表编辑功能。",
+            Style = FindStyle("FieldHint"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+        });
+        _paneTranslationGlossary = glossaryPanel;
+
+        // ---- Pane 5: 输出（translation.output）----
+        var outputPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
         _markerCheck.Content = "产物 PDF 页脚添加「机器翻译 · 请核对」标记（一般文档可关）";
         _markerCheck.IsChecked = current.TranslationMarkerEnabled;
         _markerCheck.FontSize = 12;
         _markerCheck.Cursor = System.Windows.Input.Cursors.Hand;
         _markerCheck.VerticalAlignment = VerticalAlignment.Center;
         _markerCheck.Margin = new Thickness(0, 12, 0, 0);
-        AddSpanningRow(rows, ref row, _markerCheck);
-        AddSpanningRow(rows, ref row, new TextBlock
+        outputPanel.Children.Add(_markerCheck);
+        outputPanel.Children.Add(new TextBlock
         {
             Text = "法律 / 医学高风险模板强制显示该页脚标记，不受此开关影响；结果区「机器翻译 · 请核对」标记始终常驻。",
             Style = FindStyle("FieldHint"),
+            TextWrapping = TextWrapping.Wrap,
         });
+        _paneTranslationOutput = outputPanel;
 
-        RefreshProviderList();
+        // ---- Pane 6: 高级（advanced）----
+        var advancedGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
+        advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var advancedRow = 0;
+
+        _printDpiBox.Text = current.PrintDpi.ToString(CultureInfo.InvariantCulture);
+        ApplyFieldStyle(_printDpiBox, 120);
+        AddRow(advancedGrid, ref advancedRow, "打印 DPI",
+            $"打印渲染 DPI（{AppSettings.PrintDpiMin}–{AppSettings.PrintDpiMax}，默认 {AppSettings.PrintDpiDefault}）。", _printDpiBox);
+
+        _renderDpiBox.Text = current.DefaultRenderDpi.ToString("0.#", CultureInfo.InvariantCulture);
+        ApplyFieldStyle(_renderDpiBox, 120);
+        AddRow(advancedGrid, ref advancedRow, "默认渲染 DPI",
+            $"阅读渲染基准 DPI（{AppSettings.RenderDpiMin:0}–{AppSettings.RenderDpiMax:0}，默认 {AppSettings.RenderDpiDefault:0}）；不改变高倍率渲染阈值，也不参与打印。",
+            _renderDpiBox);
+
+        _paneAdvanced = advancedGrid;
+
+        // ====================================================================
+        // 内容宿主：6 面板 + pane head（Visibility 切换）
+        // ====================================================================
+        var paneHeadPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+        _paneHeadTitle.FontSize = 16;
+        _paneHeadTitle.FontWeight = FontWeights.Bold;
+        _paneHeadTitle.FontFamily = FindFontFamily("FontFamily.Display");
+        _paneHeadTitle.Foreground = FindBrush("Brush.TextPrimary");
+        _paneHeadTitle.TextWrapping = TextWrapping.Wrap;
+        paneHeadPanel.Children.Add(_paneHeadTitle);
+        _paneHeadDesc.FontSize = 12;
+        _paneHeadDesc.Foreground = FindBrush("Brush.TextSecondary");
+        _paneHeadDesc.TextWrapping = TextWrapping.Wrap;
+        _paneHeadDesc.Margin = new Thickness(0, 2, 0, 8);
+        paneHeadPanel.Children.Add(_paneHeadDesc);
+
+        var contentHost = new Grid();
+        // All 6 panes叠在同一个单元格，靠 Visibility 切换
+        Grid.SetRow(paneHeadPanel, 0);
+        contentHost.Children.Add(paneHeadPanel);
+        Grid.SetRow(_paneGeneral, 0);
+        contentHost.Children.Add(_paneGeneral);
+        Grid.SetRow(_paneAppearance, 0);
+        contentHost.Children.Add(_paneAppearance);
+        Grid.SetRow(_paneTranslationProviders, 0);
+        contentHost.Children.Add(_paneTranslationProviders);
+        Grid.SetRow(_paneTranslationGlossary, 0);
+        contentHost.Children.Add(_paneTranslationGlossary);
+        Grid.SetRow(_paneTranslationOutput, 0);
+        contentHost.Children.Add(_paneTranslationOutput);
+        Grid.SetRow(_paneAdvanced, 0);
+        contentHost.Children.Add(_paneAdvanced);
+
+        var contentPane = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = contentHost,
+        };
+
+        // ====================================================================
+        // 左侧导航列（170px）：ListBox + 选中态样式（T3）
+        // ====================================================================
+        var navPanel = new StackPanel { Width = 170 };
+        var navCaption = new TextBlock
+        {
+            Text = "设置分类",
+            FontSize = 11,
+            Foreground = FindBrush("Brush.TextSecondary"),
+            Margin = new Thickness(16, 16, 0, 6),
+        };
+        navPanel.Children.Add(navCaption);
+
+        _navList = BuildNavListBox();
+        _navList.SelectionChanged += OnNavSelectionChanged;
+        navPanel.Children.Add(_navList);
 
         // ---- 底部按钮带（46px） ----
         var save = new Button { Content = "保存", MinWidth = 96, IsDefault = true, Style = FindStyle("PrimaryButton") };
@@ -278,7 +381,6 @@ public sealed class SettingsDialog : Window
         var titleBar = new Grid { Height = 44 };
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var dialogTitle = new TextBlock
         {
             Text = "设置",
@@ -290,7 +392,6 @@ public sealed class SettingsDialog : Window
         Grid.SetRow(dialogTitle, 0);
         Grid.SetColumn(dialogTitle, 0);
         titleBar.Children.Add(dialogTitle);
-
         var closeButton = new Button
         {
             Content = "\u2715",
@@ -309,70 +410,10 @@ public sealed class SettingsDialog : Window
         Grid.SetColumn(closeButton, 1);
         titleBar.Children.Add(closeButton);
 
-        // ---- 左侧导航列（170px） ----
-        var navPanel = new StackPanel { Width = 170, Margin = new Thickness(0, 0, 0, 0) };
-
-        var navCaption = new TextBlock
-        {
-            Text = "设置分类",
-            FontSize = 11,
-            Foreground = FindBrush("Brush.TextSecondary"),
-            Margin = new Thickness(16, 16, 0, 6),
-        };
-        navPanel.Children.Add(navCaption);
-
-        // Navigation items: 常规 / 外观 / 翻译 / 模型供应商(indented) / 术语表(indented) / 输出(indented) / 高级
-        // Design: .item.on { background: AccentSoft; foreground: AccentText; font-weight: 600 }
-        var navItems = new (string Text, bool IsSub, bool IsSelected)[]
-        {
-            ("常规", false, false),
-            ("外观", false, false),
-            ("翻译", false, false),
-            ("模型供应商", true, true),   // selected: AccentSoft bg + AccentText fg + SemiBold
-            ("术语表", true, false),
-            ("输出", true, false),
-            ("高级", false, false),
-        };
-
-        foreach (var (text, isSub, isSelected) in navItems)
-        {
-            var item = new Border
-            {
-                Padding = isSub
-                    ? new Thickness(22, 5, 12, 5)
-                    : new Thickness(16, 5, 12, 5),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                Background = isSelected ? FindBrush("Brush.AccentSoft") : Brushes.Transparent,
-                CornerRadius = new CornerRadius(4),
-                Margin = new Thickness(8, 1, 8, 1),
-            };
-            var itemText = new TextBlock
-            {
-                Text = text,
-                FontSize = isSub ? 12 : 13,
-                FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
-                Foreground = isSelected
-                    ? FindBrush("Brush.AccentText")
-                    : FindBrush("Brush.TextPrimary"),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            item.Child = itemText;
-            navPanel.Children.Add(item);
-        }
-
-        // ---- 右侧内容面板：可滚动 ----
-        var contentPane = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = rows,
-        };
-
         // ---- 中间带：导航列 + 内容面板 ----
         var middleBand = new Grid();
         middleBand.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
         middleBand.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
         Grid.SetColumn(navPanel, 0);
         middleBand.Children.Add(navPanel);
         Grid.SetColumn(contentPane, 1);
@@ -380,10 +421,9 @@ public sealed class SettingsDialog : Window
 
         // ---- 根布局：三行 Grid（标题 / 内容 / 按钮） ----
         var root = new Grid();
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });   // 顶部标题带
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 中间内容带
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 底部按钮带
-
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         Grid.SetRow(titleBar, 0);
         root.Children.Add(titleBar);
         Grid.SetRow(middleBand, 1);
@@ -391,7 +431,160 @@ public sealed class SettingsDialog : Window
         Grid.SetRow(buttons, 2);
         root.Children.Add(buttons);
 
+        // ====================================================================
+        // 默认选中：恢复上次分类或常规（T5）
+        // ====================================================================
+        var initialKey = _lastCategory ?? "general";
+        SelectNavItem(initialKey);
+        // Suppress initial selection event to avoid recursion; apply directly
+        _suppressNavSelection = true;
+        ShowCategory(initialKey);
+        _suppressNavSelection = false;
+
         return root;
+    }
+
+    // ====================================================================
+    // 分类导航切换（T3/T5）
+    // ====================================================================
+
+    /// <summary>
+    /// 导航项切换回调：点击「翻译」父项默认进入「模型供应商」子页；
+    /// 更新 pane head 文本 + 面板 Visibility。
+    /// </summary>
+    private void OnNavSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressNavSelection) return;
+        if (_navList.SelectedItem is not ListBoxItem { Tag: string tag }) return;
+
+        // 点击「翻译」父项 → 跳转到「模型供应商」子页
+        if (tag == "translation")
+        {
+            _suppressNavSelection = true;
+            SelectNavItem("translation.providers");
+            _suppressNavSelection = false;
+            tag = "translation.providers";
+        }
+
+        _lastCategory = tag;
+        ShowCategory(tag);
+    }
+
+    /// <summary>切换分类面板可见性 + 更新 pane head 文本。</summary>
+    private void ShowCategory(string key)
+    {
+        // 全部隐藏
+        _paneGeneral.Visibility = Visibility.Collapsed;
+        _paneAppearance.Visibility = Visibility.Collapsed;
+        _paneTranslationProviders.Visibility = Visibility.Collapsed;
+        _paneTranslationGlossary.Visibility = Visibility.Collapsed;
+        _paneTranslationOutput.Visibility = Visibility.Collapsed;
+        _paneAdvanced.Visibility = Visibility.Collapsed;
+
+        switch (key)
+        {
+            case "general":
+                _paneGeneral.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "常规";
+                _paneHeadDesc.Text = "修改保存后，仅对随后新打开的文档生效；已打开文档不受影响。";
+                break;
+            case "appearance":
+                _paneAppearance.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "外观";
+                _paneHeadDesc.Text = "主题：亮色 / 暗色 / 跟随系统；保存后立即生效（无需重启）。";
+                break;
+            case "translation.providers":
+                _paneTranslationProviders.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "模型供应商";
+                _paneHeadDesc.Text = "管理翻译服务商：内置预设、本地服务与自定义供应商。密钥只交 Windows 凭据管理器，设置文件绝不含密钥；供应商改动即时生效。";
+                break;
+            case "translation.glossary":
+                _paneTranslationGlossary.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "术语表";
+                _paneHeadDesc.Text = "术语表用于强制固定术语翻译。术语表文件在翻译面板 / 批量翻译工具中按任务选择，本设置页面不提供术语表编辑功能。";
+                break;
+            case "translation.output":
+                _paneTranslationOutput.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "输出";
+                _paneHeadDesc.Text = "翻译产物的输出与标记设置。";
+                break;
+            case "advanced":
+                _paneAdvanced.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "高级";
+                _paneHeadDesc.Text = "打印与渲染的 DPI 设置。";
+                break;
+        }
+    }
+
+    /// <summary>按 Tag 选中导航项（不触发 ShowCategory，由调用方控制）。</summary>
+    private void SelectNavItem(string tag)
+    {
+        foreach (var item in _navList.Items)
+        {
+            if (item is ListBoxItem { Tag: string t } && string.Equals(t, tag, StringComparison.Ordinal))
+            {
+                _navList.SelectedItem = item;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 构建导航 ListBox：7 个 ListBoxItem，选中态复用 AccentSoft token（T3）。
+    /// Sub-items 通过局部 Padding 实现缩进（style 只设基础 padding，per-item 覆盖）。
+    /// </summary>
+    private ListBox BuildNavListBox()
+    {
+        var list = new ListBox
+        {
+            Name = "SettingsNavList",
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+        };
+
+        // ItemContainerStyle：选中态用 AccentSoft + AccentText + SemiBold
+        var style = new Style(typeof(ListBoxItem));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(16, 5, 12, 5)));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, FindBrush("Brush.TextPrimary")));
+        var selected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+        selected.Setters.Add(new Setter(Control.BackgroundProperty, FindBrush("Brush.AccentSoft")));
+        selected.Setters.Add(new Setter(Control.ForegroundProperty, FindBrush("Brush.AccentText")));
+        selected.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.SemiBold));
+        style.Triggers.Add(selected);
+        list.ItemContainerStyle = style;
+
+        // 导航项：常规 / 外观 / 翻译 / 模型供应商(sub) / 术语表(sub) / 输出(sub) / 高级
+        var items = new (string Text, string Tag, bool IsSub)[]
+        {
+            ("常规", "general", false),
+            ("外观", "appearance", false),
+            ("翻译", "translation", false),
+            ("模型供应商", "translation.providers", true),
+            ("术语表", "translation.glossary", true),
+            ("输出", "translation.output", true),
+            ("高级", "advanced", false),
+        };
+
+        foreach (var (text, tag, isSub) in items)
+        {
+            var lbi = new ListBoxItem
+            {
+                Content = text,
+                Tag = tag,
+                FontSize = isSub ? 12 : 13,
+                // Sub-items get extra left padding for visual indentation
+                Padding = isSub
+                    ? new Thickness(22, 5, 12, 5)
+                    : new Thickness(16, 5, 12, 5),
+                Cursor = System.Windows.Input.Cursors.Hand,
+            };
+            list.Items.Add(lbi);
+        }
+
+        return list;
     }
 
     /// <summary>向设置网格追加一行：左列标签（含提示），右列控件。</summary>

@@ -638,6 +638,23 @@ public sealed class SettingsDialogTests
         Assert.Fail("供应商列表中没有可选择的条目");
     }
 
+    /// <summary>按 Tag 选中导航 ListBox 中的分类项（T3：从 Descendants 查找名为 SettingsNavList 的 ListBox）。</summary>
+    private static void SelectNavCategory(SettingsDialog dialog, string tag)
+    {
+        var navList = Descendants(dialog)
+            .OfType<ListBox>()
+            .Single(lb => lb.Name == "SettingsNavList");
+        foreach (var item in navList.Items)
+        {
+            if (item is ListBoxItem { Tag: string t } && string.Equals(t, tag, StringComparison.Ordinal))
+            {
+                navList.SelectedItem = item;
+                return;
+            }
+        }
+        Assert.Fail($"导航项 Tag '{tag}' 未找到");
+    }
+
     private static SettingsDialog NewDialog(SettingsStore store)
     {
         var credentials = new TranslationCredentialStore(new InMemoryCredentialBackend());
@@ -656,6 +673,8 @@ public sealed class SettingsDialogTests
 
             Assert.Equal(880d, dialog.Width); // S1：矩形 880 × 560
 
+            // T3：导航到模型供应商页再断言（翻译段默认折叠）
+            SelectNavCategory(dialog, "translation.providers");
             var (_, _, detail, list) = FindProviderMasterDetail(dialog);
             Assert.Equal(423d, list.MaxHeight);                 // S1：左列表 236 × 423
             Assert.Equal(423d, detail.MaxHeight);               // S1：详情 472 × 423
@@ -702,6 +721,8 @@ public sealed class SettingsDialogTests
             });
 
             var dialog = NewDialog(store);
+            // T3：导航到模型供应商页再断言（翻译段默认折叠）
+            SelectNavCategory(dialog, "translation.providers");
             var (_, _, detail, list) = FindProviderMasterDetail(dialog);
             SelectLastProviderEntry(list); // 自定义项排在列表末尾
 
@@ -709,6 +730,94 @@ public sealed class SettingsDialogTests
             Assert.Equal(
                 new[] { "名称", "provider id（自动生成）", "API Key", "模型", "API 地址", "协议", "连接", "同意状态" },
                 visible);
+        });
+    }
+
+    // ================================================================ T3/T4/T5 结构测试
+
+    [Fact]
+    public void Navigation_CategoryItemsAndSwitching()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // 1. 导航项集合 == 设计集合
+            var navList = Descendants(dialog)
+                .OfType<ListBox>()
+                .Single(lb => lb.Name == "SettingsNavList");
+            var itemTexts = navList.Items.OfType<ListBoxItem>().Select(i => (string)i.Content).ToList();
+            Assert.Equal(new[] { "常规", "外观", "翻译", "模型供应商", "术语表", "输出", "高级" }, itemTexts);
+
+            // 2. 默认选中「常规」（T5）
+            var defaultItem = (ListBoxItem)navList.SelectedItem!;
+            Assert.Equal("general", defaultItem.Tag);
+
+            // 3. 逐个分类切换 → 断言对应面板 Visible，其余 Collapsed
+            // 需要通过反射或可见性检查来验证。使用 Descendants 查找已命名面板。
+            // 由于面板未设 Name（在 SettingsDialog 内部），我们通过 pane head 文本间接验证。
+            var headTitle = Descendants(dialog).OfType<TextBlock>()
+                .Single(tb => tb.FontWeight == FontWeights.Bold && tb.FontSize == 16);
+
+            // 常规
+            Assert.Equal("常规", headTitle.Text);
+
+            // 外观
+            SelectNavCategory(dialog, "appearance");
+            Assert.Equal("外观", headTitle.Text);
+
+            // 翻译 → 模型供应商（T3：点击翻译父项跳转模型供应商）
+            SelectNavCategory(dialog, "translation");
+            Assert.Equal("模型供应商", headTitle.Text);
+
+            // 术语表
+            SelectNavCategory(dialog, "translation.glossary");
+            Assert.Equal("术语表", headTitle.Text);
+
+            // 输出
+            SelectNavCategory(dialog, "translation.output");
+            Assert.Equal("输出", headTitle.Text);
+
+            // 高级
+            SelectNavCategory(dialog, "advanced");
+            Assert.Equal("高级", headTitle.Text);
+
+            // 4. 回到常规 → 确认可达
+            SelectNavCategory(dialog, "general");
+            Assert.Equal("常规", headTitle.Text);
+        });
+    }
+
+    [Fact]
+    public void Navigation_EachCategoryHasVisibleContent()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // 每个分类切换后，内容面板中至少有一个可见的子元素
+            var categories = new[] { "general", "appearance", "translation.providers", "translation.glossary", "translation.output", "advanced" };
+            foreach (var cat in categories)
+            {
+                SelectNavCategory(dialog, cat);
+                // contentPane 的 ScrollViewer 内的 Grid 应有可见子元素
+                // 通过 Descendants 查找 ScrollViewer（contentPane），验证其 Content 非空且有子元素
+                var scrollViewer = Descendants(dialog)
+                    .OfType<ScrollViewer>()
+                    .FirstOrDefault(sv => sv.VerticalScrollBarVisibility == ScrollBarVisibility.Auto
+                                       && sv.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled);
+                Assert.NotNull(scrollViewer);
+                Assert.IsType<Grid>(scrollViewer.Content);
+                var host = (Grid)scrollViewer.Content;
+                // 至少有一个 Visible 的 child（pane head + active pane）
+                var hasVisible = host.Children.OfType<FrameworkElement>()
+                    .Any(fe => fe.Visibility == Visibility.Visible);
+                Assert.True(hasVisible, $"分类 '{cat}' 没有可见内容");
+            }
         });
     }
 }
