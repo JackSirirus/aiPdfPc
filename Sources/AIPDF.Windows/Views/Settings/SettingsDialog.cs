@@ -12,6 +12,8 @@
 //     连接配置及其 v1.2 新字段（presetId / apiProtocol / modelProtocols；T2/T16 守卫）。
 // 代码构建（沿用 Views/Reader/ConfirmationDialog 范式，避免 XAML wpftmp/资源前向引用坑），
 // 视觉沿用 App.xaml 的 design token（Brush.* / FieldLabel / PrimaryButton 等），与既有模态一致。
+// v1.2 T3–T5：分类导航（170px 左栏 ListBox + 6 面板 Visibility 切换）；默认「常规」，
+//   会话内 _lastCategory 记住上次选择（不落盘）；关闭/取消/ESC 不写入，保存走 read-modify-write。
 using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
