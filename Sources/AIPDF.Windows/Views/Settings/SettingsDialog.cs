@@ -171,7 +171,8 @@ public sealed class SettingsDialog : Window
         var generalGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
         generalGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         generalGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var generalRow = 0;
+        // AddRow 内部先 row++ 再追加 RowDefinition，故计数器初值必须为 -1（否则末行越界与倒数第二行重叠）。
+        var generalRow = -1;
 
         // 1. 默认缩放
         AddComboItem(_zoomBox, "适配宽度", AppSettings.ZoomFitWidth);
@@ -234,7 +235,7 @@ public sealed class SettingsDialog : Window
         var appearanceGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
         appearanceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         appearanceGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var appearanceRow = 0;
+        var appearanceRow = -1;
 
         AddComboItem(_themeBox, "跟随系统", AppSettings.ThemeSystem);
         AddComboItem(_themeBox, "亮色", AppSettings.ThemeLight);
@@ -292,7 +293,7 @@ public sealed class SettingsDialog : Window
         var advancedGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
         advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var advancedRow = 0;
+        var advancedRow = -1;
 
         _printDpiBox.Text = current.PrintDpi.ToString(CultureInfo.InvariantCulture);
         ApplyFieldStyle(_printDpiBox, 120);
@@ -624,33 +625,6 @@ public sealed class SettingsDialog : Window
         control.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetRow(control, row);
         Grid.SetColumn(control, 1);
-        grid.Children.Add(control);
-    }
-
-    /// <summary>追加跨两列的分段标题（用于「翻译」段）。</summary>
-    private static void AddSectionHeader(Grid grid, ref int row, string text)
-    {
-        row++;
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var header = new TextBlock
-        {
-            Text = text,
-            Style = FindStyle("SectionTitle"),
-            Margin = new Thickness(0, 18, 0, 2),
-        };
-        Grid.SetRow(header, row);
-        Grid.SetColumnSpan(header, 2);
-        grid.Children.Add(header);
-    }
-
-    /// <summary>追加跨两列的自适应控件（状态行 / 操作按钮组）。</summary>
-    private static void AddSpanningRow(Grid grid, ref int row, FrameworkElement control)
-    {
-        row++;
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        control.Margin = new Thickness(0, 2, 0, 4);
-        Grid.SetRow(control, row);
-        Grid.SetColumnSpan(control, 2);
         grid.Children.Add(control);
     }
 
