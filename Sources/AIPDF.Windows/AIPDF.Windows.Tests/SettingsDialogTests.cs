@@ -735,6 +735,27 @@ public sealed class SettingsDialogTests
 
     // ================================================================ T3/T4/T5 结构测试
 
+    /// <summary>通过 pane Name 查找面板。</summary>
+    private static FrameworkElement FindPane(SettingsDialog dialog, string paneName)
+        => Descendants(dialog).OfType<FrameworkElement>()
+            .Single(fe => fe.Name == paneName);
+
+    /// <summary>六个分类名 → 对应 pane Name。</summary>
+    private static readonly Dictionary<string, string> CategoryToPaneName = new()
+    {
+        ["general"] = "Pane_general",
+        ["appearance"] = "Pane_appearance",
+        ["translation.providers"] = "Pane_translation_providers",
+        ["translation.glossary"] = "Pane_translation_glossary",
+        ["translation.output"] = "Pane_translation_output",
+        ["advanced"] = "Pane_advanced",
+    };
+
+    /// <summary>所有六个 pane Name。</summary>
+    private static readonly string[] AllPaneNames =
+        ["Pane_general", "Pane_appearance", "Pane_translation_providers",
+         "Pane_translation_glossary", "Pane_translation_output", "Pane_advanced"];
+
     [Fact]
     public void Navigation_CategoryItemsAndSwitching()
     {
@@ -755,38 +776,49 @@ public sealed class SettingsDialogTests
             var defaultItem = (ListBoxItem)navList.SelectedItem!;
             Assert.Equal("general", defaultItem.Tag);
 
-            // 3. 逐个分类切换 → 断言对应面板 Visible，其余 Collapsed
-            // 需要通过反射或可见性检查来验证。使用 Descendants 查找已命名面板。
-            // 由于面板未设 Name（在 SettingsDialog 内部），我们通过 pane head 文本间接验证。
+            // 3. 逐个分类切换 → 断言 pane Name + Visibility，以及 pane head 文本
             var headTitle = Descendants(dialog).OfType<TextBlock>()
-                .Single(tb => tb.FontWeight == FontWeights.Bold && tb.FontSize == 16);
+                .Single(tb => tb.Name == "PaneHeadTitle");
 
             // 常规
             Assert.Equal("常规", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_general").Visibility);
 
             // 外观
             SelectNavCategory(dialog, "appearance");
             Assert.Equal("外观", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_appearance").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_general").Visibility);
 
             // 翻译 → 模型供应商（T3：点击翻译父项跳转模型供应商）
             SelectNavCategory(dialog, "translation");
             Assert.Equal("模型供应商", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_translation_providers").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_appearance").Visibility);
 
             // 术语表
             SelectNavCategory(dialog, "translation.glossary");
             Assert.Equal("术语表", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_translation_glossary").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_translation_providers").Visibility);
 
             // 输出
             SelectNavCategory(dialog, "translation.output");
             Assert.Equal("输出", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_translation_output").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_translation_glossary").Visibility);
 
             // 高级
             SelectNavCategory(dialog, "advanced");
             Assert.Equal("高级", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_advanced").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_translation_output").Visibility);
 
-            // 4. 回到常规 → 确认可达
+            // 4. 回到常规 → 确认可达，且高级面板已 Collapsed
             SelectNavCategory(dialog, "general");
             Assert.Equal("常规", headTitle.Text);
+            Assert.Equal(Visibility.Visible, FindPane(dialog, "Pane_general").Visibility);
+            Assert.Equal(Visibility.Collapsed, FindPane(dialog, "Pane_advanced").Visibility);
         });
     }
 
@@ -799,25 +831,158 @@ public sealed class SettingsDialogTests
             using var fx = new Fixture();
             var dialog = NewDialog(fx.NewStore());
 
-            // 每个分类切换后，内容面板中至少有一个可见的子元素
-            var categories = new[] { "general", "appearance", "translation.providers", "translation.glossary", "translation.output", "advanced" };
+            // 每个分类切换后：对应 pane Visible 且含可见 TextBlock；其余五个 pane 均 Collapsed
+            var categories = new[]
+            {
+                "general", "appearance", "translation.providers",
+                "translation.glossary", "translation.output", "advanced"
+            };
             foreach (var cat in categories)
             {
                 SelectNavCategory(dialog, cat);
-                // contentPane 的 ScrollViewer 内的 Grid 应有可见子元素
-                // 通过 Descendants 查找 ScrollViewer（contentPane），验证其 Content 非空且有子元素
-                var scrollViewer = Descendants(dialog)
-                    .OfType<ScrollViewer>()
-                    .FirstOrDefault(sv => sv.VerticalScrollBarVisibility == ScrollBarVisibility.Auto
-                                       && sv.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled);
-                Assert.NotNull(scrollViewer);
-                Assert.IsType<Grid>(scrollViewer.Content);
-                var host = (Grid)scrollViewer.Content;
-                // 至少有一个 Visible 的 child（pane head + active pane）
-                var hasVisible = host.Children.OfType<FrameworkElement>()
-                    .Any(fe => fe.Visibility == Visibility.Visible);
-                Assert.True(hasVisible, $"分类 '{cat}' 没有可见内容");
+                var activeName = CategoryToPaneName[cat];
+                var activePane = FindPane(dialog, activeName);
+                Assert.Equal(Visibility.Visible, activePane.Visibility);
+
+                // 活跃 pane 至少包含一个可见且非空的 TextBlock
+                var visibleTextBlocks = Descendants(activePane).OfType<TextBlock>()
+                    .Where(tb => tb.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(tb.Text))
+                    .ToList();
+                Assert.True(visibleTextBlocks.Count > 0,
+                    $"分类 '{cat}' 的面板 '{activeName}' 中没有可见的 TextBlock");
+
+                // 其余五个 pane 必须 Collapsed
+                var otherPanes = AllPaneNames.Where(n => n != activeName);
+                foreach (var otherName in otherPanes)
+                {
+                    var otherPane = FindPane(dialog, otherName);
+                    Assert.Equal(Visibility.Collapsed, otherPane.Visibility);
+                }
             }
+        });
+    }
+
+    [Fact]
+    public void Dialog_DesignS1_FixedDimensions()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            Assert.Equal(880d, dialog.Width);
+            Assert.Equal(560d, dialog.Height);
+            Assert.Equal(SizeToContent.Manual, dialog.SizeToContent);
+        });
+    }
+
+    [Fact]
+    public void Dialog_NavigationColumn_Width170()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // 中间带 Grid：两列，ColumnDefinitions[0] 宽度 170（导航列）。
+            // 必须与翻译 master-detail Grid（ColumnDefinitions[0] = 236）区分。
+            var middleBand = Descendants(dialog)
+                .OfType<Grid>()
+                .FirstOrDefault(g => g.ColumnDefinitions.Count == 2
+                                  && g.ColumnDefinitions[0].Width.Value == 170
+                                  && g.ColumnDefinitions[1].Width.IsStar);
+            Assert.NotNull(middleBand);
+        });
+    }
+
+    [Fact]
+    public void ContentHost_PaneHeadAndBodyOccupyDifferentRows()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // contentHost 是 ScrollViewer（Auto 垂直 / Disabled 水平）的 Content Grid
+            var scrollViewer = Descendants(dialog)
+                .OfType<ScrollViewer>()
+                .FirstOrDefault(sv => sv.VerticalScrollBarVisibility == ScrollBarVisibility.Auto
+                                   && sv.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled);
+            Assert.NotNull(scrollViewer);
+            Assert.IsType<Grid>(scrollViewer.Content);
+            var host = (Grid)scrollViewer.Content;
+
+            // 至少 2 行：Auto（pane head）+ Star（pane body）
+            Assert.True(host.RowDefinitions.Count >= 2,
+                $"contentHost 应有 >= 2 行，实际 {host.RowDefinitions.Count} 行");
+
+            // PaneHeadTitle 所在面板在 row 0
+            var headTitle = Descendants(dialog).OfType<TextBlock>()
+                .Single(tb => tb.Name == "PaneHeadTitle");
+            var headPanel = LogicalTreeHelper.GetParent(headTitle) as FrameworkElement;
+            Assert.NotNull(headPanel);
+            Assert.Equal(0, Grid.GetRow(headPanel));
+
+            // Pane_general 在 row 1
+            var generalPane = FindPane(dialog, "Pane_general");
+            Assert.Equal(1, Grid.GetRow(generalPane));
+        });
+    }
+
+    [Fact]
+    public void AllSettingsItems_AreReachableInCategory()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // 常规面板：默认缩放 / 默认左栏面板 / 最近文件上限 / 默认输出目录
+            SelectNavCategory(dialog, "general");
+            var general = FindPane(dialog, "Pane_general");
+            Assert.Equal(Visibility.Visible, general.Visibility);
+            Assert.Contains("默认缩放", Descendants(general).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+            Assert.Contains("默认左栏面板", Descendants(general).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+            Assert.Contains("最近文件上限", Descendants(general).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+            Assert.Contains("默认输出目录", Descendants(general).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+
+            // 外观面板：主题
+            SelectNavCategory(dialog, "appearance");
+            var appearance = FindPane(dialog, "Pane_appearance");
+            Assert.Equal(Visibility.Visible, appearance.Visibility);
+            Assert.Contains("主题", Descendants(appearance).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+
+            // 翻译·模型供应商面板：master-detail 列表存在
+            SelectNavCategory(dialog, "translation.providers");
+            var providers = FindPane(dialog, "Pane_translation_providers");
+            Assert.Equal(Visibility.Visible, providers.Visibility);
+            var (_, _, _, list) = FindProviderMasterDetail(dialog);
+            Assert.True(list.Items.Count > 0, "模型供应商列表应包含条目");
+
+            // 翻译·输出面板：标记 CheckBox 存在
+            SelectNavCategory(dialog, "translation.output");
+            var output = FindPane(dialog, "Pane_translation_output");
+            Assert.Equal(Visibility.Visible, output.Visibility);
+            var markerCheck = Descendants(output).OfType<CheckBox>().FirstOrDefault();
+            Assert.NotNull(markerCheck);
+
+            // 高级面板：打印 DPI / 默认渲染 DPI
+            SelectNavCategory(dialog, "advanced");
+            var advanced = FindPane(dialog, "Pane_advanced");
+            Assert.Equal(Visibility.Visible, advanced.Visibility);
+            Assert.Contains("打印 DPI", Descendants(advanced).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
+            Assert.Contains("默认渲染 DPI", Descendants(advanced).OfType<TextBlock>()
+                .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
         });
     }
 }
