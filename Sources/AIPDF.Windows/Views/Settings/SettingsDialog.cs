@@ -129,8 +129,9 @@ public sealed class SettingsDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
-        SizeToContent = SizeToContent.Height;
-        Width = 880; // S1 设计稿：820 → 880，容纳 236 左列表 + 472 详情（T11 主从双栏）
+        SizeToContent = SizeToContent.Manual;
+        Width = 880; // S1 设计稿：固定 880 × 560
+        Height = 560;
         WindowStyle = WindowStyle.ToolWindow;
         FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI");
         Background = FindBrush("Brush.Window");
@@ -145,34 +146,12 @@ public sealed class SettingsDialog : Window
 
     private UIElement BuildContent(AppSettings current)
     {
-        var rows = new Grid { Margin = new Thickness(24, 20, 24, 8) };
+        // ---- 内容区：设置网格（控件均为实例字段，必须构建一次） ----
+        var rows = new Grid { Margin = new Thickness(20, 12, 20, 8) };
         rows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         rows.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var row = 0;
-        rows.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 0 页标题
-        var title = new TextBlock
-        {
-            Text = "设置",
-            Style = FindStyle("PageTitle"),
-            FontFamily = FindFontFamily("FontFamily.Display"),
-        };
-        rows.Children.Add(title);
-        Grid.SetRow(title, row);
-        Grid.SetColumnSpan(title, 2);
-
-        row++;
-        rows.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var subtitle = new TextBlock
-        {
-            Text = "修改保存后，仅对随后新打开的文档生效；已打开文档不受影响。",
-            Style = FindStyle("PageSubtitle"),
-            Margin = new Thickness(0, 4, 0, 12),
-            TextWrapping = TextWrapping.Wrap,
-        };
-        rows.Children.Add(subtitle);
-        Grid.SetRow(subtitle, row);
-        Grid.SetColumnSpan(subtitle, 2);
 
         // 1. 默认缩放（FR-38 项 1）
         AddComboItem(_zoomBox, "适配宽度", AppSettings.ZoomFitWidth);
@@ -275,7 +254,7 @@ public sealed class SettingsDialog : Window
 
         RefreshProviderList();
 
-        // 底部按钮
+        // ---- 底部按钮带（46px） ----
         var save = new Button { Content = "保存", MinWidth = 96, IsDefault = true, Style = FindStyle("PrimaryButton") };
         save.Click += OnSaveClick;
         var cancel = new Button
@@ -295,19 +274,123 @@ public sealed class SettingsDialog : Window
         buttons.Children.Add(cancel);
         buttons.Children.Add(save);
 
-        // 内容过高时滚动（翻译段使对话框可能超出小屏）；顶部标题与底部按钮固定。
-        var scroll = new ScrollViewer
+        // ---- 顶部标题带（44px）：标题 + 关闭按钮 ----
+        var titleBar = new Grid { Height = 44 };
+        titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var dialogTitle = new TextBlock
+        {
+            Text = "设置",
+            Style = FindStyle("PageTitle"),
+            FontFamily = FindFontFamily("FontFamily.Display"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(24, 0, 0, 0),
+        };
+        Grid.SetRow(dialogTitle, 0);
+        Grid.SetColumn(dialogTitle, 0);
+        titleBar.Children.Add(dialogTitle);
+
+        var closeButton = new Button
+        {
+            Content = "\u2715",
+            FontSize = 16,
+            Width = 32,
+            Height = 32,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 16, 0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = FindBrush("Brush.TextPrimary"),
+            Cursor = System.Windows.Input.Cursors.Hand,
+        };
+        closeButton.Click += (_, _) => { DialogResult = false; Close(); };
+        Grid.SetRow(closeButton, 0);
+        Grid.SetColumn(closeButton, 1);
+        titleBar.Children.Add(closeButton);
+
+        // ---- 左侧导航列（170px） ----
+        var navPanel = new StackPanel { Width = 170, Margin = new Thickness(0, 0, 0, 0) };
+
+        var navCaption = new TextBlock
+        {
+            Text = "设置分类",
+            FontSize = 11,
+            Foreground = FindBrush("Brush.TextSecondary"),
+            Margin = new Thickness(16, 16, 0, 6),
+        };
+        navPanel.Children.Add(navCaption);
+
+        // Navigation items: 常规 / 外观 / 翻译 / 模型供应商(indented) / 术语表(indented) / 输出(indented) / 高级
+        // Design: .item.on { background: AccentSoft; foreground: AccentText; font-weight: 600 }
+        var navItems = new (string Text, bool IsSub, bool IsSelected)[]
+        {
+            ("常规", false, false),
+            ("外观", false, false),
+            ("翻译", false, false),
+            ("模型供应商", true, true),   // selected: AccentSoft bg + AccentText fg + SemiBold
+            ("术语表", true, false),
+            ("输出", true, false),
+            ("高级", false, false),
+        };
+
+        foreach (var (text, isSub, isSelected) in navItems)
+        {
+            var item = new Border
+            {
+                Padding = isSub
+                    ? new Thickness(22, 5, 12, 5)
+                    : new Thickness(16, 5, 12, 5),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Background = isSelected ? FindBrush("Brush.AccentSoft") : Brushes.Transparent,
+                CornerRadius = new CornerRadius(4),
+                Margin = new Thickness(8, 1, 8, 1),
+            };
+            var itemText = new TextBlock
+            {
+                Text = text,
+                FontSize = isSub ? 12 : 13,
+                FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = isSelected
+                    ? FindBrush("Brush.AccentText")
+                    : FindBrush("Brush.TextPrimary"),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            item.Child = itemText;
+            navPanel.Children.Add(item);
+        }
+
+        // ---- 右侧内容面板：可滚动 ----
+        var contentPane = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            MaxHeight = Math.Max(360, SystemParameters.WorkArea.Height - 200),
             Content = rows,
         };
 
-        var root = new DockPanel();
-        DockPanel.SetDock(buttons, Dock.Bottom);
+        // ---- 中间带：导航列 + 内容面板 ----
+        var middleBand = new Grid();
+        middleBand.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+        middleBand.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        Grid.SetColumn(navPanel, 0);
+        middleBand.Children.Add(navPanel);
+        Grid.SetColumn(contentPane, 1);
+        middleBand.Children.Add(contentPane);
+
+        // ---- 根布局：三行 Grid（标题 / 内容 / 按钮） ----
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(44) });   // 顶部标题带
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 中间内容带
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 底部按钮带
+
+        Grid.SetRow(titleBar, 0);
+        root.Children.Add(titleBar);
+        Grid.SetRow(middleBand, 1);
+        root.Children.Add(middleBand);
+        Grid.SetRow(buttons, 2);
         root.Children.Add(buttons);
-        root.Children.Add(scroll);
+
         return root;
     }
 
