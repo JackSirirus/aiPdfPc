@@ -228,6 +228,7 @@ public sealed class SettingsDialog : Window
             "工具页输出目录的初始值；留空 = 沿用页面「选择输出文件夹」（引擎仍每次生成新任务目录、不覆盖源文件）。", outputRow);
 
         _paneGeneral = generalGrid;
+        _paneGeneral.Name = "Pane_general";
 
         // ---- Pane 2: 外观（appearance）----
         var appearanceGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
@@ -242,6 +243,7 @@ public sealed class SettingsDialog : Window
         AddRow(appearanceGrid, ref appearanceRow, "主题", "外观主题：亮色 / 暗色 / 跟随系统；保存后立即生效（无需重启）。", _themeBox);
 
         _paneAppearance = appearanceGrid;
+        _paneAppearance.Name = "Pane_appearance";
 
         // ---- Pane 3: 翻译·模型供应商（translation.providers）----
         var providersPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
@@ -254,6 +256,7 @@ public sealed class SettingsDialog : Window
         providersPanel.Children.Add(BuildProviderMasterDetail());
         RefreshProviderList();
         _paneTranslationProviders = providersPanel;
+        _paneTranslationProviders.Name = "Pane_translation_providers";
 
         // ---- Pane 4: 术语表（translation.glossary）----
         var glossaryPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
@@ -265,6 +268,7 @@ public sealed class SettingsDialog : Window
             Margin = new Thickness(0, 8, 0, 0),
         });
         _paneTranslationGlossary = glossaryPanel;
+        _paneTranslationGlossary.Name = "Pane_translation_glossary";
 
         // ---- Pane 5: 输出（translation.output）----
         var outputPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
@@ -282,6 +286,7 @@ public sealed class SettingsDialog : Window
             TextWrapping = TextWrapping.Wrap,
         });
         _paneTranslationOutput = outputPanel;
+        _paneTranslationOutput.Name = "Pane_translation_output";
 
         // ---- Pane 6: 高级（advanced）----
         var advancedGrid = new Grid { Margin = new Thickness(20, 12, 20, 8) };
@@ -301,11 +306,13 @@ public sealed class SettingsDialog : Window
             _renderDpiBox);
 
         _paneAdvanced = advancedGrid;
+        _paneAdvanced.Name = "Pane_advanced";
 
         // ====================================================================
         // 内容宿主：6 面板 + pane head（Visibility 切换）
         // ====================================================================
         var paneHeadPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
+        _paneHeadTitle.Name = "PaneHeadTitle";
         _paneHeadTitle.FontSize = 16;
         _paneHeadTitle.FontWeight = FontWeights.Bold;
         _paneHeadTitle.FontFamily = FindFontFamily("FontFamily.Display");
@@ -319,20 +326,22 @@ public sealed class SettingsDialog : Window
         paneHeadPanel.Children.Add(_paneHeadDesc);
 
         var contentHost = new Grid();
-        // All 6 panes叠在同一个单元格，靠 Visibility 切换
+        contentHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        contentHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        // paneHeadPanel 占 row 0（Auto），6 个面板叠在 row 1，靠 Visibility 切换
         Grid.SetRow(paneHeadPanel, 0);
         contentHost.Children.Add(paneHeadPanel);
-        Grid.SetRow(_paneGeneral, 0);
+        Grid.SetRow(_paneGeneral, 1);
         contentHost.Children.Add(_paneGeneral);
-        Grid.SetRow(_paneAppearance, 0);
+        Grid.SetRow(_paneAppearance, 1);
         contentHost.Children.Add(_paneAppearance);
-        Grid.SetRow(_paneTranslationProviders, 0);
+        Grid.SetRow(_paneTranslationProviders, 1);
         contentHost.Children.Add(_paneTranslationProviders);
-        Grid.SetRow(_paneTranslationGlossary, 0);
+        Grid.SetRow(_paneTranslationGlossary, 1);
         contentHost.Children.Add(_paneTranslationGlossary);
-        Grid.SetRow(_paneTranslationOutput, 0);
+        Grid.SetRow(_paneTranslationOutput, 1);
         contentHost.Children.Add(_paneTranslationOutput);
-        Grid.SetRow(_paneAdvanced, 0);
+        Grid.SetRow(_paneAdvanced, 1);
         contentHost.Children.Add(_paneAdvanced);
 
         var contentPane = new ScrollViewer
