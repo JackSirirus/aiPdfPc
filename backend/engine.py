@@ -1991,6 +1991,108 @@ def process(operation, files, options, out):
     return outputs
 
 
+def _annot_key(doc, xref, key):
+    """读注释对象的某个键（不存在 / 坏对象返回 None）。"""
+    try:
+        kind, value = doc.xref_get_key(xref, key)
+    except Exception:  # noqa: BLE001 - 已释放 / 坏对象
+        return None
+    return None if kind == "null" else value
+
+
+def _annotation_row(doc, annot, xref, page_index):
+    """单条注释的读回行（V4 T9a）。
+
+    **两个名字必须都返回**：标准 `/NM`（`xref_get_key`）与 PyMuPDF 私有 `/Name`
+    （`annot.info["name"]`，即 `set_name()` 真正写入的键）。二者并不一致（实测
+    `/NM(fitz-A0)/Name/STABLE-NAME-1`），跨会话 / 跨阅读器按名匹配时以哪个为准必须显式决定，
+    否则会静默错位。见 .omo/evidence/v4-spike-annotation-readback.md。
+    """
+    row = {
+        "page": page_index,
+        "xref": xref,
+        "subtype": _annot_key(doc, xref, "Subtype"),
+        "name": _annot_key(doc, xref, "NM"),
+        "privateName": None,
+        "irt": _annot_key(doc, xref, "IRT"),
+        "author": _annot_key(doc, xref, "T"),
+        "content": _annot_key(doc, xref, "Contents"),
+        "modified": _annot_key(doc, xref, "M"),
+        "color": _annot_key(doc, xref, "C"),
+        "rect": _annot_key(doc, xref, "Rect"),
+    }
+    if annot is not None:
+        try:
+            row["privateName"] = annot.info.get("name")
+        except Exception:  # noqa: BLE001
+            row["privateName"] = None
+        try:
+            row["rect"] = [round(float(value), 2) for value in annot.rect]
+        except Exception:  # noqa: BLE001
+            pass
+    return row
+
+
+def _page_annotation_rows(doc, page, page_index):
+    """单页注释读回：以 annots() 为主（含私有 /Name），annot_xrefs() 兜底补漏。
+
+    注意 `page.annot_xrefs()` 返回的是**元组**（xref, …, 数组名），须取 [0]。
+    """
+    rows = []
+    seen = set()
+    for annot in page.annots() or []:
+        xref = annot.xref
+        seen.add(xref)
+        rows.append(_annotation_row(doc, annot, xref, page_index))
+    # 兜底：annots() 在加密文档上读字符串不可靠（learnings），漏掉的 xref 用低层补
+    for entry in page.annot_xrefs() or []:
+        xref = entry[0] if isinstance(entry, (tuple, list)) else entry
+        if xref in seen:
+            continue
+        rows.append(_annotation_row(doc, None, xref, page_index))
+    return rows
+
+
+def list_annotations_request(request):
+    """V4 T9a：读回文档内全部注释（**只读**，不写回源文件，不进 BY_ID）。
+
+    options.pages 可选（0 基页码列表）：只读指定页——大文档可惰性分页读，避免一次性扫全篇
+    （S2 实测 1000 页 / 1000 条注释约 394ms）。
+    """
+    files = request.get("files") or []
+    if len(files) != 1:
+        raise UserError("批注读回一次处理一个文件。")
+    path = Path(str(files[0])).expanduser()
+    if not path.is_file():
+        raise UserError(f"文件不存在：{path.name}")
+    if path.suffix.lower() != ".pdf":
+        raise UserError("批注读回仅支持 PDF 文件。")
+
+    options = request.get("options") or {}
+    password = str(options.get("password") or "")
+    wanted = None
+    raw_pages = options.get("pages")
+    if isinstance(raw_pages, (list, tuple)) and raw_pages:
+        wanted = set()
+        for value in raw_pages:
+            try:
+                wanted.add(int(value))
+            except (TypeError, ValueError):
+                raise UserError("批注读回页码格式不正确。")
+
+    doc = open_pdf(str(path), password)
+    try:
+        page_count = len(doc)
+        rows = []
+        for index in range(page_count):
+            if wanted is not None and index not in wanted:
+                continue
+            rows.extend(_page_annotation_rows(doc, doc[index], index))
+        return {"ok": True, "pageCount": page_count, "annotations": rows}
+    finally:
+        doc.close()
+
+
 def dispatch(request):
     operation=request.get("operation", "")
     if operation=="health": return health()
@@ -2000,6 +2102,9 @@ def dispatch(request):
     if operation=="translate": return translate_request(request)
     # 划词（选中即译）轻量 op：无文件、无输出目录，只翻一段文本回一个字符串。
     if operation=="translate_text": return translate_text_request(request)
+    # V4 T9a：批注读回是**只读** op（不写回源文件），必须与写路径分开——绝不可放进
+    # ANNOTATION_OPERATIONS：那会走 save_annotations_request 的就地写回并覆盖源文件。
+    if operation=="list_annotations": return list_annotations_request(request)
     # 批注保存就地写回原文件，无输出目录且非 catalog 工具，必须在 BY_ID/outputDir
     # 校验之前处理；其内部自建 file/扩展名/multiple 等价校验（M-1）。
     if operation in ANNOTATION_OPERATIONS: return save_annotations_request(request,operation)

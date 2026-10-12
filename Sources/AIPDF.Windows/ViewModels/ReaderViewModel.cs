@@ -210,7 +210,7 @@ public partial class ReaderPageItemViewModel : ObservableObject
     private readonly List<AnnotationRecord> _annotationRecords = [];
 
     /// <summary>本页是否存在批注记录（缩放重算触发条件）。</summary>
-    internal bool HasAnnotationRecords => _annotationRecords.Count > 0;
+    internal bool HasAnnotationRecords => _annotationRecords.Count > 0 || _embeddedRecords.Count > 0;
 
     /// <summary>本页批注记录只读视图。</summary>
     internal IReadOnlyList<AnnotationRecord> AnnotationRecords => _annotationRecords;
@@ -256,11 +256,43 @@ public partial class ReaderPageItemViewModel : ObservableObject
     internal void RebuildAnnotations()
     {
         Annotations.Clear();
-        if (_annotationRecords.Count == 0 || WidthPt <= 0) return;
+        if (WidthPt <= 0) return;
+
+        // V4 T9a：脏记录（本次会话新增/修改）与**已内嵌**记录（从文件读回）都要投影。
+        // 二者分开存放：读回的批注不得进 _annotationRecords，否则保存时会被当成脏记录重复写回。
         foreach (var record in _annotationRecords)
         {
             Annotations.Add(AnnotationOverlay.FromRecord(record, WidthPt, DisplayWidth));
         }
+
+        foreach (var record in _embeddedRecords)
+        {
+            Annotations.Add(AnnotationOverlay.FromRecord(record, WidthPt, DisplayWidth));
+        }
+    }
+
+    // ---- V4 T9a：从文件读回的已内嵌批注 ----
+
+    /// <summary>
+    /// 已内嵌批注（打开文档时经引擎 <c>list_annotations</c> 读回）。**只读展示**：
+    /// 不进脏记录集合（<see cref="_annotationRecords"/>），故保存时不会被重复写回；
+    /// 供属性面板 / 回复线程 / 汇总导出读取。
+    /// </summary>
+    private readonly List<AnnotationRecord> _embeddedRecords = [];
+
+    /// <summary>已内嵌批注（V4 T9a）。</summary>
+    public IReadOnlyList<AnnotationRecord> EmbeddedRecords => _embeddedRecords;
+
+    /// <summary>V4 T9a：设置本页从文件读回的已内嵌批注并重建叠加层（父 VM 按页分发）。</summary>
+    public void SetEmbeddedRecords(IReadOnlyList<AnnotationRecord> records)
+    {
+        _embeddedRecords.Clear();
+        if (records is not null)
+        {
+            _embeddedRecords.AddRange(records);
+        }
+
+        RebuildAnnotations();
     }
 
     /// <summary>只释放 DIP 投影（PageReleased 钩子【缺口②】）；批注记录保留，滚回视口时经
@@ -1559,6 +1591,56 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             if (page.AnnotationRecords.Count > 0) list.AddRange(page.AnnotationRecords);
         }
         return list;
+    }
+
+    // ---- V4 T9a：从文件读回的已内嵌批注（只读展示）----
+
+    /// <summary>
+    /// 已内嵌批注（打开文档时经引擎 <c>list_annotations</c> 读回）。**只读**：
+    /// 不进 <see cref="GetAllRecords"/> 的脏记录集合，故保存时不会被重复写回；
+    /// 供属性面板 / 回复线程 / 汇总导出读取。
+    /// </summary>
+    public IReadOnlyList<AnnotationRecord> EmbeddedRecords
+    {
+        get
+        {
+            var list = new List<AnnotationRecord>();
+            foreach (var page in Pages)
+            {
+                if (page.EmbeddedRecords.Count > 0) list.AddRange(page.EmbeddedRecords);
+            }
+            return list;
+        }
+    }
+
+    /// <summary>V4 T9a：把读回的批注按页分发到各页（只读展示；不脏化文档）。</summary>
+    public void SetEmbeddedRecords(IReadOnlyList<AnnotationRecord> records)
+    {
+        var byPage = new Dictionary<int, List<AnnotationRecord>>();
+        foreach (var record in records ?? [])
+        {
+            if (!byPage.TryGetValue(record.PageIndex, out var bucket))
+            {
+                bucket = [];
+                byPage[record.PageIndex] = bucket;
+            }
+
+            bucket.Add(record);
+        }
+
+        for (var index = 0; index < Pages.Count; index++)
+        {
+            Pages[index].SetEmbeddedRecords(byPage.TryGetValue(index, out var bucket) ? bucket : []);
+        }
+    }
+
+    /// <summary>V4 T9a：清空已内嵌批注（关闭文档 / 重载）。</summary>
+    public void ClearEmbeddedRecords()
+    {
+        foreach (var page in Pages)
+        {
+            page.SetEmbeddedRecords([]);
+        }
     }
 
     /// <summary>

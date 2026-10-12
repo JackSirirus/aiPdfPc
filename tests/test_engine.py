@@ -563,6 +563,63 @@ class EngineTests(unittest.TestCase):
                 gray=page.get_pixmap(dpi=36,colorspace=fitz.csGRAY)
                 self.assertLess(min(gray.samples),250,f"第 {index+1} 页渲染为空白（内容流被写坏）")
 
+    def test_list_annotations_readback_roundtrip(self):
+        """V4 T9a：读回文件内注释——两个名字 / 内容 / 颜色 / 矩形 / 页码，且**只读**。
+
+        关键：读回后源文件字节必须不变（绝不能走 save_annotations 的就地写回路径）。
+        """
+        path=self._annotation_path("annot-readback.pdf")
+        self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"color":"#FF0000","rect":[50,100,300,130]},
+            {"action":"add","id":"ul1","kind":"underline","page":1,"color":"#00FF00","quads":[[50,100,300,130]]},
+            {"action":"add","id":"n1","kind":"note","page":2,"rect":[50,100,300,130],"text":"读回笔记"},
+        ])
+        after_save=path.read_bytes()
+
+        result=engine.dispatch({"operation":"list_annotations","files":[str(path)],"options":{}})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["pageCount"],3)
+        rows=result["annotations"]
+        # 笔记 = 关联高亮 + FreeText，故共 4 条
+        self.assertEqual(len(rows),4)
+        self.assertEqual(sorted(r["subtype"] for r in rows),
+                         ["/FreeText","/Highlight","/Highlight","/Underline"])
+        self.assertEqual(sorted({r["page"] for r in rows}),[0,1,2])
+        # 两个名字都要在：私有 /Name（set_name 真正写入的键）与标准 /NM
+        self.assertTrue({"h1","ul1","n1"} <= {r["privateName"] for r in rows},
+                        [r["privateName"] for r in rows])
+        for row in rows:
+            self.assertIn("name",row)
+            self.assertIsNotNone(row["rect"],"每条注释都应带矩形")
+        note=[r for r in rows if r["subtype"]=="/FreeText"][0]
+        self.assertIn("读回笔记",note["content"] or "")
+        highlight=[r for r in rows if r["subtype"]=="/Highlight" and r["page"]==0][0]
+        self.assertIn("1 0 0",highlight["color"] or "")
+
+        # **只读**：读回不得改动源文件
+        self.assertEqual(path.read_bytes(),after_save)
+
+    def test_list_annotations_pages_filter_and_encrypted(self):
+        """V4 T9a：pages 过滤（惰性分页读）+ 加密文档可读回。"""
+        path=self._annotation_path("annot-readback-enc.pdf",encrypted=True,password="user-pw")
+        self._save_annotations(path,[
+            {"action":"add","id":"e1","kind":"highlight","page":0,"rect":[50,100,300,130]},
+            {"action":"add","id":"e2","kind":"highlight","page":2,"rect":[50,100,300,130]},
+        ],password="user-pw")
+
+        result=engine.dispatch({"operation":"list_annotations","files":[str(path)],
+                                "options":{"password":"user-pw","pages":[2]}})
+        self.assertTrue(result["ok"])
+        rows=result["annotations"]
+        self.assertEqual([r["page"] for r in rows],[2])   # 只读第 2 页
+        self.assertEqual(rows[0]["privateName"],"e2")
+
+    def test_list_annotations_is_read_only_operation(self):
+        """V4 T9a：list_annotations 不进 BY_ID、也不进 ANNOTATION_OPERATIONS（写路径）。"""
+        self.assertNotIn("list_annotations",engine.BY_ID)
+        self.assertNotIn("list_annotations",engine.ANNOTATION_OPERATIONS)
+        self.assertEqual(len(engine.BY_ID),33)
+
     def test_annotation_operations_stay_out_of_catalog(self):
         # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
         self.assertEqual(len(engine.BY_ID),33)

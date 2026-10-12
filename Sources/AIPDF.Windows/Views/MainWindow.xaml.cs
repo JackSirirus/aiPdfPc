@@ -1629,6 +1629,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         EnsureAnnotationSaveService().RegisterDocument(
             new ReaderAnnotationSaveSource(vm, fullPath, _credentials.Get(fullPath)));
         CaptureConflictBaseline(fullPath);
+
+        // V4 T9a：后台读回文件内批注（只读展示；失败不阻断阅读）。
+        _ = LoadEmbeddedAnnotationsAsync(vm, fullPath);
     }
 
     /// <summary>
@@ -3125,6 +3128,38 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             });
         _annotationSaves.StateChanged += OnAnnotationSaveStateChanged;
         return _annotationSaves;
+    }
+
+    /// <summary>V4 T9a：批注读回服务（懒建，复用同一 bridge）。</summary>
+    private AnnotationReadbackService? _annotationReadback;
+
+    private AnnotationReadbackService EnsureAnnotationReadback()
+    {
+        if (_annotationReadback is not null) return _annotationReadback;
+        var bridge = (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge();
+        _annotationReadback = new AnnotationReadbackService(bridge);
+        return _annotationReadback;
+    }
+
+    /// <summary>
+    /// V4 T9a：后台读回文件内批注并挂到该标签的阅读视图（只读展示）。
+    /// 读回结果**不进脏记录集合**（见 <see cref="ReaderViewModel.SetEmbeddedRecords"/>），
+    /// 否则保存时会被当成新增批注重复写回。读回失败只记诊断，不阻断阅读。
+    /// </summary>
+    private async Task LoadEmbeddedAnnotationsAsync(ReaderViewModel viewModel, string path)
+    {
+        try
+        {
+            // ConfigureAwait(true)：回到 UI 线程再改叠加层集合（它是绑定源）
+            var records = await EnsureAnnotationReadback()
+                .ReadAsync(path, _credentials.Get(path))
+                .ConfigureAwait(true);
+            viewModel.SetEmbeddedRecords(records);
+        }
+        catch (Exception error)
+        {
+            Trace.WriteLine($"[MainWindow] 批注读回失败: {path} ({error.Message})");
+        }
     }
 
     /// <summary>savepill 状态更新（服务可能从后台线程抛事件，marshal 回 UI 线程）。</summary>
