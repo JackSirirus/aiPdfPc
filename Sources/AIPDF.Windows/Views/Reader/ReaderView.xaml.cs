@@ -9,6 +9,7 @@
 //              ReaderViewModel.TryMapGroupPoint / HitTestAnnotationAt 的 page↔group 映射换算到页局部。
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -79,6 +80,13 @@ public partial class ReaderView : UserControl
 
     /// <summary>当前线宽（pt）。</summary>
     private double _drawWidth = 2;
+
+    // ---- V4 T4 图章 ----
+    /// <summary>当前预置图章 token（与 <see cref="StampPresets.All"/> 对应）。</summary>
+    private string _stampToken = "approved";
+
+    /// <summary>图片图章字节；非 null 时优先于预置 token（拖拽落位一次后清空）。</summary>
+    private byte[]? _stampImage;
 
     private bool _drawing;
     private int _drawPageIndex = -1;
@@ -822,6 +830,52 @@ public partial class ReaderView : UserControl
         if (sender is FrameworkElement { Tag: string color }) _drawColor = color;
     }
 
+    /// <summary>V4 T4：预置图章下拉切换（SelectedValuePath=Token）。</summary>
+    private void OnStampPresetChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StampPresetBox.SelectedItem is StampPreset preset)
+        {
+            _stampToken = preset.Token;
+            _stampImage = null;   // 选了预置图章即放弃图片图章
+        }
+    }
+
+    /// <summary>
+    /// V4 T4：选一张图片作为图片图章。图片字节随批注动作以 base64 下发引擎（不落临时文件）；
+    /// 选好后自动切到图章工具，用户直接在页面上拖拽确定位置与大小。
+    /// </summary>
+    private void OnStampImageClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = ReaderStrings.StampPickImageToolTip,
+            Filter = "图片 (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg",
+            CheckFileExists = true,
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            _stampImage = File.ReadAllBytes(dialog.FileName);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            ShowToast(ReaderStrings.StampImageFailed);
+            return;
+        }
+
+        if (DrawModeToggle.IsChecked != true)
+        {
+            DrawModeToggle.IsChecked = true;   // 触发 OnDrawModeChanged → 进入绘制模式
+        }
+
+        StampToolButton.IsChecked = true;      // 触发 OnDrawToolChecked → _drawTool = "stamp"
+        ShowToast(ReaderStrings.StampImageActive);
+    }
+
     private void OnDrawWidthChecked(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string raw }
@@ -909,6 +963,15 @@ public partial class ReaderView : UserControl
                     _drawTool == "line" ? ShapeKind.Line : ShapeKind.Arrow,
                     _drawStart, end, _drawColor, _drawWidth);
                 break;
+            case "stamp":
+                // 预览不解码图片（拖拽过程中每次移动都会重建叠加层），图片图章只画占位框
+                temp = AnnotationRecord.CreateStamp(
+                    _drawPageIndex,
+                    AnnotationGeometry.BoundingBox([_drawStart, end]),
+                    _stampImage is null ? _stampToken : null,
+                    _stampImage is null ? null : [],
+                    _drawColor);
+                break;
         }
 
         return temp is null ? null : AnnotationOverlay.FromRecord(temp, page.WidthPt, page.DisplayWidth);
@@ -961,6 +1024,20 @@ public partial class ReaderView : UserControl
                     }
                     break;
                 }
+
+                case "stamp":
+                {
+                    var rect = AnnotationGeometry.BoundingBox([_drawStart, end]);
+                    if (rect.Width >= 8 && rect.Height >= 8)
+                    {
+                        record = _viewModel.AddStamp(pageIndex, rect, _stampToken, _stampImage, _drawColor);
+                        if (record is not null && _stampImage is not null)
+                        {
+                            _stampImage = null;   // 图片图章落位一次后回到预置图章，避免连点误放
+                        }
+                    }
+                    break;
+                }
             }
         }
         finally
@@ -970,7 +1047,12 @@ public partial class ReaderView : UserControl
 
         if (record is not null)
         {
-            ShowToast(_drawTool == "ink" ? ReaderStrings.InkApplied : ReaderStrings.ShapeApplied);
+            ShowToast(_drawTool switch
+            {
+                "ink" => ReaderStrings.InkApplied,
+                "stamp" => ReaderStrings.StampApplied,
+                _ => ReaderStrings.ShapeApplied,
+            });
         }
     }
 

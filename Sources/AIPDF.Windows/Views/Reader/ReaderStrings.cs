@@ -88,4 +88,13 @@ public static class ReaderStrings
     public const string DrawThickLabel = "粗";
     public const string InkApplied = "已添加手写";
     public const string ShapeApplied = "已添加形状";
+
+    // ---- V4 T4 图章（绘制工具栏「图章」+ 预置下拉 + 图片选择）----
+    public const string DrawStampLabel = "图章";
+    public const string StampPresetToolTip = "预置图章（14 种）";
+    public const string StampPickImage = "选择图片…";
+    public const string StampPickImageToolTip = "用 PNG/JPEG 图片作为图章（拖拽确定位置与大小）";
+    public const string StampImageActive = "图片图章";
+    public const string StampApplied = "已放置图章";
+    public const string StampImageFailed = "图片读取失败，已切回预置图章";
 }

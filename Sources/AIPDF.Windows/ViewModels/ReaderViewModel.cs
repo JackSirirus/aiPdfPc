@@ -1406,6 +1406,22 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         string? color = null, double lineWidth = AnnotationRecord.DefaultLineWidth)
         => AddAnnotation(AnnotationRecord.CreateInk(pageIndex, strokes, color, lineWidth));
 
+    /// <summary>
+    /// 新增图章批注（V4 T4 绘制工具栏「图章」消费）。预置图章给 token，图片图章给 image。
+    /// 旋转页/越界/位置无效返回 null（不创建）。
+    /// </summary>
+    public AnnotationRecord? AddStamp(
+        int pageIndex, PdfRect rect, string? token = null, byte[]? image = null, string? color = null)
+    {
+        var normalized = Normalize(rect);
+        if (normalized.Width < 1 || normalized.Height < 1)
+        {
+            return null;
+        }
+
+        return AddAnnotation(AnnotationRecord.CreateStamp(pageIndex, normalized, token, image, color));
+    }
+
     /// <summary>新增矩形/圆形状批注（V3 T11 工具栏消费）。旋转页/越界返回 null（不创建）。</summary>
     public AnnotationRecord? AddShape(
         int pageIndex, ShapeKind shape, PdfRect rect,

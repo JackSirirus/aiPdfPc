@@ -911,6 +911,19 @@ public sealed class AnnotationSaveService : IDisposable
                 }
                 break;
 
+            case AnnotationKind.Stamp:
+                action["kind"] = "stamp";
+                if (record.StampImage is { Length: > 0 } imageBytes)
+                {
+                    // 图片图章：base64 走 JSON 协议（不落临时文件，避免生命周期管理）。
+                    action["image"] = Convert.ToBase64String(imageBytes);
+                }
+                else
+                {
+                    action["stamp"] = record.StampToken ?? string.Empty;
+                }
+                break;
+
             default:
                 // V4 T3：未知类型必须显式失败。原实现把任何新枚举值静默写成 highlight，
                 // 失败会推迟到 2s 防抖之后且语义已错——属「静默降级」型缺陷。

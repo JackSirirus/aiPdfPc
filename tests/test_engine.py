@@ -2,6 +2,7 @@
 # Copyright (C) 2026 AIPDF contributors
 """Behavioral acceptance tests against real files; no user documents are used."""
 import hashlib
+import base64
 import io
 import json
 import os
@@ -479,6 +480,85 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(doc.authenticate("user-pw"),2)          # 原密码可解
             self.assertEqual(len(doc),3)
             self.assertEqual([a.type[1] for a in doc[0].annots()],["Underline"])
+            for index,page in enumerate(doc):
+                gray=page.get_pixmap(dpi=36,colorspace=fitz.csGRAY)
+                self.assertLess(min(gray.samples),250,f"第 {index+1} 页渲染为空白（内容流被写坏）")
+
+    def test_stamp_annotation_roundtrip(self):
+        """V4 T4：预置图章与图片图章——渲染可见性、改色、删除、第三方可见。
+
+        S1 尖刺结论：图片图章若照抄源文档的图片对象字典，其 /ColorSpace 会指向错误对象，
+        表现为「注释存在、/AP 存在、**渲染 0 像素**」且无任何报错。因此必须断言渲染真的变了，
+        只断言 /Stamp 类型存在会漏掉这种静默失败。
+        """
+        path=self._annotation_path("annot-stamp.pdf")
+        baseline=self._gray_samples(path)
+        pix=fitz.Pixmap(fitz.csRGB,fitz.IRect(0,0,40,20))
+        pix.set_rect(pix.irect,(200,30,30))
+        image_b64=base64.b64encode(pix.tobytes("png")).decode("ascii")
+
+        result=self._save_annotations(path,[
+            {"action":"add","id":"st1","kind":"stamp","page":0,"stamp":"approved",
+             "color":"#0000FF","rect":[60,80,260,140]},
+            {"action":"add","id":"st2","kind":"stamp","page":0,"stamp":"draft",
+             "color":"#FF0000","rect":[60,180,260,240]},
+            {"action":"add","id":"st3","kind":"stamp","page":0,"image":image_b64,
+             "rect":[60,280,260,340]},
+        ])
+        self.assertTrue(result["ok"])
+        for key in ("st1","st2","st3"):
+            self.assertIn(key,result["annotationHandles"])
+
+        # 三个图章各自位置都要出现可见变化（图片图章是重点：0 像素即静默失败）
+        after=self._gray_samples(path)
+        self.assertEqual(self._ranges_changed(baseline,after,[(80,140),(180,240),(280,340)]),
+                         [True,True,True],"存在渲染不可见的图章（图片 appearance 流静默失败）")
+
+        with fitz.open(str(path)) as doc:
+            self.assertEqual(sorted(a.type[1] for a in doc[0].annots()),["Stamp","Stamp","Stamp"])
+            self.assertEqual({a.info.get("name") for a in doc[0].annots()},{"st1","st2","st3"})
+            # 图片图章必须是注释（可按名删除），而不是页面内容
+            self.assertEqual(len(doc),3)
+        reader=PdfReader(str(path))
+        subtypes=sorted(a.get_object().get("/Subtype") for pg in reader.pages for a in (pg.get("/Annots") or []))
+        self.assertEqual(subtypes,["/Stamp","/Stamp","/Stamp"])
+
+        # 改色（stroke_types 已含 Stamp）+ 删除
+        handles=result["annotationHandles"]
+        self._save_annotations(path,[{"action":"setColor","name":handles["st1"],"color":"#00FF00"}])
+        with fitz.open(str(path)) as doc:
+            first=[a for a in doc[0].annots() if a.info.get("name")=="st1"][0]
+            self.assertEqual(first.colors.get("stroke"),[0.0,1.0,0.0])
+        self._save_annotations(path,[{"action":"delete","name":handles["st2"]}])
+        with fitz.open(str(path)) as doc:
+            self.assertEqual({a.info.get("name") for a in doc[0].annots()},{"st1","st3"})
+
+    def test_stamp_rejects_bad_token_and_bad_image(self):
+        """V4 T4：未知图章 token / 坏图片数据必须显式失败，不得静默产出空注释。"""
+        path=self._annotation_path("annot-stamp-bad.pdf")
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"x","kind":"stamp","page":0,
+                                          "stamp":"no-such-stamp","rect":[60,80,260,140]}])
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"y","kind":"stamp","page":0,
+                                          "image":"bm90LWFuLWltYWdl","rect":[60,80,260,140]}])
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"z","kind":"stamp","page":0,
+                                          "stamp":"approved","rect":[60,80,60,140]}])
+
+    def test_stamp_encrypted_save_keeps_content(self):
+        """V4 T4：图章在加密文档上保存后仍加密，且逐页内容非空白。"""
+        path=self._annotation_path("annot-stamp-enc.pdf",encrypted=True,password="user-pw")
+        result=self._save_annotations(path,[
+            {"action":"add","id":"st-enc","kind":"stamp","page":0,"stamp":"confidential",
+             "rect":[60,80,260,140]},
+        ],password="user-pw")
+        self.assertTrue(result["ok"])
+        with fitz.open(str(path)) as doc:
+            self.assertTrue(doc.needs_pass or doc.is_encrypted)
+            self.assertEqual(doc.authenticate("user-pw"),2)
+            self.assertEqual(len(doc),3)
+            self.assertEqual([a.type[1] for a in doc[0].annots()],["Stamp"])
             for index,page in enumerate(doc):
                 gray=page.get_pixmap(dpi=36,colorspace=fitz.csGRAY)
                 self.assertLess(min(gray.samples),250,f"第 {index+1} 页渲染为空白（内容流被写坏）")

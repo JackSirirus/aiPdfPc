@@ -34,6 +34,60 @@ public enum AnnotationKind
 
     /// <summary>文字删除线（文本标记；逐行几何见 <see cref="AnnotationRecord.Quads"/>）。V4 T3。</summary>
     Strikeout,
+
+    /// <summary>图章（预置文字图章或图片图章）。V4 T4。</summary>
+    Stamp,
+}
+
+/// <summary>单个预置图章（token 下发引擎，Label 供 UI/叠加层显示）。</summary>
+public sealed record StampPreset(string Token, string Label);
+
+/// <summary>
+/// 预置图章表（V4 T4）：token 与引擎侧 <c>STAMP_PRESETS</c> 一一对应（共 14 种）。
+/// 图片图章不走此表。
+/// </summary>
+public static class StampPresets
+{
+    /// <summary>预置图章默认颜色（红），与引擎 <c>add_stamp_annot</c> 默认一致。</summary>
+    public const string DefaultColor = "#E11D48";
+
+    /// <summary>预置图章有序表；顺序与引擎 STAMP_PRESETS 一致。</summary>
+    public static IReadOnlyList<StampPreset> All { get; } =
+    [
+        new("approved", "APPROVED"),
+        new("asis", "AS IS"),
+        new("confidential", "CONFIDENTIAL"),
+        new("departmental", "DEPARTMENTAL"),
+        new("draft", "DRAFT"),
+        new("experimental", "EXPERIMENTAL"),
+        new("expired", "EXPIRED"),
+        new("final", "FINAL"),
+        new("forcomment", "FOR COMMENT"),
+        new("forpublicrelease", "FOR PUBLIC RELEASE"),
+        new("notapproved", "NOT APPROVED"),
+        new("notforpublicrelease", "NOT FOR PUBLIC RELEASE"),
+        new("sold", "SOLD"),
+        new("topsecret", "TOP SECRET"),
+    ];
+
+    /// <summary>token → 显示名；未知 token 原样大写返回（不抛错，仅用于预览）。</summary>
+    public static string LabelFor(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "STAMP";
+        }
+
+        foreach (var preset in All)
+        {
+            if (string.Equals(preset.Token, token, StringComparison.OrdinalIgnoreCase))
+            {
+                return preset.Label;
+            }
+        }
+
+        return token.ToUpperInvariant();
+    }
 }
 
 /// <summary>
@@ -135,6 +189,12 @@ public sealed record AnnotationRecord
     /// </summary>
     public IReadOnlyList<PdfRect>? Quads { get; init; }
 
+    /// <summary>图章 token（预置图章；图片图章为 null）。V4 T4。</summary>
+    public string? StampToken { get; init; }
+
+    /// <summary>图章图片字节（图片图章；预置图章为 null）。V4 T4。</summary>
+    public byte[]? StampImage { get; init; }
+
     /// <summary>描边线宽（pt；手写与形状使用）。</summary>
     public double LineWidth { get; init; } = DefaultLineWidth;
 
@@ -188,6 +248,30 @@ public sealed record AnnotationRecord
             Quads = quads.Count > 1 ? quads : null,
             Kind = kind,
             Color = color ?? DefaultHighlightColor,
+        };
+    }
+
+    /// <summary>
+    /// 新建图章记录（V4 T4）。预置图章给 <paramref name="token"/>，图片图章给
+    /// <paramref name="image"/>（两者都给时以图片为准）。二者皆空抛 <see cref="ArgumentException"/>。
+    /// </summary>
+    public static AnnotationRecord CreateStamp(
+        int pageIndex, PdfRect rect, string? token = null, byte[]? image = null, string? color = null)
+    {
+        if (image is null && string.IsNullOrWhiteSpace(token))
+        {
+            throw new ArgumentException("图章需要预置 token 或图片。", nameof(token));
+        }
+
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = rect,
+            Kind = AnnotationKind.Stamp,
+            Color = color ?? StampPresets.DefaultColor,
+            StampToken = image is null ? token : null,
+            StampImage = image,
         };
     }
 
@@ -294,7 +378,9 @@ public sealed record AnnotationRecord
            && LineWidth.Equals(other.LineWidth)
            && AnnotationGeometry.PointsEqual(LinePoints, other.LinePoints)
            && AnnotationGeometry.StrokesEqual(Strokes, other.Strokes)
-           && AnnotationGeometry.RectsEqual(Quads, other.Quads);
+           && AnnotationGeometry.RectsEqual(Quads, other.Quads)
+           && string.Equals(StampToken, other.StampToken, StringComparison.Ordinal)
+           && AnnotationGeometry.BytesEqual(StampImage, other.StampImage);
 
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };

@@ -144,4 +144,12 @@ public static class AnnotationGeometry
         }
         return true;
     }
+
+    /// <summary>字节序列内容相等（V4 T4 图章图片）；两者均为 null/空视为相等。</summary>
+    public static bool BytesEqual(byte[]? a, byte[]? b)
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a is null || b is null || a.Length != b.Length) return false;
+        return a.AsSpan().SequenceEqual(b);
+    }
 }

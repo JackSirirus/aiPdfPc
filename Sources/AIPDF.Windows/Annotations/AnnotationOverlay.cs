@@ -9,8 +9,10 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Views.Reader;
 
@@ -35,7 +37,9 @@ public readonly record struct AnnotationOverlay(
     ShapeKind? Shape = null,
     Geometry? Geometry = null,
     double StrokeThickness = 0,
-    bool UsesGeometryLayer = false)
+    bool UsesGeometryLayer = false,
+    string? Label = null,
+    ImageSource? Image = null)
 {
     /// <summary>高亮填充 alpha（40%），叠加在渲染页上仍清晰可辨且不遮字符。</summary>
     private const byte FillAlpha = 0x66;
@@ -107,6 +111,19 @@ public readonly record struct AnnotationOverlay(
                     UsesGeometryLayer: true);
             }
 
+            case AnnotationKind.Stamp:
+            {
+                // 图章（V4 T4）：未保存前用叠加层预览——预置图章显示文字标签，图片图章显示图片。
+                // 保存后记录会移出客户端模型，改由 PDF 内嵌注释渲染（引擎生成的真实外观）。
+                var stroke = Freeze(Color.FromArgb(StrokeAlpha, r, g, b));
+                var fill = Freeze(Color.FromArgb(ShapeFillAlpha, r, g, b));
+                return new AnnotationOverlay(
+                    record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
+                    fill, stroke, null, null, 0,
+                    Label: record.StampImage is null ? StampPresets.LabelFor(record.StampToken) : null,
+                    Image: BuildStampImage(record.StampImage));
+            }
+
             default:
             {
                 // Highlight / Note：半透明填充 + 压暗边框。
@@ -156,6 +173,30 @@ public readonly record struct AnnotationOverlay(
         if (group.Children.Count == 0) return null;
         group.Freeze();
         return group;
+    }
+
+    /// <summary>
+    /// 图片图章的预览位图（V4 T4）。解码失败返回 null——坏图不阻断叠加层，
+    /// 真正下发时引擎会显式报「图章图片格式不受支持」。
+    /// </summary>
+    private static ImageSource? BuildStampImage(byte[]? bytes)
+    {
+        if (bytes is null || bytes.Length == 0) return null;
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;   // 立即解码，不持有流
+            bitmap.StreamSource = new MemoryStream(bytes);
+            bitmap.EndInit();
+            bitmap.Freeze();                                 // 冻结以复用（叠加层会随缩放重建）
+            return bitmap;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>

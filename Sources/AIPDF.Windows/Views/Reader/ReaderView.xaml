@@ -12,6 +12,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:reader="clr-namespace:AIPDF.Windows.Views.Reader"
              xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels"
+             xmlns:annotations="clr-namespace:AIPDF.Windows.Annotations"
              MinWidth="480"
              MinHeight="240"
              Focusable="True"
@@ -400,6 +401,26 @@
                                                       StrokeEndLineCap="Round"
                                                       StrokeLineJoin="Round"
                                                       Visibility="Collapsed" />
+
+                                                <!-- V4 T4：图章预览（未保存前）。
+                                                     预置图章显示文字标签，图片图章显示图片；
+                                                     保存后记录移出客户端模型，改由 PDF 内嵌注释渲染真实外观。 -->
+                                                <Grid x:Name="StampLayer" Visibility="Collapsed">
+                                                    <Border Background="{Binding Fill}"
+                                                            BorderBrush="{Binding Border}"
+                                                            BorderThickness="2"
+                                                            CornerRadius="2" />
+                                                    <TextBlock Text="{Binding Label}"
+                                                               Foreground="{Binding Border}"
+                                                               FontSize="14"
+                                                               FontWeight="Bold"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"
+                                                               TextAlignment="Center"
+                                                               TextWrapping="Wrap"
+                                                               Margin="4" />
+                                                    <Image Source="{Binding Image}" Stretch="Uniform" />
+                                                </Grid>
                                             </Grid>
                                             <DataTemplate.Triggers>
                                                 <!-- V4 T3：几何层由 AnnotationOverlay.UsesGeometryLayer 统一驱动
@@ -408,6 +429,11 @@
                                                 <DataTrigger Binding="{Binding UsesGeometryLayer}" Value="True">
                                                     <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
                                                     <Setter TargetName="ShapeLayer" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <!-- V4 T4：图章走独立的预览层（BoxLayer 无文字/图片承载能力） -->
+                                                <DataTrigger Binding="{Binding Kind}" Value="Stamp">
+                                                    <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
+                                                    <Setter TargetName="StampLayer" Property="Visibility" Value="Visible" />
                                                 </DataTrigger>
                                             </DataTemplate.Triggers>
                                         </DataTemplate>
@@ -539,6 +565,30 @@
                     <RadioButton Style="{StaticResource DrawChoiceButton}"
                                  Content="{x:Static reader:ReaderStrings.DrawArrowLabel}"
                                  Tag="arrow" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <!-- V4 T4：图章（拖拽确定位置与大小）。预置 14 种，或选一张图片作图片图章。 -->
+                    <RadioButton x:Name="StampToolButton"
+                                 Style="{StaticResource DrawChoiceButton}"
+                                 Content="{x:Static reader:ReaderStrings.DrawStampLabel}"
+                                 Tag="stamp" GroupName="DrawTool" Checked="OnDrawToolChecked" />
+                    <ComboBox x:Name="StampPresetBox"
+                              Width="132"
+                              Height="26"
+                              Margin="4,0,0,0"
+                              VerticalAlignment="Center"
+                              VerticalContentAlignment="Center"
+                              ItemsSource="{x:Static annotations:StampPresets.All}"
+                              DisplayMemberPath="Label"
+                              SelectedIndex="0"
+                              SelectionChanged="OnStampPresetChanged"
+                              ToolTip="{x:Static reader:ReaderStrings.StampPresetToolTip}" />
+                    <Button x:Name="StampImageButton"
+                            Height="26"
+                            Margin="4,0,0,0"
+                            Padding="8,0"
+                            Cursor="Hand"
+                            Content="{x:Static reader:ReaderStrings.StampPickImage}"
+                            Click="OnStampImageClick"
+                            ToolTip="{x:Static reader:ReaderStrings.StampPickImageToolTip}" />
                     <Border Width="1" Margin="6,4" Background="{DynamicResource Brush.Border}" />
                     <TextBlock Text="{x:Static reader:ReaderStrings.DrawColorTitle}"
                                Style="{StaticResource FieldHint}"

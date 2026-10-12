@@ -166,6 +166,42 @@ public sealed class AnnotationSaveSerializationTests : IDisposable
         Assert.DoesNotContain(engine.Actions, a => (string?)a["kind"] == "highlight");
     }
 
+    [Fact]
+    public async Task BuildActions_CarryStampTokenOrImage()
+    {
+        var engine = new CapturingEngine();
+        var source = new FakeSource(_temp);
+        source.Records.AddRange(
+        [
+            AnnotationRecord.CreateStamp(0, new PdfRect(10, 20, 210, 80), "approved") with { Id = "stamp-preset" },
+            AnnotationRecord.CreateStamp(1, new PdfRect(10, 20, 210, 80), image: [0x89, 0x50, 0x4E, 0x47])
+                with { Id = "stamp-image" },
+        ]);
+
+        using var service = new AnnotationSaveService(engine, new AnnotationSaveOptions { DebounceMs = 100_000 });
+        service.RegisterDocument(source);
+
+        var outcome = await service.FlushAsync(_temp);
+        Assert.True(outcome.Succeeded);
+
+        var adds = engine.Actions
+            .Where(a => (string?)a["action"] == "add")
+            .ToDictionary(a => (string)a["id"]!);
+
+        // 预置图章：kind token + token（不带 image）
+        var preset = adds["stamp-preset"];
+        Assert.Equal("stamp", preset["kind"]);
+        Assert.Equal("approved", preset["stamp"]);
+        Assert.False(preset.ContainsKey("image"));
+        Assert.Equal(new[] { 10.0, 20.0, 210.0, 80.0 }, Assert.IsType<double[]>(preset["rect"]));
+
+        // 图片图章：base64 走 JSON 协议（不带 token）
+        var withImage = adds["stamp-image"];
+        Assert.Equal("stamp", withImage["kind"]);
+        Assert.Equal(Convert.ToBase64String([0x89, 0x50, 0x4E, 0x47]), withImage["image"]);
+        Assert.False(withImage.ContainsKey("stamp"));
+    }
+
     private sealed class FakeSource(string path) : IAnnotationSaveSource
     {
         public List<AnnotationRecord> Records { get; } = [];

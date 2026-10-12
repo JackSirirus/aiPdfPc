@@ -8,6 +8,7 @@ Each run owns a fresh output directory; input files are opened read-only.
 from __future__ import annotations
 
 import difflib
+import base64
 from contextlib import redirect_stdout
 import html
 import io
@@ -702,6 +703,93 @@ def add_shape_annot(page, shape, rect=None, points=None, color=(0, 0, 0), width=
     return annot
 
 
+# 预置图章 token → PyMuPDF 常量（V4 T4）。共 14 种，与 fitz.STAMP_* 一一对应。
+STAMP_PRESETS = {
+    "approved": fitz.STAMP_Approved,
+    "asis": fitz.STAMP_AsIs,
+    "confidential": fitz.STAMP_Confidential,
+    "departmental": fitz.STAMP_Departmental,
+    "draft": fitz.STAMP_Draft,
+    "experimental": fitz.STAMP_Experimental,
+    "expired": fitz.STAMP_Expired,
+    "final": fitz.STAMP_Final,
+    "forcomment": fitz.STAMP_ForComment,
+    "forpublicrelease": fitz.STAMP_ForPublicRelease,
+    "notapproved": fitz.STAMP_NotApproved,
+    "notforpublicrelease": fitz.STAMP_NotForPublicRelease,
+    "sold": fitz.STAMP_Sold,
+    "topsecret": fitz.STAMP_TopSecret,
+}
+
+
+def _add_image_stamp(page, area, image_b64, color):
+    """图片图章：图片 XObject + Form XObject 挂到注释 /AP /N（V4 T4）。
+
+    ⚠️ 颜色空间必须**内联** `/DeviceRGB`：照抄其它文档的图片对象字典会带上**那个文档**的
+    对象号（实测 `/ColorSpace 7 0 R`），拷进目标文档后会指向错误对象，表现为「注释存在、
+    /AP 存在、渲染 0 像素」且无任何报错。见 .omo/evidence/v4-spike-stamp.md。
+    """
+    try:
+        raw = base64.b64decode(str(image_b64), validate=True)
+    except (ValueError, TypeError) as error:
+        raise UserError("图章图片数据无法解析。") from error
+    try:
+        pix = fitz.Pixmap(raw)
+    except Exception as error:  # noqa: BLE001 - PyMuPDF 对坏图抛多种异常
+        raise UserError("图章图片格式不受支持。") from error
+    if pix.n > 3:                      # 带 alpha：转 RGB（图章不需要透明）
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    width, height = pix.width, pix.height
+    if width <= 0 or height <= 0:
+        raise UserError("图章图片尺寸无效。")
+    samples = pix.samples
+
+    doc = page.parent
+    image_xref = doc.get_new_xref()
+    doc.update_object(image_xref,
+                      f"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} "
+                      f"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Length {len(samples)} >>")
+    doc.update_stream(image_xref, samples)
+
+    form_xref = doc.get_new_xref()
+    stream = f"q {width} 0 0 {height} 0 0 cm /Im0 Do Q".encode("ascii")
+    doc.update_object(form_xref,
+                      f"<< /Type /XObject /Subtype /Form /BBox [0 0 {width} {height}] "
+                      f"/Resources << /XObject << /Im0 {image_xref} 0 R >> >> /Length {len(stream)} >>")
+    doc.update_stream(form_xref, stream)
+
+    annot = page.add_stamp_annot(area, stamp=fitz.STAMP_Approved)
+    annot.set_colors(stroke=tuple(color))
+    annot.update()
+    doc.xref_set_key(annot.xref, "AP", f"<< /N {form_xref} 0 R >>")
+    return annot
+
+
+def add_stamp_annot(page, rect, stamp=None, image=None, color=(1, 0, 0)):
+    """添加图章注释（预置文字图章或图片图章）。V4 T4。
+
+    坐标为可见页、左上原点的 pt，经 page.derotation_matrix 转换后写入（同其它批注）。
+    `stamp` 为 STAMP_PRESETS 的 token；`image` 为 base64 编码的图片（PNG/JPEG）。
+    两者都给时以 image 为准。
+    """
+    if rect is None:
+        raise UserError("图章批注缺少位置。")
+    area = fitz.Rect(rect) * page.derotation_matrix
+    if area.is_empty:
+        raise UserError("图章位置无效。")
+    if isinstance(color, str):
+        color = rgb(color)
+    if image:
+        return _add_image_stamp(page, area, image, color)
+    token = str(stamp or "").strip().lower()
+    if token not in STAMP_PRESETS:
+        raise UserError("不支持的图章类型。")
+    annot = page.add_stamp_annot(area, stamp=STAMP_PRESETS[token])
+    annot.set_colors(stroke=tuple(color))
+    annot.update()
+    return annot
+
+
 def _find_annots(doc, action):
     """按稳定 /NM 名（name/handle）或同会话 xref 定位注释；跨保存 xref 会被 garbage
     重编号，故名字才是 T4 应持久化的句柄。"""
@@ -748,6 +836,10 @@ def apply_annotation_actions(doc, actions):
             elif kind == "shape":
                 annot = add_shape_annot(page, action.get("shape"), rect=action.get("rect"),
                                         points=action.get("points"), color=color, width=action.get("width", 2))
+            elif kind == "stamp":
+                # V4 T4：预置文字图章或图片图章（图片走注释 appearance 流）。
+                annot = add_stamp_annot(page, action.get("rect"), stamp=action.get("stamp"),
+                                        image=action.get("image"), color=color)
             else:
                 raise UserError("不支持的批注类型。")
             # 注释 /NM 名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
@@ -763,7 +855,7 @@ def apply_annotation_actions(doc, actions):
         elif what in ("setcolor", "recolor", "color"):
             # V3 T11：改色覆盖所有带描边的注释类型（高亮/手写/矩形/圆/线/多边形）；
             # FreeText 不参与（与 V2 笔记语义一致：笔记改色只改关联高亮的 stroke）。
-            stroke_types = ("Highlight", "Underline", "StrikeOut", "Squiggly", "Ink", "Square", "Circle", "Line", "Polygon")
+            stroke_types = ("Highlight", "Underline", "StrikeOut", "Squiggly", "Stamp", "Ink", "Square", "Circle", "Line", "Polygon")
             targets = [item for item in _find_annots(doc, action) if item[1].type[1] in stroke_types]
             if not targets:
                 raise UserError("找不到要改色的批注。")
