@@ -584,6 +584,8 @@ public partial class ReaderView : UserControl
         if (overlay is null) { HideHover(); return; }
 
         var record = _viewModel.FindAnnotation(pageIndex, annotationId);
+        // V4 T9：把选中项交给属性面板（面板据此显示颜色/线宽/不透明度）
+        _viewModel.Properties.Select(record);
         HoverEditButton.IsEnabled = record?.Kind == AnnotationKind.Note;
 
         _anchorElement = element;
@@ -638,6 +640,8 @@ public partial class ReaderView : UserControl
         CancelHideHover();
         _hoverAnnotationId = null;
         _hoverPageIndex = -1;
+        // V4 T9：清空属性面板的选中（面板随选中出现/消失）
+        _viewModel.Properties.Select(null);
         if (_menu.Mode is MenuMode.HoverActions or MenuMode.ColorPalette)
         {
             _menu.Close();
@@ -1080,6 +1084,39 @@ public partial class ReaderView : UserControl
             SpeechRateChanged?.Invoke(this, rate);
         }
     }
+
+    // ---- V4 T9 批注属性面板（改动交回 VM → 既有保存链路）----
+
+    private void OnPropertiesColorClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string hex })
+        {
+            _viewModel.Properties.ApplyColor(hex);
+        }
+    }
+
+    private void OnPropertiesWidthChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PropertiesWidthBox.SelectedItem is ComboBoxItem { Tag: string tag }
+            && double.TryParse(tag, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var width))
+        {
+            _viewModel.Properties.ApplyLineWidth(width);
+        }
+    }
+
+    private void OnPropertiesOpacityChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (PropertiesOpacityBox.SelectedItem is ComboBoxItem { Tag: string tag }
+            && double.TryParse(tag, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var opacity))
+        {
+            _viewModel.Properties.ApplyOpacity(opacity);
+        }
+    }
+
+    private void OnPropertiesDismissClick(object sender, RoutedEventArgs e)
+        => _viewModel.Properties.Dismiss();
 
     private void CancelDrawing()
     {

@@ -620,6 +620,26 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn("list_annotations",engine.ANNOTATION_OPERATIONS)
         self.assertEqual(len(engine.BY_ID),33)
 
+    def test_text_markup_opacity_passthrough(self):
+        """V4 T9：属性面板改不透明度 → 引擎透传 set_opacity（文本标记）。"""
+        path=self._annotation_path("annot-opacity.pdf")
+        self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"rect":[50,100,300,130],"opacity":0.25},
+            {"action":"add","id":"u1","kind":"underline","page":1,"quads":[[50,100,300,130]]},
+        ])
+        with fitz.open(str(path)) as doc:
+            values={a.info.get("name"):round(a.opacity,2) for a in doc[0].annots()}
+            self.assertEqual(values,{"h1":0.25})                    # 显式覆盖
+            # 未给 opacity 的下划线：不调用 set_opacity，PyMuPDF 读回 -1（约定 = 未设置/不透明）
+            underline=[a for a in doc[1].annots() if a.type[1]=="Underline"][0]
+            self.assertLess(underline.opacity,0)
+        # 越界值被钳制到 1.0（不抛错）；PyMuPDF 对「不透明」读回 -1 或 1.0
+        self._save_annotations(path,[{"action":"add","id":"h2","kind":"highlight","page":0,
+                                      "rect":[50,200,300,230],"opacity":5}])
+        with fitz.open(str(path)) as doc:
+            over=[a for a in doc[0].annots() if a.info.get("name")=="h2"][0]
+            self.assertIn(round(over.opacity,2),(-1.0,1.0))
+
     def test_annotation_operations_stay_out_of_catalog(self):
         # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
         self.assertEqual(len(engine.BY_ID),33)

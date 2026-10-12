@@ -705,6 +705,96 @@
                 </StackPanel>
             </Border>
 
+            <!-- ============ V4 T9 批注属性面板（右侧浮动，随选中出现）============
+                 对标 Foxit 的 Format 面板：选中批注后**持续**可调颜色 / 线宽 / 不透明度
+                 （此前只有一次性浮菜单）。改动经 VM.Changed → ReaderViewModel.UpdateAnnotation
+                 走既有保存链路（防抖 + 快速通道），不新增引擎动作类型。 -->
+            <Border x:Name="AnnotationPropertiesPanel"
+                    Style="{StaticResource DrawToolbarPanel}"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,64,12,0"
+                    Padding="10,8"
+                    Width="190"
+                    Panel.ZIndex="6"
+                    DataContext="{Binding Properties}"
+                    Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel Orientation="Vertical">
+                    <Grid Margin="0,0,0,6">
+                        <TextBlock Text="{x:Static reader:ReaderStrings.PropertiesTitle}"
+                                   FontWeight="Bold"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource Brush.TextPrimary}" />
+                        <Button Content="✕"
+                                HorizontalAlignment="Right"
+                                Padding="4,0"
+                                Cursor="Hand"
+                                Click="OnPropertiesDismissClick"
+                                ToolTip="{x:Static reader:ReaderStrings.PropertiesCloseToolTip}" />
+                    </Grid>
+
+                    <TextBlock Text="{x:Static reader:ReaderStrings.PropertiesColor}"
+                               Style="{StaticResource FieldHint}" />
+                    <ItemsControl ItemsSource="{x:Static vm:AnnotationPropertiesViewModel.Palette}"
+                                  Margin="0,4,0,6">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Width="24"
+                                        Height="24"
+                                        Margin="0,0,6,6"
+                                        Padding="0"
+                                        Cursor="Hand"
+                                        Tag="{Binding}"
+                                        Click="OnPropertiesColorClick">
+                                    <Border Width="14"
+                                            Height="14"
+                                            CornerRadius="3"
+                                            BorderBrush="{DynamicResource Brush.BorderStrong}"
+                                            BorderThickness="1"
+                                            Background="{Binding}" />
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Visibility="{Binding SupportsLineWidth, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{x:Static reader:ReaderStrings.PropertiesWidth}"
+                                   Style="{StaticResource FieldHint}" />
+                        <ComboBox x:Name="PropertiesWidthBox"
+                                  Height="26"
+                                  Margin="0,4,0,6"
+                                  VerticalContentAlignment="Center"
+                                  SelectedIndex="1"
+                                  SelectionChanged="OnPropertiesWidthChanged">
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.DrawThinLabel}" Tag="1" />
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.DrawMidLabel}" Tag="2" />
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.DrawThickLabel}" Tag="4" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Visibility="{Binding SupportsOpacity, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{x:Static reader:ReaderStrings.PropertiesOpacity}"
+                                   Style="{StaticResource FieldHint}" />
+                        <ComboBox x:Name="PropertiesOpacityBox"
+                                  Height="26"
+                                  Margin="0,4,0,0"
+                                  VerticalContentAlignment="Center"
+                                  SelectedIndex="1"
+                                  SelectionChanged="OnPropertiesOpacityChanged">
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.PropertiesOpacity25}" Tag="0.25" />
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.PropertiesOpacity50}" Tag="0.5" />
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.PropertiesOpacity75}" Tag="0.75" />
+                            <ComboBoxItem Content="{x:Static reader:ReaderStrings.PropertiesOpacity100}" Tag="1.0" />
+                        </ComboBox>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <!-- ============ T2 选中浮菜单（复制/高亮/笔记/用工具处理▾；含工具子菜单）============ -->
             <Popup x:Name="SelectionPopup"
                    AllowsTransparency="True"

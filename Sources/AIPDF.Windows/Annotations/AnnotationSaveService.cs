@@ -869,6 +869,14 @@ public sealed class AnnotationSaveService : IDisposable
             action["quads"] = quadArray;
         }
 
+        // V4 T9：不透明度（属性面板可调）。仅文本标记支持——引擎的 add_ink_annot /
+        // add_shape_annot 不接收 opacity；仅在与类型默认不同时下发，保持既有载荷最小。
+        if (record.Kind is AnnotationKind.Highlight or AnnotationKind.Underline or AnnotationKind.Strikeout
+            && record.Opacity is > 0 and < 1)
+        {
+            action["opacity"] = record.Opacity;
+        }
+
         // V3 T11（C3）：按类型携带几何。highlight/note 的键与顺序保持不变（V2 契约）。
         switch (record.Kind)
         {

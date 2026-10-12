@@ -571,7 +571,7 @@ TEXT_MARKUP_BUILDERS = {
 }
 
 
-def add_text_markup_annot(page, kind, quads=None, rect=None, color=(1, 1, 0)):
+def add_text_markup_annot(page, kind, quads=None, rect=None, color=(1, 1, 0), opacity=None):
     """添加文本标记注释（Highlight / Underline / StrikeOut / Squiggly）。
 
     坐标为可见页、左上原点的 pt（与 area() 和 WPF PdfCoordinateMapper 一致），
@@ -579,6 +579,8 @@ def add_text_markup_annot(page, kind, quads=None, rect=None, color=(1, 1, 0)):
 
     quads 为逐行矩形列表（每行一个）；只给 rect 时退化为单矩形标记——多行选区务必传
     quads，否则会渲染成跨行实心带（见 TEXT_MARKUP_BUILDERS 上方说明）。
+
+    opacity 为 None 时用类型默认（高亮 0.5、其余 1.0）；V4 T9 属性面板可显式覆盖。
     """
     normalized = str(kind).strip().lower()
     builder_name = TEXT_MARKUP_BUILDERS.get(normalized)
@@ -592,8 +594,14 @@ def add_text_markup_annot(page, kind, quads=None, rect=None, color=(1, 1, 0)):
         color = rgb(color)
     annot = getattr(page, builder_name)(quads=[r * page.derotation_matrix for r in rects])
     annot.set_colors(stroke=tuple(color))
-    if normalized == "highlight":
-        annot.set_opacity(0.5)  # 仅高亮半透明；下划线/删除线保持不透明，避免线条发虚
+    if opacity is None:
+        # 高亮默认半透明；其余不调用 set_opacity（保持既有行为：PyMuPDF 未设置时读回 -1 = 不透明）
+        opacity = 0.5 if normalized == "highlight" else None
+    if opacity is not None:
+        try:
+            annot.set_opacity(max(0.05, min(1.0, float(opacity))))
+        except (TypeError, ValueError):
+            raise UserError("批注不透明度格式不正确。")
     annot.update()
     return annot
 
@@ -824,7 +832,8 @@ def apply_annotation_actions(doc, actions):
             handle = str(action.get("id") or action.get("name") or uuid.uuid4().hex)
             if kind in TEXT_MARKUP_BUILDERS:
                 # V4 T3：highlight / underline / strikeout / squiggly 走同一条逐行 quads 通道。
-                annot = add_text_markup_annot(page, kind, quads=action.get("quads"), rect=action.get("rect"), color=color)
+                annot = add_text_markup_annot(page, kind, quads=action.get("quads"), rect=action.get("rect"),
+                                              color=color, opacity=action.get("opacity"))
             elif kind == "note":
                 # 笔记 = 关联高亮 + FreeText；两者共用同一稳定名，删除时一并移除。
                 highlight = add_highlight_annot(page, quads=action.get("quads"), rect=action.get("rect"), color=color)

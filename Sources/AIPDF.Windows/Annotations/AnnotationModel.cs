@@ -198,6 +198,12 @@ public sealed record AnnotationRecord
     /// <summary>描边线宽（pt；手写与形状使用）。</summary>
     public double LineWidth { get; init; } = DefaultLineWidth;
 
+    /// <summary>
+    /// 不透明度（0.05 ~ 1.0）。V4 T9 属性面板可调：文本标记默认 0.5（与引擎
+    /// <c>add_text_markup_annot</c> 一致），手写/形状默认 1.0。
+    /// </summary>
+    public double Opacity { get; init; } = 1.0;
+
     /// <summary>创建时间（UTC）。</summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
@@ -213,6 +219,8 @@ public sealed record AnnotationRecord
             Rect = rect,
             Kind = AnnotationKind.Highlight,
             Color = color ?? DefaultHighlightColor,
+            // 高亮默认半透明：与引擎 add_text_markup_annot 的 0.5 及叠加层的 0x66 填充一致
+            Opacity = 0.5,
         };
 
     /// <summary>
@@ -248,6 +256,8 @@ public sealed record AnnotationRecord
             Quads = quads.Count > 1 ? quads : null,
             Kind = kind,
             Color = color ?? DefaultHighlightColor,
+            // 文本标记默认半透明（与引擎 add_text_markup_annot 的 0.5 一致）
+            Opacity = 0.5,
         };
     }
 
@@ -379,11 +389,20 @@ public sealed record AnnotationRecord
            && AnnotationGeometry.PointsEqual(LinePoints, other.LinePoints)
            && AnnotationGeometry.StrokesEqual(Strokes, other.Strokes)
            && AnnotationGeometry.RectsEqual(Quads, other.Quads)
+           && Opacity.Equals(other.Opacity)
            && string.Equals(StampToken, other.StampToken, StringComparison.Ordinal)
            && AnnotationGeometry.BytesEqual(StampImage, other.StampImage);
 
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };
+
+    /// <summary>返回改线宽后的副本（V4 T9 属性面板；钳制到既有上下限）。</summary>
+    public AnnotationRecord WithLineWidth(double width)
+        => this with { LineWidth = Math.Clamp(width, MinLineWidth, MaxLineWidth) };
+
+    /// <summary>返回改不透明度后的副本（V4 T9 属性面板；钳制到 0.05~1.0）。</summary>
+    public AnnotationRecord WithOpacity(double opacity)
+        => this with { Opacity = Math.Clamp(opacity, 0.05, 1.0) };
 
     /// <summary>返回笔记文本更新后的副本（FR-13 编辑笔记，Id 不变）。</summary>
     public AnnotationRecord WithNote(string note)

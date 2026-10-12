@@ -119,4 +119,15 @@ public static class ReaderStrings
     public const string SpeechStarted = "开始朗读（当前页起）";
     public const string SpeechStopped = "已停止朗读";
     public const string SpeechFinished = "朗读结束";
+
+    // ---- V4 T9 批注属性面板 ----
+    public const string PropertiesTitle = "批注属性";
+    public const string PropertiesColor = "颜色";
+    public const string PropertiesWidth = "线宽";
+    public const string PropertiesOpacity = "不透明度";
+    public const string PropertiesCloseToolTip = "关闭属性面板（本次运行内不再自动弹出）";
+    public const string PropertiesOpacity25 = "25%";
+    public const string PropertiesOpacity50 = "50%";
+    public const string PropertiesOpacity75 = "75%";
+    public const string PropertiesOpacity100 = "100%";
 }

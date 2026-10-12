@@ -471,7 +471,18 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         _injectedTextService = textService;
         _readingStates = readingStates;
         BufferPages = Math.Max(0, bufferPages);
+
+        // V4 T9：属性面板的改动走**既有保存链路**（记录替换 → 防抖 + 快速通道 → 引擎 Delete+Add），
+        // 因此不需要新增任何引擎动作类型。
+        Properties.Changed += (_, record) => UpdateAnnotation(record);
     }
+
+    /// <summary>
+    /// V4 T9：批注属性面板（选中批注后可调颜色 / 线宽 / 不透明度）。
+    /// 对「本次会话新增」与「从文件读回的已内嵌」批注同样有效——两者都经 <see cref="UpdateAnnotation"/>
+    /// 写回，保存时由引擎的 Delete+Add 完成更新。
+    /// </summary>
+    public AnnotationPropertiesViewModel Properties { get; } = new();
 
     /// <summary>可视区两侧缓冲页数。</summary>
     public int BufferPages { get; }
