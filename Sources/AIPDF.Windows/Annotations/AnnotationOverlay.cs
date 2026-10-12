@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
+using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Views.Reader;
 
 namespace AIPDF.Windows.Annotations;
@@ -33,7 +34,8 @@ public readonly record struct AnnotationOverlay(
     Brush Border,
     ShapeKind? Shape = null,
     Geometry? Geometry = null,
-    double StrokeThickness = 0)
+    double StrokeThickness = 0,
+    bool UsesGeometryLayer = false)
 {
     /// <summary>高亮填充 alpha（40%），叠加在渲染页上仍清晰可辨且不遮字符。</summary>
     private const byte FillAlpha = 0x66;
@@ -76,7 +78,8 @@ public readonly record struct AnnotationOverlay(
                 var bounds = AnnotationGeometry.NormalizeRect(record.Rect);
                 return new AnnotationOverlay(
                     record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
-                    fill, stroke, null, BuildInkGeometry(record.Strokes, scale, bounds.Left, bounds.Top), thickness);
+                    fill, stroke, null, BuildInkGeometry(record.Strokes, scale, bounds.Left, bounds.Top), thickness,
+                    UsesGeometryLayer: true);
             }
 
             case AnnotationKind.Shape:
@@ -85,18 +88,99 @@ public readonly record struct AnnotationOverlay(
                 var fill = Freeze(Color.FromArgb(ShapeFillAlpha, r, g, b));
                 return new AnnotationOverlay(
                     record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
-                    fill, stroke, record.Shape, BuildShapeGeometry(record, scale, thickness), thickness);
+                    fill, stroke, record.Shape, BuildShapeGeometry(record, scale, thickness), thickness,
+                    UsesGeometryLayer: true);
+            }
+
+            case AnnotationKind.Underline:
+            case AnnotationKind.Strikeout:
+            {
+                // 文本标记（V4 T3）：逐行一条线——下划线在行底、删除线在行中线。
+                // 不透明描边（与手写/形状同口径），填充透明。
+                var stroke = Freeze(Color.FromArgb(StrokeAlpha, r, g, b));
+                var fill = Freeze(Color.FromArgb(ShapeFillAlpha, r, g, b));
+                return new AnnotationOverlay(
+                    record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
+                    fill, stroke, null,
+                    BuildTextMarkupLineGeometry(record, scale, record.Kind == AnnotationKind.Underline),
+                    Math.Max(1.0, thickness),
+                    UsesGeometryLayer: true);
             }
 
             default:
             {
-                // Highlight / Note：投影语义保持不变（半透明填充 + 压暗边框）。
+                // Highlight / Note：半透明填充 + 压暗边框。
+                // V4 T3：多行选区按逐行 quads 填充——单矩形填充会把行间空隙也涂满
+                // （实测 227,962 px vs 56,468 px，见 .omo/evidence/v4-spike-underline.md）。
                 var fill = Freeze(Color.FromArgb(FillAlpha, r, g, b));
                 var border = Freeze(Color.FromArgb(BorderAlpha, Darken(r), Darken(g), Darken(b)));
+                if (BuildHighlightFillGeometry(record, scale) is { } multiLine)
+                {
+                    return new AnnotationOverlay(
+                        record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height,
+                        fill, border, null, multiLine, 1.0, UsesGeometryLayer: true);
+                }
+
                 return new AnnotationOverlay(
                     record.Id, record.Kind, record.Note, dip.X, dip.Y, dip.Width, dip.Height, fill, border);
             }
         }
+    }
+
+    /// <summary>
+    /// 文本标记（下划线/删除线）的逐行线几何。坐标相对条目左上角（= 记录并集矩形左上角）：
+    /// 下划线画在每行底边、删除线画在每行中线。V4 T3。
+    /// </summary>
+    private static Geometry? BuildTextMarkupLineGeometry(AnnotationRecord record, double scale, bool underline)
+    {
+        if (scale <= 0) return null;
+
+        IReadOnlyList<PdfRect> rects = record.Quads is { Count: > 0 } quads ? quads : [record.Rect];
+        var origin = AnnotationGeometry.NormalizeRect(record.Rect);
+        var group = new GeometryGroup { FillRule = FillRule.Nonzero };
+        foreach (var item in rects)
+        {
+            var line = AnnotationGeometry.NormalizeRect(item);
+            var y = underline ? line.Bottom : (line.Top + line.Bottom) / 2.0;
+            var figure = new PathFigure
+            {
+                StartPoint = new Point((line.Left - origin.Left) * scale, (y - origin.Top) * scale),
+                IsClosed = false,
+                IsFilled = false,
+            };
+            figure.Segments.Add(new LineSegment(
+                new Point((line.Right - origin.Left) * scale, (y - origin.Top) * scale), true));
+            group.Children.Add(new PathGeometry([figure]));
+        }
+
+        if (group.Children.Count == 0) return null;
+        group.Freeze();
+        return group;
+    }
+
+    /// <summary>
+    /// 高亮/笔记的逐行填充几何。仅当存在多个 quads 时返回（单矩形继续走 BoxLayer，
+    /// 保持 V2 渲染契约不变）。行间空隙不填充。V4 T3。
+    /// </summary>
+    private static Geometry? BuildHighlightFillGeometry(AnnotationRecord record, double scale)
+    {
+        if (scale <= 0 || record.Quads is not { Count: > 1 } quads) return null;
+
+        var origin = AnnotationGeometry.NormalizeRect(record.Rect);
+        var group = new GeometryGroup { FillRule = FillRule.Nonzero };
+        foreach (var item in quads)
+        {
+            var line = AnnotationGeometry.NormalizeRect(item);
+            group.Children.Add(new RectangleGeometry(new Rect(
+                (line.Left - origin.Left) * scale,
+                (line.Top - origin.Top) * scale,
+                Math.Max(0, line.Width * scale),
+                Math.Max(0, line.Height * scale))));
+        }
+
+        if (group.Children.Count == 0) return null;
+        group.Freeze();
+        return group;
     }
 
     private static Geometry? BuildInkGeometry(

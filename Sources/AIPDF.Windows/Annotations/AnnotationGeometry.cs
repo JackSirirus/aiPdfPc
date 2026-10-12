@@ -131,4 +131,17 @@ public static class AnnotationGeometry
         }
         return true;
     }
+
+    /// <summary>矩形序列内容相等（顺序敏感；V4 T3 文本标记的逐行 quads）；两者均为 null/空视为相等。</summary>
+    public static bool RectsEqual(IReadOnlyList<PdfRect>? a, IReadOnlyList<PdfRect>? b)
+    {
+        var countA = a?.Count ?? 0;
+        var countB = b?.Count ?? 0;
+        if (countA != countB) return false;
+        for (var i = 0; i < countA; i++)
+        {
+            if (a![i] != b![i]) return false;
+        }
+        return true;
+    }
 }

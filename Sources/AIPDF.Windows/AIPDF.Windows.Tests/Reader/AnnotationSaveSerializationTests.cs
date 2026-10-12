@@ -94,6 +94,78 @@ public sealed class AnnotationSaveSerializationTests : IDisposable
         Assert.Equal(new[] { 0.0, 0.0, 10.0, 10.0 }, Assert.IsType<double[]>(adds["note"]["noteRect"]));
     }
 
+    [Fact]
+    public async Task BuildActions_CarryPerLineQuads_AndTextMarkupKinds()
+    {
+        var engine = new CapturingEngine();
+        var source = new FakeSource(_temp);
+        source.Records.AddRange(
+        [
+            AnnotationRecord.CreateTextMarkup(AnnotationKind.Underline, 0,
+            [
+                new PdfRect(72, 100, 300, 114),
+                new PdfRect(72, 180, 300, 194),
+            ]) with { Id = "ul" },
+            AnnotationRecord.CreateTextMarkup(AnnotationKind.Strikeout, 1,
+            [
+                new PdfRect(72, 260, 300, 274),
+                new PdfRect(72, 300, 300, 314),
+            ]) with { Id = "so" },
+            AnnotationRecord.CreateHighlight(2, new PdfRect(10, 20, 110, 40)) with { Id = "hl-single" },
+        ]);
+
+        using var service = new AnnotationSaveService(engine, new AnnotationSaveOptions { DebounceMs = 100_000 });
+        service.RegisterDocument(source);
+
+        var outcome = await service.FlushAsync(_temp);
+        Assert.True(outcome.Succeeded);
+
+        var adds = engine.Actions
+            .Where(a => (string?)a["action"] == "add")
+            .ToDictionary(a => (string)a["id"]!);
+
+        // 下划线：kind token + 逐行 quads（这是修复「多行退化成跨行实心带」的关键载荷）
+        var underline = adds["ul"];
+        Assert.Equal("underline", underline["kind"]);
+        Assert.Equal("#FFFF00", underline["color"]);
+        var quads = Assert.IsType<double[][]>(underline["quads"]);
+        Assert.Equal(2, quads.Length);
+        Assert.Equal(new[] { 72.0, 100.0, 300.0, 114.0 }, quads[0]);
+        Assert.Equal(new[] { 72.0, 180.0, 300.0, 194.0 }, quads[1]);
+        // rect 仍下发（并集），保持既有键与语义
+        Assert.Equal(new[] { 72.0, 100.0, 300.0, 194.0 }, Assert.IsType<double[]>(underline["rect"]));
+
+        // 删除线：kind token + 逐行 quads
+        var strikeout = adds["so"];
+        Assert.Equal("strikeout", strikeout["kind"]);
+        Assert.Equal(2, Assert.IsType<double[][]>(strikeout["quads"]).Length);
+        // 单矩形批注不携带 quads（V2 载荷不变，几何退化为 rect）
+        Assert.False(adds["hl-single"].ContainsKey("quads"));
+        Assert.Equal(new[] { 10.0, 20.0, 110.0, 40.0 }, Assert.IsType<double[]>(adds["hl-single"]["rect"]));
+    }
+
+    [Fact]
+    public async Task BuildActions_UnknownKind_FailsInsteadOfSilentlyBecomingHighlight()
+    {
+        var engine = new CapturingEngine();
+        var source = new FakeSource(_temp);
+        source.Records.Add(
+            AnnotationRecord.CreateHighlight(0, new PdfRect(0, 0, 10, 10)) with
+            {
+                Id = "weird",
+                Kind = (AnnotationKind)999,
+            });
+
+        using var service = new AnnotationSaveService(engine, new AnnotationSaveOptions { DebounceMs = 100_000 });
+        service.RegisterDocument(source);
+
+        var outcome = await service.FlushAsync(_temp);
+
+        // 原实现把任何未知 Kind 静默写成 highlight 并返回成功；这里要求显式失败。
+        Assert.False(outcome.Succeeded);
+        Assert.DoesNotContain(engine.Actions, a => (string?)a["kind"] == "highlight");
+    }
+
     private sealed class FakeSource(string path) : IAnnotationSaveSource
     {
         public List<AnnotationRecord> Records { get; } = [];

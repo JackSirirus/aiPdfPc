@@ -380,6 +380,109 @@ class EngineTests(unittest.TestCase):
         subtypes=sorted(a.get_object().get("/Subtype") for a in (out.pages[0].get("/Annots") or []))
         self.assertEqual(subtypes,["/Ink","/Square"])
 
+    @staticmethod
+    def _gray_samples(path):
+        with fitz.open(str(path)) as doc:
+            pix=doc[0].get_pixmap(dpi=72,colorspace=fitz.csGRAY)
+            return (pix.samples,pix.width,pix.height)
+
+    @staticmethod
+    def _ranges_changed(before,after,ranges):
+        """逐 y 区间判断「渲染结果是否与基线不同」（用于标记的可见性/位置断言）。"""
+        bs,bw,bh=before;vs,vw,vh=after
+        if (bw,bh)!=(vw,vh):return [True]*len(ranges)
+        out=[]
+        for y0,y1 in ranges:
+            hit=False
+            for y in range(max(0,int(y0)),min(bh,int(y1))):
+                row=y*bw
+                for x in range(bw):
+                    if abs(vs[row+x]-bs[row+x])>24:
+                        hit=True;break
+                if hit:break
+            out.append(hit)
+        return out
+
+    def test_text_markup_annotation_roundtrip(self):
+        """V4 T3：下划线/删除线/波浪线——逐行 quads 几何、逐行可见性、改色、删除、加密回归。
+
+        关键断言不是「注释类型存在」，而是**逐行几何**：单包围盒 quad 会渲染成一条跨行
+        实心带（S6 尖刺实测 12,311 px / 24 行，且落在行间空隙），因此必须断言
+        「每一行的文字带内都有标记、且行间空隙没有标记」。
+        """
+        path=self.root/"annot-text-markup.pdf"
+        lines=["Text markup line one","Text markup line two","Text markup line three"]
+        doc=fitz.open();page=doc.new_page(width=595,height=842)
+        for index,text in enumerate(lines):page.insert_text((72,120+index*80),text,fontsize=14)
+        doc.save(str(path));doc.close()
+        with fitz.open(str(path)) as probe:
+            quads=[[*probe[0].search_for(text)[0]] for text in lines]
+        self.assertEqual(len(quads),3)
+        bands=[(rect[1],rect[3]) for rect in quads]                                  # 每行文字带
+        gaps=[(quads[i][3]+3,quads[i+1][1]-3) for i in range(len(quads)-1)]          # 行间空隙
+        self.assertTrue(all(y1>y0 for y0,y1 in gaps),gaps)
+
+        baseline=self._gray_samples(path)
+        state=baseline
+        handles={}
+        for name,kind,color in (("ul1","underline","#FF0000"),
+                                ("so1","strikeout","#0000FF"),
+                                ("sg1","squiggly","#00AA00")):
+            result=self._save_annotations(path,[{"action":"add","id":name,"kind":kind,"page":0,
+                                                 "color":color,"quads":quads}])
+            self.assertTrue(result["ok"],kind)
+            self.assertIn(name,result["annotationHandles"])
+            handles.update(result["annotationHandles"])
+            current=self._gray_samples(path)
+            self.assertEqual(self._ranges_changed(state,current,bands),[True]*3,
+                             f"{kind} 未在全部 3 行文字带内产生可见标记（逐行 quads 未生效）")
+            self.assertEqual(self._ranges_changed(state,current,gaps),[False]*2,
+                             f"{kind} 在行间空隙也产生了标记（几何退化为单个包围盒）")
+            state=current
+
+        with fitz.open(str(path)) as doc:
+            self.assertEqual(sorted(a.type[1] for a in doc[0].annots()),
+                             ["Squiggly","StrikeOut","Underline"])
+            self.assertEqual({a.info.get("name") for a in doc[0].annots()},{"ul1","so1","sg1"})
+            for annot in doc[0].annots():
+                # 逐行几何：每行一个 quad = 4 点 = 8 个坐标值 → 3 行共 24 个值
+                self.assertEqual(len(doc.xref_get_key(annot.xref,"QuadPoints")[1].split()),len(quads)*8,
+                                 f"{annot.info.get('name')} 的 QuadPoints 不是逐行 {len(quads)} 组")
+            self.assertEqual(len(doc),1)   # 本用例自建 1 页合成文档
+        # 第三方（pypdf）可打开并看到三类注释
+        reader=PdfReader(str(path))
+        subtypes=sorted(a.get_object().get("/Subtype") for pg in reader.pages for a in (pg.get("/Annots") or []))
+        self.assertEqual(subtypes,["/Squiggly","/StrikeOut","/Underline"])
+        # 稳定名改色（setColor 的 stroke_types 已含新类型）+ 删除
+        self._save_annotations(path,[{"action":"setColor","name":handles["ul1"],"color":"#00FF00"}])
+        with fitz.open(str(path)) as doc:
+            underline=[a for a in doc[0].annots() if a.type[1]=="Underline"][0]
+            self.assertEqual(underline.colors.get("stroke"),[0.0,1.0,0.0])
+        self._save_annotations(path,[{"action":"delete","name":handles["so1"]}])
+        with fitz.open(str(path)) as doc:
+            self.assertEqual({a.info.get("name") for a in doc[0].annots()},{"ul1","sg1"})
+
+    def test_text_markup_encrypted_save_keeps_content(self):
+        """V4 T3：新标记类型在加密文档上保存后仍加密，且逐页内容非空白（防 needs_pass 类回归）。"""
+        path=self._annotation_path("annot-text-markup-enc.pdf",encrypted=True,password="user-pw")
+        with fitz.open(str(path)) as probe:
+            probe.authenticate("user-pw")
+            hits=probe[0].search_for("SECRET-123")
+            quads=[[*hits[0]]] if hits else None
+        self.assertIsNotNone(quads,"样例文档首页应有可检索文字")
+        result=self._save_annotations(path,[
+            {"action":"add","id":"ul-enc","kind":"underline","page":0,"color":"#FF0000","quads":quads},
+        ],password="user-pw")
+        self.assertTrue(result["ok"])
+        with fitz.open(str(path)) as doc:
+            self.assertTrue(doc.needs_pass or doc.is_encrypted)      # 仍加密
+            self.assertEqual(doc.authenticate("user-pw"),2)          # 原密码可解
+            self.assertEqual(len(doc),3)
+            self.assertEqual([a.type[1] for a in doc[0].annots()],["Underline"])
+            for index,page in enumerate(doc):
+                gray=page.get_pixmap(dpi=36,colorspace=fitz.csGRAY)
+                self.assertLess(min(gray.samples),250,f"第 {index+1} 页渲染为空白（内容流被写坏）")
+
     def test_annotation_operations_stay_out_of_catalog(self):
         # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
         self.assertEqual(len(engine.BY_ID),33)

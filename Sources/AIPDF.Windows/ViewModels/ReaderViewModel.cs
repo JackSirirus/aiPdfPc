@@ -1367,6 +1367,35 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     public AnnotationRecord? AddHighlight(int pageIndex, PdfRect rect, string? color = null)
         => AddAnnotation(AnnotationRecord.CreateHighlight(pageIndex, Normalize(rect), color));
 
+    /// <summary>
+    /// 新增多行高亮批注（V4 T3：逐行选区）。单框会把行间空隙也涂满，故逐行传入。
+    /// </summary>
+    public AnnotationRecord? AddHighlight(int pageIndex, IReadOnlyList<PdfRect> rects, string? color = null)
+        => AddTextMarkup(AnnotationKind.Highlight, pageIndex, rects, color);
+
+    /// <summary>
+    /// 新增文本标记批注（下划线/删除线；V4 T3 浮菜单消费）。
+    /// <paramref name="rects"/> 必须是**逐行**选区矩形：把多行压成单个包围盒会让渲染退化成
+    /// 跨行实心带（引擎侧实测见 .omo/evidence/v4-spike-underline.md）。
+    /// 空选区/旋转页/越界返回 null（不创建）。
+    /// </summary>
+    public AnnotationRecord? AddTextMarkup(
+        AnnotationKind kind, int pageIndex, IReadOnlyList<PdfRect> rects, string? color = null)
+    {
+        if (rects is null || rects.Count == 0)
+        {
+            return null;
+        }
+
+        var normalized = new PdfRect[rects.Count];
+        for (var index = 0; index < rects.Count; index++)
+        {
+            normalized[index] = Normalize(rects[index]);
+        }
+
+        return AddAnnotation(AnnotationRecord.CreateTextMarkup(kind, pageIndex, normalized, color));
+    }
+
     /// <summary>新增笔记批注（T2 浮菜单「笔记」消费）。旋转页/越界返回 null（不创建）。</summary>
     public AnnotationRecord? AddNote(int pageIndex, PdfRect rect, string note, string? color = null)
         => AddAnnotation(AnnotationRecord.CreateNote(pageIndex, Normalize(rect), note, color));

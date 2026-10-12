@@ -44,6 +44,9 @@ public static class ReaderStrings
     // ---- T2 选中浮菜单 / 悬停操作 / 笔记 ----
     public const string MenuCopy = "复制";    public const string MenuHighlight = "高亮";
     public const string MenuNote = "笔记";
+    // V4 T3：文本标记（下划线/删除线）
+    public const string MenuUnderline = "下划线";
+    public const string MenuStrikeout = "删除线";
     public const string MenuTools = "用工具处理 ▾";
     public const string MenuMoreTools = "更多工具…";
     public const string MenuBack = "返回";
@@ -57,6 +60,9 @@ public static class ReaderStrings
     public const string Copied = "已复制";
     public const string NoteApplied = "已添加笔记";
     public const string HighlightApplied = "已高亮";
+    // V4 T3：文本标记应用提示
+    public const string UnderlineApplied = "已加下划线";
+    public const string StrikeoutApplied = "已加删除线";
     public const string AnnotationDeleted = "已删除批注";
     public const string ToolUnavailable = "不可用";
 

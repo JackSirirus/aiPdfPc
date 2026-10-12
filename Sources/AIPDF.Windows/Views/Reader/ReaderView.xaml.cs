@@ -420,10 +420,31 @@ public partial class ReaderView : UserControl
     private void OnHighlightClick(object sender, RoutedEventArgs e)
     {
         if (_selectionPtRects.Count == 0) { CloseAllAndClear(); return; }
-        var rect = AnnotationGeometry.Union(_selectionPtRects);
-        _viewModel.AddHighlight(_selectionPageIndex, rect);
+        // V4 T3：下发**逐行**选区矩形（压成单个包围盒会把行间空隙也涂满）
+        _viewModel.AddHighlight(_selectionPageIndex, _selectionPtRects);
         CloseAllAndClear();
         ShowToast(ReaderStrings.HighlightApplied);
+    }
+
+    private void OnUnderlineClick(object sender, RoutedEventArgs e)
+        => ApplyTextMarkup(AnnotationKind.Underline, ReaderStrings.UnderlineApplied);
+
+    private void OnStrikeoutClick(object sender, RoutedEventArgs e)
+        => ApplyTextMarkup(AnnotationKind.Strikeout, ReaderStrings.StrikeoutApplied);
+
+    /// <summary>
+    /// 应用文本标记（V4 T3 浮菜单「下划线」「删除线」）：逐行选区下发。
+    /// 仅在真的创建成功时提示——旋转页/越界由 VM 返回 null，避免「没加上却提示成功」。
+    /// </summary>
+    private void ApplyTextMarkup(AnnotationKind kind, string appliedText)
+    {
+        if (_selectionPtRects.Count == 0) { CloseAllAndClear(); return; }
+        var created = _viewModel.AddTextMarkup(kind, _selectionPageIndex, _selectionPtRects);
+        CloseAllAndClear();
+        if (created is not null)
+        {
+            ShowToast(appliedText);
+        }
     }
 
     private void OnNoteClick(object sender, RoutedEventArgs e)

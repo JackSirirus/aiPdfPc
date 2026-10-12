@@ -28,6 +28,12 @@ public enum AnnotationKind
 
     /// <summary>几何形状（矩形/圆/线/箭头；具体见 <see cref="ShapeKind"/>）。</summary>
     Shape,
+
+    /// <summary>文字下划线（文本标记；逐行几何见 <see cref="AnnotationRecord.Quads"/>）。V4 T3。</summary>
+    Underline,
+
+    /// <summary>文字删除线（文本标记；逐行几何见 <see cref="AnnotationRecord.Quads"/>）。V4 T3。</summary>
+    Strikeout,
 }
 
 /// <summary>
@@ -121,6 +127,14 @@ public sealed record AnnotationRecord
     /// <summary>手写几何：多段折线（每段为点序列）。仅 <see cref="AnnotationKind.Ink"/> 有值。</summary>
     public IReadOnlyList<IReadOnlyList<PdfPoint>>? Strokes { get; init; }
 
+    /// <summary>
+    /// 文本标记的逐行矩形（<see cref="AnnotationKind.Highlight"/> /
+    /// <see cref="AnnotationKind.Underline"/> / <see cref="AnnotationKind.Strikeout"/>）。
+    /// 多行选区每行一个矩形；单行/历史记录可为 null（此时退化为 <see cref="Rect"/> 单矩形）。
+    /// <see cref="Rect"/> 恒为这些矩形的并集（命中测试与叠加层外接框）。V4 T3。
+    /// </summary>
+    public IReadOnlyList<PdfRect>? Quads { get; init; }
+
     /// <summary>描边线宽（pt；手写与形状使用）。</summary>
     public double LineWidth { get; init; } = DefaultLineWidth;
 
@@ -130,7 +144,7 @@ public sealed record AnnotationRecord
     /// <summary>保存状态（T1 恒为 Unsaved，T4 驱动迁移）。</summary>
     public AnnotationState State { get; init; } = AnnotationState.Unsaved;
 
-    /// <summary>新建高亮记录（默认黄）。</summary>
+    /// <summary>新建高亮记录（默认黄）。单矩形不落 <see cref="Quads"/>，保持 V2 载荷与渲染契约。</summary>
     public static AnnotationRecord CreateHighlight(int pageIndex, PdfRect rect, string? color = null)
         => new()
         {
@@ -140,6 +154,42 @@ public sealed record AnnotationRecord
             Kind = AnnotationKind.Highlight,
             Color = color ?? DefaultHighlightColor,
         };
+
+    /// <summary>
+    /// 新建文本标记记录（Highlight / Underline / Strikeout）。V4 T3。
+    /// <para>
+    /// <paramref name="quads"/> 为**逐行**矩形（每行一个）：多行选区必须逐行传入。把多行压成
+    /// 单个包围盒会让渲染退化成一条跨行实心带（引擎侧实测见
+    /// <c>.omo/evidence/v4-spike-underline.md</c>），故 <see cref="Rect"/> 取并集仅供命中测试，
+    /// 真正下发给引擎的几何是 <see cref="Quads"/>。
+    /// </para>
+    /// </summary>
+    public static AnnotationRecord CreateTextMarkup(
+        AnnotationKind kind, int pageIndex, IReadOnlyList<PdfRect> quads, string? color = null)
+    {
+        ArgumentNullException.ThrowIfNull(quads);
+        if (quads.Count == 0)
+        {
+            throw new ArgumentException("文本标记至少需要一个矩形。", nameof(quads));
+        }
+
+        if (kind is not (AnnotationKind.Highlight or AnnotationKind.Underline or AnnotationKind.Strikeout))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "不是文本标记类型。");
+        }
+
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = AnnotationGeometry.Union(quads),
+            // 仅多行才落 Quads：单矩形与 V2 记录等价，保持既有载荷/渲染契约不变
+            // （叠加层的单矩形路径继续走 BoxLayer）。
+            Quads = quads.Count > 1 ? quads : null,
+            Kind = kind,
+            Color = color ?? DefaultHighlightColor,
+        };
+    }
 
     /// <summary>新建文字笔记记录。空笔记抛 <see cref="ArgumentException"/>（T2 输入框校验）。</summary>
     public static AnnotationRecord CreateNote(int pageIndex, PdfRect rect, string note, string? color = null)
@@ -243,7 +293,8 @@ public sealed record AnnotationRecord
            && Shape == other.Shape
            && LineWidth.Equals(other.LineWidth)
            && AnnotationGeometry.PointsEqual(LinePoints, other.LinePoints)
-           && AnnotationGeometry.StrokesEqual(Strokes, other.Strokes);
+           && AnnotationGeometry.StrokesEqual(Strokes, other.Strokes)
+           && AnnotationGeometry.RectsEqual(Quads, other.Quads);
 
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
     public AnnotationRecord WithColor(string color) => this with { Color = color };

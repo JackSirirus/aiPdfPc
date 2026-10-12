@@ -361,7 +361,18 @@ public sealed class AnnotationSaveService : IDisposable
         RaiseStateChanged(session.Path, SavePillState.Saving, null);
 
         var originalPath = session.Path;
-        var actions = BuildEngineActions(batch);
+        List<IReadOnlyDictionary<string, object?>> actions;
+        try
+        {
+            actions = BuildEngineActions(batch);
+        }
+        catch (NotSupportedException error)
+        {
+            // V4 T3：未知批注类型必须显式失败（不得静默降级成 highlight）。此处转 Failed 终态，
+            // 避免会话卡在「保存中」；诊断留痕，叠加层可重试。
+            Trace.WriteLine($"[AnnotationSaveService] 批注类型不受支持: {session.Path} ({error.Message})");
+            return await FailSubmitAsync(session, batch, error.Message).ConfigureAwait(false);
+        }
 
         // T11 FR-18：防抖后、发送引擎前比对打开/上次保存时记录的 size/mtime 基线。
         // 检测完全在应用侧（不耗引擎资源）；V2 仅 size/mtime，无 SHA-256（Q4）。
@@ -845,9 +856,34 @@ public sealed class AnnotationSaveService : IDisposable
             ["rect"] = rect,
         };
 
+        // V4 T3：文本标记下发「逐行 quads」。只发单 rect 会让多行选区退化成跨行实心带
+        // （引擎侧实测见 .omo/evidence/v4-spike-underline.md），故几何以 Quads 为准。
+        if (record.Quads is { Count: > 0 } quads)
+        {
+            var quadArray = new double[quads.Count][];
+            for (var index = 0; index < quads.Count; index++)
+            {
+                quadArray[index] = [quads[index].Left, quads[index].Top, quads[index].Right, quads[index].Bottom];
+            }
+
+            action["quads"] = quadArray;
+        }
+
         // V3 T11（C3）：按类型携带几何。highlight/note 的键与顺序保持不变（V2 契约）。
         switch (record.Kind)
         {
+            case AnnotationKind.Highlight:
+                action["kind"] = "highlight";
+                break;
+
+            case AnnotationKind.Underline:
+                action["kind"] = "underline";
+                break;
+
+            case AnnotationKind.Strikeout:
+                action["kind"] = "strikeout";
+                break;
+
             case AnnotationKind.Note:
                 action["kind"] = "note";
                 action["text"] = record.Note ?? string.Empty;
@@ -876,8 +912,9 @@ public sealed class AnnotationSaveService : IDisposable
                 break;
 
             default:
-                action["kind"] = "highlight";
-                break;
+                // V4 T3：未知类型必须显式失败。原实现把任何新枚举值静默写成 highlight，
+                // 失败会推迟到 2s 防抖之后且语义已错——属「静默降级」型缺陷。
+                throw new NotSupportedException($"不支持的批注类型：{record.Kind}");
         }
 
         return action;

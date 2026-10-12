@@ -320,9 +320,12 @@ def insert_text(page, rect, text, size=18, color=(0, 0, 0), opacity=1, align=0):
 
 
 # --- V2 批注写回 + 就地原子保存 -------------------------------------------------
-# 批注链路刻意不进 BY_ID（32 工具目录不变）：它就地写回源文件而非任务输出目录，
+# 批注链路刻意不进 BY_ID（v1.1 起工具目录为 33，含 translate_batch；断言见
+# tests/test_engine.py 的 len(BY_ID)==33）：它就地写回源文件而非任务输出目录，
 # 并且是唯一允许在保存时保留源文件加密的路径（用已知用户密码显式 AES-256 重加密）。
 # 普通工具的 save_pdf 契约（输出到任务目录 + PDF_ENCRYPT_NONE）保持不变。
+# V4 T3：文本标记 highlight / underline / strikeout / squiggly 共用 add_text_markup_annot，
+# 且必须下发逐行 quads（单包围盒会渲染成跨行实心带）。
 TEMP_PREFIX = ".aipdf_tmp_"
 ANNOTATION_OPERATIONS = ("save_annotations", "add_highlight_annot", "add_freetext_annot",
                         "add_ink_annot", "add_shape_annot")
@@ -555,23 +558,48 @@ def _quad_rects(raw):
     raise UserError("批注选区坐标格式不正确。")
 
 
-def add_highlight_annot(page, quads=None, rect=None, color=(1, 1, 0)):
-    """添加标准 Highlight 注释（颜色 + 四边形点）。
+# 文本标记注释：kind → PyMuPDF 构建器方法名（V4 T3）。
+# 必须传「逐行 quads」：把多行选区压成单个包围盒会渲染成一条跨行实心带而不是逐行标记
+# （实测见 .omo/evidence/v4-spike-underline.md：单框 12,311 px / 跨 24 行的实心带，
+#  逐行 quads 才是每行一条线）。
+TEXT_MARKUP_BUILDERS = {
+    "highlight": "add_highlight_annot",
+    "underline": "add_underline_annot",
+    "strikeout": "add_strikeout_annot",
+    "squiggly": "add_squiggly_annot",
+}
+
+
+def add_text_markup_annot(page, kind, quads=None, rect=None, color=(1, 1, 0)):
+    """添加文本标记注释（Highlight / Underline / StrikeOut / Squiggly）。
 
     坐标为可见页、左上原点的 pt（与 area() 和 WPF PdfCoordinateMapper 一致），
     经 page.derotation_matrix 转换后再写入（V2 禁旋转页批注，非旋转页为恒等）。
+
+    quads 为逐行矩形列表（每行一个）；只给 rect 时退化为单矩形标记——多行选区务必传
+    quads，否则会渲染成跨行实心带（见 TEXT_MARKUP_BUILDERS 上方说明）。
     """
+    normalized = str(kind).strip().lower()
+    builder_name = TEXT_MARKUP_BUILDERS.get(normalized)
+    if builder_name is None:
+        raise UserError("不支持的文本标记类型。")
     raw = quads if quads is not None else ([rect] if rect is not None else None)
     rects = _quad_rects(raw)
     if not rects:
-        raise UserError("高亮批注缺少选区坐标。")
+        raise UserError("文本标记批注缺少选区坐标。")
     if isinstance(color, str):
         color = rgb(color)
-    annot = page.add_highlight_annot(quads=[r * page.derotation_matrix for r in rects])
+    annot = getattr(page, builder_name)(quads=[r * page.derotation_matrix for r in rects])
     annot.set_colors(stroke=tuple(color))
-    annot.set_opacity(0.5)
+    if normalized == "highlight":
+        annot.set_opacity(0.5)  # 仅高亮半透明；下划线/删除线保持不透明，避免线条发虚
     annot.update()
     return annot
+
+
+def add_highlight_annot(page, quads=None, rect=None, color=(1, 1, 0)):
+    """添加标准 Highlight 注释（保留 V2 函数契约；实现见 add_text_markup_annot）。"""
+    return add_text_markup_annot(page, "highlight", quads=quads, rect=rect, color=color)
 
 
 def _note_box(page, rect):
@@ -706,8 +734,9 @@ def apply_annotation_actions(doc, actions):
             kind = str(action.get("kind", "highlight")).strip().lower()
             color = rgb(action.get("color") or "#FFFF00")
             handle = str(action.get("id") or action.get("name") or uuid.uuid4().hex)
-            if kind == "highlight":
-                annot = add_highlight_annot(page, quads=action.get("quads"), rect=action.get("rect"), color=color)
+            if kind in TEXT_MARKUP_BUILDERS:
+                # V4 T3：highlight / underline / strikeout / squiggly 走同一条逐行 quads 通道。
+                annot = add_text_markup_annot(page, kind, quads=action.get("quads"), rect=action.get("rect"), color=color)
             elif kind == "note":
                 # 笔记 = 关联高亮 + FreeText；两者共用同一稳定名，删除时一并移除。
                 highlight = add_highlight_annot(page, quads=action.get("quads"), rect=action.get("rect"), color=color)
@@ -734,7 +763,7 @@ def apply_annotation_actions(doc, actions):
         elif what in ("setcolor", "recolor", "color"):
             # V3 T11：改色覆盖所有带描边的注释类型（高亮/手写/矩形/圆/线/多边形）；
             # FreeText 不参与（与 V2 笔记语义一致：笔记改色只改关联高亮的 stroke）。
-            stroke_types = ("Highlight", "Ink", "Square", "Circle", "Line", "Polygon")
+            stroke_types = ("Highlight", "Underline", "StrikeOut", "Squiggly", "Ink", "Square", "Circle", "Line", "Polygon")
             targets = [item for item in _find_annots(doc, action) if item[1].type[1] in stroke_types]
             if not targets:
                 raise UserError("找不到要改色的批注。")

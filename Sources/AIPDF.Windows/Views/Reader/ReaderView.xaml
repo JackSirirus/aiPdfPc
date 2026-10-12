@@ -402,11 +402,10 @@
                                                       Visibility="Collapsed" />
                                             </Grid>
                                             <DataTemplate.Triggers>
-                                                <DataTrigger Binding="{Binding Kind}" Value="Ink">
-                                                    <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
-                                                    <Setter TargetName="ShapeLayer" Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding Kind}" Value="Shape">
+                                                <!-- V4 T3：几何层由 AnnotationOverlay.UsesGeometryLayer 统一驱动
+                                                     （Ink/Shape/Underline/Strikeout，以及多行高亮的逐行填充）；
+                                                     Highlight/Note 的单矩形仍走 BoxLayer，保持 V2 渲染契约。 -->
+                                                <DataTrigger Binding="{Binding UsesGeometryLayer}" Value="True">
                                                     <Setter TargetName="BoxLayer" Property="Visibility" Value="Collapsed" />
                                                     <Setter TargetName="ShapeLayer" Property="Visibility" Value="Visible" />
                                                 </DataTrigger>
@@ -620,6 +619,13 @@
                             <Button Style="{StaticResource MenuItemButton}"
                                     Content="{x:Static reader:ReaderStrings.MenuNote}"
                                     Click="OnNoteClick" />
+                            <!-- V4 T3：文本标记（下划线/删除线） -->
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuUnderline}"
+                                    Click="OnUnderlineClick" />
+                            <Button Style="{StaticResource MenuItemButton}"
+                                    Content="{x:Static reader:ReaderStrings.MenuStrikeout}"
+                                    Click="OnStrikeoutClick" />
                             <Separator Margin="4,3" />
                             <Button Style="{StaticResource MenuItemButton}"
                                     Content="{x:Static reader:ReaderStrings.MenuTools}"
