@@ -43,6 +43,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>收藏当前页命令（Ctrl+B 全局快捷键；PRD AC-04.1 实现缺口，V4 T1）。</summary>
     public static readonly RoutedCommand AddBookmarkCommand = new(nameof(AddBookmarkCommand), typeof(MainWindow));
 
+    /// <summary>命令面板命令（Ctrl+K 全局快捷键；V4 T6）。</summary>
+    public static readonly RoutedCommand CommandPaletteCommand = new(nameof(CommandPaletteCommand), typeof(MainWindow));
+
     /// <summary>标签宿主：多标签核心逻辑（同路径去重【D14】/页面实例缓存【D16】/增删）。</summary>
     private TabHostViewModel TabHost { get; } = new();
 
@@ -64,6 +67,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         {
             TitleProvider = new SearchTextFirstLineProvider(_searchIndexService),
         };
+
+        // V4 T6：命令面板（Ctrl+K）。条目在执行命令时装配（工具/文档状态可能变化）。
+        CommandPalette.DataContext = _commandPalette;
+        CommandPalette.CloseRequested += (_, _) => TabStrip.Focus();
 
         // Wave 5 工具组导航注册：每组一行（并行任务合并约定，T14 起建立）。
         PageOrganizer.PageOrganizerPages.Register();
@@ -533,32 +540,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return;
         }
 
-        var tool = main.Tools.FirstOrDefault(t => string.Equals(t.Id, e.ToolId, StringComparison.Ordinal));
-        if (tool is null)
-        {
-            main.StatusText = $"未找到工具：{e.ToolId}";
-            return;
-        }
-
-        ShowToolPage(tool, main.Bridge); // 既有通道（右抽屉 / 临时标签）
-
-        var hosted = ResolveHostedToolPage(tool);
-        if (hosted?.DataContext is not ICurrentDocumentPinnable pinnable)
-        {
-            return; // 该工具页未实现统一置顶契约：不降级为仅传路径
-        }
-
-        if (ActiveDocumentPath() is { } path)
-        {
-            pinnable.PinCurrentDocument(path); // 入选 + 置顶 + 标记「当前文档」
-        }
-
-        if (e.PrefillPageRange && pinnable.SupportsPageRangePrefill)
-        {
-            pinnable.PrefillPageRange(e.PageStart, e.PageEnd);
-        }
-
-        main.StatusText = $"已用「{tool.Name}」处理当前文档";
+        // V4 T6：与命令面板共用同一条通道（含当前文档置顶与页范围预填），见 OpenToolById。
+        OpenToolById(e.ToolId, e.PrefillPageRange, e.PageStart, e.PageEnd);
     }
 
     /// <summary>解析工具页当前承载的视图（右抽屉实例缓存 / 临时标签内容）。</summary>
@@ -2072,6 +2055,122 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
     }
 
+    // ---- V4 T6：命令面板（Ctrl+K） ----
+
+    /// <summary>Ctrl+K：切换命令面板；打开前重建条目（工具集/文档状态可能已变化）。</summary>
+    private void OnCommandPaletteExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (CommandPalette.IsOpen)
+        {
+            CommandPalette.Close();
+            return;
+        }
+
+        BuildCommandPaletteItems();
+        CommandPalette.Open();
+    }
+
+    /// <summary>
+    /// 装配命令面板条目：33 工具（走 <see cref="OpenToolById"/>，与工具箱同一条通道）+
+    /// 阅读操作 + 设置。工具项的别名用英文 id（用户更常输入 ocr / merge）。
+    /// </summary>
+    internal void BuildCommandPaletteItems()
+    {
+        if (DataContext is not ViewModels.MainViewModel main)
+        {
+            return;
+        }
+
+        var items = new List<Models.CommandPaletteItem>();
+        items.AddRange(Services.CommandPaletteRegistry.BuildToolItems(main.Tools, tool => OpenToolById(tool.Id)));
+        items.AddRange(Services.CommandPaletteRegistry.BuildItems(ReaderOperations(), Models.CommandPaletteGroup.Reader));
+        items.AddRange(Services.CommandPaletteRegistry.BuildItems(SettingsOperations(), Models.CommandPaletteGroup.Settings));
+        _commandPalette.SetItems(items);
+    }
+
+    /// <summary>阅读操作（别名含拼音首字母，便于中文输入法之外的输入路径）。</summary>
+    private IReadOnlyList<Services.CommandPaletteOperation> ReaderOperations() =>
+    [
+        new("reader.search", "全文搜索", ["search", "quanwen", "qwss"], OpenFullTextSearch),
+        new("reader.jump", "跳页", ["jump", "goto", "tiaoye", "ty"], FocusStatusJumpBox),
+        new("reader.zoomin", "放大", ["zoom", "fangda", "fd"],
+            () => ActiveReaderState()?.ViewModel.ZoomInCommand.Execute(null)),
+        new("reader.zoomout", "缩小", ["zoom", "suoxiao", "sx"],
+            () => ActiveReaderState()?.ViewModel.ZoomOutCommand.Execute(null)),
+        new("reader.fitwidth", "适配宽度", ["fit", "shipei", "spkd"],
+            () => ActiveReaderState()?.ViewModel.FitWidthCommand.Execute(null)),
+        new("reader.fitpage", "适配页面", ["fit", "shipei", "spym"],
+            () => ActiveReaderState()?.ViewModel.FitPageCommand.Execute(null)),
+        new("reader.spread", "双页对开", ["spread", "shuangye", "sydk"],
+            () => ActiveReaderState()?.ViewModel.ToggleSpreadCommand.Execute(null)),
+        new("reader.print", "打印", ["print", "dayin", "dy"], () => PrintCommand.Execute(null, this)),
+        new("reader.bookmark", "收藏当前页", ["bookmark", "shoucang", "sc"],
+            () => AddBookmarkCommand.Execute(null, this)),
+        new("reader.closetab", "关闭标签", ["close", "guanbi", "gb"],
+            () => CloseActiveTabCommand.Execute(null, this)),
+        new("reader.newtab", "新建标签", ["new", "open", "xinjian", "xj"],
+            () => OnNewTabClick(this, new RoutedEventArgs())),
+        new("reader.relock", "锁定文档", ["lock", "suoding", "sd"],
+            () => OnStatusRelockClick(this, new RoutedEventArgs())),
+    ];
+
+    /// <summary>设置与关于。</summary>
+    private IReadOnlyList<Services.CommandPaletteOperation> SettingsOperations() =>
+    [
+        new("settings.open", "设置", ["settings", "shezhi", "sz"],
+            () => OnSettingsMenuItemClick(this, new RoutedEventArgs())),
+        new("settings.about", "关于许可", ["about", "guanyu", "gy"],
+            () => OnAboutMenuItemClick(this, new RoutedEventArgs())),
+    ];
+
+    /// <summary>跳页：把焦点交给状态栏页码框并全选（与 Ctrl+G 一致）。</summary>
+    private void FocusStatusJumpBox()
+    {
+        StatusJumpBox.Focus();
+        StatusJumpBox.SelectAll();
+    }
+
+    /// <summary>
+    /// 按工具 id 打开工具页——**工具箱/浮菜单/命令面板共用此方法**，保证三条入口行为一致：
+    /// 既有通道（右抽屉 / 临时标签）+ 当前文档置顶 + 可选页范围预填。
+    /// 注意不可只调 <see cref="ShowToolPage"/>：那样会丢「当前文档置顶」与「页范围预填」。
+    /// </summary>
+    private bool OpenToolById(string toolId, bool prefillPageRange = false, int pageStart = 0, int pageEnd = 0)
+    {
+        if (DataContext is not ViewModels.MainViewModel main)
+        {
+            return false;
+        }
+
+        var tool = main.Tools.FirstOrDefault(t => string.Equals(t.Id, toolId, StringComparison.Ordinal));
+        if (tool is null)
+        {
+            main.StatusText = $"未找到工具：{toolId}";
+            return false;
+        }
+
+        ShowToolPage(tool, main.Bridge); // 既有通道（右抽屉 / 临时标签）
+
+        var hosted = ResolveHostedToolPage(tool);
+        if (hosted?.DataContext is not ICurrentDocumentPinnable pinnable)
+        {
+            return true; // 该工具页未实现统一置顶契约：不降级为仅传路径
+        }
+
+        if (ActiveDocumentPath() is { } path)
+        {
+            pinnable.PinCurrentDocument(path); // 入选 + 置顶 + 标记「当前文档」
+        }
+
+        if (prefillPageRange && pinnable.SupportsPageRangePrefill)
+        {
+            pinnable.PrefillPageRange(pageStart, pageEnd);
+        }
+
+        main.StatusText = $"已用「{tool.Name}」处理当前文档";
+        return true;
+    }
+
     /// <summary>
     /// 全文搜索面板接管【D6】【R17】：仅在文档标签激活时（否则状态栏提示）。
     /// 记住当前面板 → 切到搜索面板并聚焦搜索框；Esc/✕ 由 <see cref="ExitFullTextSearch"/> 恢复。
@@ -2320,6 +2419,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     /// <summary>书签 VM（单实例，按 docId 分存；T8 注入 T5 阅读状态存储 → 书签并入每文件 reading-state，Q3）。</summary>
     private readonly BookmarkPanelViewModel _bookmarks;
+
+    /// <summary>V4 T6：命令面板视图模型（条目在每次打开时装配，见 BuildCommandPaletteItems）。</summary>
+    private readonly CommandPaletteViewModel _commandPalette = new();
 
     /// <summary>当前挂接的文档标识（渲染服务返回的规范化路径）。</summary>
     private string? _attachedDocId;

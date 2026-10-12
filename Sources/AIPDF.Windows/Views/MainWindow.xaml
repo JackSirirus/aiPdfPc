@@ -6,6 +6,7 @@
         xmlns:views="clr-namespace:AIPDF.Windows.Views"
         xmlns:startPage="clr-namespace:AIPDF.Windows.Views.StartPage"
         xmlns:reader="clr-namespace:AIPDF.Windows.Views.Reader"
+    xmlns:palette="clr-namespace:AIPDF.Windows.Views.CommandPalette"
                         Title="AIPDF 阅读器"
         AutomationProperties.AutomationId="MainWindow"
         Width="1080" Height="700"
@@ -30,6 +31,8 @@
         <KeyBinding Gesture="Ctrl+P" Command="{x:Static views:MainWindow.PrintCommand}" />
         <!-- V4 T1：Ctrl+B 收藏当前页（PRD AC-04.1）；仅在文档标签激活时生效，工具标签下不误加到上一份文档 -->
         <KeyBinding Gesture="Ctrl+B" Command="{x:Static views:MainWindow.AddBookmarkCommand}" />
+        <!-- V4 T6：Ctrl+K 命令面板（对标 SumatraPDF；33 工具 + 阅读操作 + 设置的统一入口） -->
+        <KeyBinding Gesture="Ctrl+K" Command="{x:Static views:MainWindow.CommandPaletteCommand}" />
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static views:MainWindow.FullTextSearchCommand}"
@@ -41,6 +44,8 @@
                         CanExecute="OnPrintCanExecute" />
         <CommandBinding Command="{x:Static views:MainWindow.AddBookmarkCommand}"
                         Executed="OnAddBookmarkExecuted" />
+        <CommandBinding Command="{x:Static views:MainWindow.CommandPaletteCommand}"
+                        Executed="OnCommandPaletteExecuted" />
     </Window.CommandBindings>
 
     <Window.Resources>
@@ -1171,6 +1176,12 @@
                                VerticalAlignment="Center" />
                 </Grid>
             </Border>
+
+            <!-- V4 T6：命令面板覆盖层（Ctrl+K）。置于最上层，独立于工具箱/右抽屉；
+                 DataContext 与执行路由在 code-behind 注入（条目需复用既有入口，见 BuildCommandPaletteItems）。 -->
+            <palette:CommandPaletteView x:Name="CommandPalette"
+                                        Panel.ZIndex="40"
+                                        Visibility="Collapsed" />
         </Grid>
     </Border>
 </Window>
