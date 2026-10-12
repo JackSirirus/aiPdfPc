@@ -281,6 +281,13 @@ class EngineTests(unittest.TestCase):
             self.assertTrue(d.needs_pass or d.is_encrypted)  # AC-13.2：保存后仍加密
             self.assertEqual(d.authenticate(password),2)     # 原用户密码可解
             self.assertEqual(d.page_count,3)
+            # 内容完整性回归：PyMuPDF 1.28.2 下「认证后读 doc.needs_pass 再加密保存」会把
+            # 内容流写成空流（声明 /Length 32、实际 0 字节），页 2/3 渲染全白；只断言页数与
+            # 注释数会漏掉这种内容丢失。故逐页断言渲染非空白（不用 get_text：加密文档上
+            # MuPDF 读字符串本身不可靠，见 learnings）。
+            for index,page in enumerate(d):
+                gray=page.get_pixmap(dpi=36,colorspace=fitz.csGRAY)
+                self.assertLess(min(gray.samples),250,f"第 {index+1} 页渲染为空白（内容流被写坏）")
         out=PdfReader(str(path));out_enc=out.trailer["/Encrypt"]
         out_fp=tuple(str(out_enc[k]) for k in ("/V","/R","/P","/Length","/Filter"))
         # 算法（/V=5,/R=6,AESV3）与用户权限位（/P）保持；用户可见权限可保持

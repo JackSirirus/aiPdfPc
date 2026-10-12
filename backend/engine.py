@@ -251,6 +251,9 @@ def open_pdf(path, password=""):
     # empty-user-password document never reports needs_pass. The in-place
     # annotation save uses this to preserve (or drop) encryption on save.
     doc._aipdf_encrypted = bool(doc.is_encrypted or doc.needs_pass)
+    # 认证前捕获「是否需要密码」：认证后在 AES 文档上再读 needs_pass 会破坏随后的
+    # 加密保存（见 _atomic_save_in_place 的说明），故一律用这里的快照。
+    doc._aipdf_needs_pass = bool(doc.needs_pass)
     if not doc.is_pdf:
         doc.close()
         raise UserError("此工具需要 PDF 文件。")
@@ -405,6 +408,8 @@ def _doc_is_encrypted(doc):
     captured = getattr(doc, "_aipdf_encrypted", None)
     if captured is not None:
         return bool(captured)
+    # 回退路径（文档未经 open_pdf 打开）：这里的 needs_pass 读取同样会破坏随后的加密
+    # 保存；生产路径恒有 open_pdf 的快照，故保留原语义并标注风险。
     return bool(doc.needs_pass or doc.is_encrypted)
 
 
@@ -490,7 +495,12 @@ def _atomic_save_in_place(doc, path, password=""):
     kwargs = {"garbage": 4, "deflate": True}
     encrypted = _doc_is_encrypted(doc)
     if encrypted:
-        if doc.needs_pass and not password:
+        # 【禁止在此读 doc.needs_pass】PyMuPDF 1.28.2 在「已认证的 AES 文档」上读该属性
+        # 会破坏紧随其后的加密保存：内容流被写成空流（声明 /Length 32、实际 0 字节），
+        # 表现为部分页渲染全白，qpdf 报 "expected endstream" / "incorrect header check"。
+        # 实测：认证后读 needs_pass → 页 2/3 全白；改读 is_encrypted/page_count/permissions/
+        # metadata 均正常；认证前读 needs_pass 也正常。故用 open_pdf 认证前的快照判断。
+        if getattr(doc, "_aipdf_needs_pass", False) and not password:
             raise UserError("加密文档需要密码才能保存批注。")
         # 显式重加密而非 PDF_ENCRYPT_KEEP：PyMuPDF 1.28.2 在用户密码会话下用 KEEP
         # 复用原加密上下文时，可能把新增注释的字符串写成空/乱码（MuPDF AES 缺陷）。
