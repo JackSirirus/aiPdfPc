@@ -402,7 +402,7 @@
     </Window.Resources>
 
     <Border Background="{DynamicResource Brush.Window}">
-        <Grid>
+        <Grid x:Name="RootLayout">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />

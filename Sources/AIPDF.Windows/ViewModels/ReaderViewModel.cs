@@ -459,6 +459,12 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ToggleSpread() => SetSpread(!_spreadEnabled, persist: true);
 
+    /// <summary>
+    /// V4 T7：演示模式临时切换双页对开——**不落盘**（演示不应改写用户的阅读偏好，
+    /// 退出演示后由宿主还原原值）。
+    /// </summary>
+    public void SetSpreadForPresentation(bool enabled) => SetSpread(enabled, persist: false);
+
     private void SetSpread(bool enabled, bool persist)
     {
         if (enabled == _spreadEnabled)

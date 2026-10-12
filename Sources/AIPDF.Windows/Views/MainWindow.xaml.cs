@@ -2017,6 +2017,197 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     private void OnFullTextSearchClick(object sender, RoutedEventArgs e)
         => OpenFullTextSearch();
 
+    // ---- V4 T7：全屏 / 演示模式 ----
+
+    /// <summary>
+    /// 全屏/演示相关键位（返回是否已处理）。抽成独立方法便于宿主级单测；
+    /// 注意 <b>Esc 优先退演示、再退全屏</b>——否则会先被既有的「关工具箱/退搜索」分支吃掉。
+    /// </summary>
+    internal bool HandleChromeKey(Key key)
+    {
+        switch (key)
+        {
+            case Key.F11:
+                ToggleFullscreen();
+                return true;
+
+            case Key.F5:
+                TogglePresentation();
+                return true;
+
+            case Key.Escape when _presentationMode:
+                ExitPresentation();
+                return true;
+
+            case Key.Escape when _fullscreen:
+                ExitFullscreen();
+                return true;
+
+            case Key.Right or Key.PageDown when _presentationMode:
+                TurnPresentationPage(1);
+                return true;
+
+            case Key.Left or Key.PageUp when _presentationMode:
+                TurnPresentationPage(-1);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>F11：切换全屏。</summary>
+    internal void ToggleFullscreen()
+    {
+        if (_fullscreen)
+        {
+            ExitFullscreen();
+        }
+        else
+        {
+            EnterFullscreen();
+        }
+    }
+
+    /// <summary>进入全屏：隐藏顶栏/左栏/状态栏并去掉窗口边框；逐项记录原值供还原。</summary>
+    internal void EnterFullscreen()
+    {
+        if (_fullscreen)
+        {
+            return;
+        }
+
+        _preFullscreenState = WindowState;
+        _preFullscreenStyle = WindowStyle;
+        _preFullscreenResize = ResizeMode;
+        _preFullscreenTopRow = RootLayout.RowDefinitions[0].Height;
+        _preFullscreenStatusRow = RootLayout.RowDefinitions[2].Height;
+        _preFullscreenLeftWidth = LeftPanelColumn.Width;
+        _preFullscreenLeftPanel = LeftPanel.Visibility;
+        _preFullscreenLeftSplitter = LeftSplitter.Visibility;
+
+        // 先回 Normal 再改样式：最大化态下直接改 WindowStyle 在 WPF 上可能不生效或闪烁。
+        WindowState = WindowState.Normal;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        WindowState = WindowState.Maximized;
+
+        RootLayout.RowDefinitions[0].Height = new GridLength(0);   // 顶栏
+        RootLayout.RowDefinitions[2].Height = new GridLength(0);   // 状态栏
+        LeftPanel.Visibility = Visibility.Collapsed;
+        LeftSplitter.Visibility = Visibility.Collapsed;
+        LeftPanelColumn.Width = new GridLength(0);
+
+        _fullscreen = true;
+        SetStatusText(ReaderStrings.FullscreenEntered);
+    }
+
+    /// <summary>退出全屏（带状态栏提示）。</summary>
+    internal void ExitFullscreen()
+    {
+        if (!_fullscreen)
+        {
+            return;
+        }
+
+        ExitFullscreenCore();
+        SetStatusText(ReaderStrings.FullscreenExited);
+    }
+
+    /// <summary>还原窗口样式与外壳（幂等；窗口关闭路径也会调用，避免留下无边框窗口）。</summary>
+    private void ExitFullscreenCore()
+    {
+        if (!_fullscreen)
+        {
+            return;
+        }
+
+        _fullscreen = false;
+
+        RootLayout.RowDefinitions[0].Height = _preFullscreenTopRow;
+        RootLayout.RowDefinitions[2].Height = _preFullscreenStatusRow;
+        LeftPanel.Visibility = _preFullscreenLeftPanel;
+        LeftSplitter.Visibility = _preFullscreenLeftSplitter;
+        LeftPanelColumn.Width = _preFullscreenLeftWidth;
+
+        WindowStyle = _preFullscreenStyle;
+        ResizeMode = _preFullscreenResize;
+        WindowState = _preFullscreenState;
+    }
+
+    /// <summary>F5：切换演示模式（全屏 + 单页适配 + ←→ 翻页 + Esc 退出）。</summary>
+    internal void TogglePresentation()
+    {
+        if (_presentationMode)
+        {
+            ExitPresentation();
+        }
+        else
+        {
+            EnterPresentation();
+        }
+    }
+
+    /// <summary>进入演示：全屏 + 临时切单页 + 适配页面。不改写用户的双页偏好（非落盘切换）。</summary>
+    internal void EnterPresentation()
+    {
+        if (_presentationMode)
+        {
+            return;
+        }
+
+        EnterFullscreen();
+
+        if (ActiveReaderState() is { } reader)
+        {
+            _prePresentationSpread = reader.ViewModel.SpreadEnabled;
+            reader.ViewModel.SetSpreadForPresentation(false);
+            reader.ViewModel.FitPageCommand.Execute(null);
+        }
+
+        _presentationMode = true;
+        SetStatusText(ReaderStrings.PresentationEntered);
+    }
+
+    /// <summary>退出演示：还原双页偏好并退出全屏。</summary>
+    internal void ExitPresentation()
+    {
+        if (!_presentationMode)
+        {
+            return;
+        }
+
+        _presentationMode = false;
+        ActiveReaderState()?.ViewModel.SetSpreadForPresentation(_prePresentationSpread);
+        ExitFullscreen();
+        SetStatusText(ReaderStrings.PresentationExited);
+    }
+
+    /// <summary>演示模式翻页（±1；越界由 ReaderViewModel.GoToPage 自行收敛）。</summary>
+    private void TurnPresentationPage(int delta)
+    {
+        if (ActiveReaderState() is not { } reader)
+        {
+            return;
+        }
+
+        var target = reader.ViewModel.CurrentPageNumber + delta;
+        if (target < 1)
+        {
+            target = 1;
+        }
+
+        reader.ViewModel.GoToPage(target);
+    }
+
+    private void SetStatusText(string text)
+    {
+        if (DataContext is ViewModels.MainViewModel main)
+        {
+            main.StatusText = text;
+        }
+    }
+
     private void OnFullTextSearchExecuted(object sender, ExecutedRoutedEventArgs e)
         => OpenFullTextSearch();
 
@@ -2238,6 +2429,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>窗口级 Esc：先关闭最上层工具箱面板；其次搜索面板激活时消费（恢复原面板）；其余交给聚焦控件。</summary>
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // V4 T7：全屏/演示键位优先处理（尤其 Esc：演示中先退演示，再退全屏，
+        // 否则会被下面「关工具箱 / 退搜索」的分支吃掉）。
+        if (HandleChromeKey(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
         // A+C 方案 A（底栏合一）：Ctrl+G 定位状态栏页码输入框（FR-05）。原先由阅读视图内部
         // 的页码框处理，输入框已移到状态栏，故改在窗口级拦截。
         if (e.Key == Key.G && Keyboard.Modifiers == ModifierKeys.Control
@@ -2422,6 +2621,19 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     /// <summary>V4 T6：命令面板视图模型（条目在每次打开时装配，见 BuildCommandPaletteItems）。</summary>
     private readonly CommandPaletteViewModel _commandPalette = new();
+
+    // ---- V4 T7 全屏 / 演示模式 ----
+    private bool _fullscreen;
+    private bool _presentationMode;
+    private bool _prePresentationSpread;
+    private WindowState _preFullscreenState = WindowState.Normal;
+    private WindowStyle _preFullscreenStyle = WindowStyle.SingleBorderWindow;
+    private ResizeMode _preFullscreenResize = ResizeMode.CanResize;
+    private GridLength _preFullscreenTopRow = GridLength.Auto;
+    private GridLength _preFullscreenStatusRow = GridLength.Auto;
+    private GridLength _preFullscreenLeftWidth = new(264);
+    private Visibility _preFullscreenLeftPanel = Visibility.Visible;
+    private Visibility _preFullscreenLeftSplitter = Visibility.Visible;
 
     /// <summary>当前挂接的文档标识（渲染服务返回的规范化路径）。</summary>
     private string? _attachedDocId;
@@ -2998,6 +3210,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>应用退出：批量保存全部打开标签的阅读状态（FR-24）+ 会话（FR-28；移动/缩放期间不写）。</summary>
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
+        // V4 T7：先还原全屏/演示——**必须在 SaveSession 之前**。XAML 的 Closing 挂接早于构造器里
+        // 追加的处理器，若靠 `Closing +=` 还原，会话会先记录「最大化 + 无边框」这类异常窗口状态（R17）。
+        ExitPresentation();
+        ExitFullscreenCore();
+
         foreach (var reader in _readerTabs.Values.ToList())
         {
             SaveReadingState(reader.ViewModel, reader.DocId);

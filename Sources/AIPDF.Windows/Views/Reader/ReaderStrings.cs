@@ -97,4 +97,10 @@ public static class ReaderStrings
     public const string StampImageActive = "图片图章";
     public const string StampApplied = "已放置图章";
     public const string StampImageFailed = "图片读取失败，已切回预置图章";
+
+    // ---- V4 T7 全屏 / 演示模式 ----
+    public const string FullscreenEntered = "已进入全屏（F11 退出）";
+    public const string FullscreenExited = "已退出全屏";
+    public const string PresentationEntered = "演示模式：← → 翻页，Esc 退出";
+    public const string PresentationExited = "已退出演示模式";
 }

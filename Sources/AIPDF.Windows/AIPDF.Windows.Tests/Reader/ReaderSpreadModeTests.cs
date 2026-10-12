@@ -267,6 +267,38 @@ public sealed class ReaderSpreadModeTests
         Assert.True(vm.GroupMap.IsIdentity);
     }
 
+    /// <summary>
+    /// V4 T7：演示模式临时切单页——布局确实变化，但**不改写用户的落盘偏好**；
+    /// 退出演示用同一入口还原。演示不应污染 reading-state。
+    /// </summary>
+    [Fact]
+    public void SetSpreadForPresentation_ChangesLayout_WithoutPersistingPreference()
+    {
+        using var fx = new SpreadFixture();
+        using var vm = fx.NewVm();
+        vm.LoadDocument(Corpus.Mixed100);
+
+        // 用户偏好：双页（落盘）
+        vm.SpreadEnabled = true;
+        Assert.True(vm.SpreadEnabled);
+        var stamp = ReadingStateKey.TryCapture(vm.DocumentPath!);
+        Assert.NotNull(stamp);
+        var key = stamp!.Value.Key;
+        Assert.True(fx.Store.Load(key)!.SpreadEnabled);
+
+        // 进入演示：临时切单页（布局变化，状态不变）
+        vm.SetSpreadForPresentation(false);
+        Assert.False(vm.SpreadEnabled);
+        Assert.True(vm.GroupMap.IsIdentity);
+        Assert.True(fx.Store.Load(key)!.SpreadEnabled, "演示切换不得改写落盘偏好");
+
+        // 退出演示：还原双页
+        vm.SetSpreadForPresentation(true);
+        Assert.True(vm.SpreadEnabled);
+        Assert.False(vm.GroupMap.IsIdentity);
+        Assert.True(fx.Store.Load(key)!.SpreadEnabled);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, string message, int timeoutMs = 30_000)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
