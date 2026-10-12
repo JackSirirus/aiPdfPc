@@ -28,6 +28,8 @@
         <KeyBinding Gesture="Ctrl+W" Command="{x:Static views:MainWindow.CloseActiveTabCommand}" />
         <!-- V3 T6：Ctrl+P 打印入口（FR-30）；CanExecute 由门禁驱动，加载中/未解锁自动禁用（AC-30.2） -->
         <KeyBinding Gesture="Ctrl+P" Command="{x:Static views:MainWindow.PrintCommand}" />
+        <!-- V4 T1：Ctrl+B 收藏当前页（PRD AC-04.1）；仅在文档标签激活时生效，工具标签下不误加到上一份文档 -->
+        <KeyBinding Gesture="Ctrl+B" Command="{x:Static views:MainWindow.AddBookmarkCommand}" />
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static views:MainWindow.FullTextSearchCommand}"
@@ -37,6 +39,8 @@
         <CommandBinding Command="{x:Static views:MainWindow.PrintCommand}"
                         Executed="OnPrintExecuted"
                         CanExecute="OnPrintCanExecute" />
+        <CommandBinding Command="{x:Static views:MainWindow.AddBookmarkCommand}"
+                        Executed="OnAddBookmarkExecuted" />
     </Window.CommandBindings>
 
     <Window.Resources>

@@ -40,6 +40,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>打印当前文档命令（Ctrl+P 全局快捷键 + 顶栏按钮，FR-30；V3 T6）。</summary>
     public static readonly RoutedCommand PrintCommand = new(nameof(PrintCommand), typeof(MainWindow));
 
+    /// <summary>收藏当前页命令（Ctrl+B 全局快捷键；PRD AC-04.1 实现缺口，V4 T1）。</summary>
+    public static readonly RoutedCommand AddBookmarkCommand = new(nameof(AddBookmarkCommand), typeof(MainWindow));
+
     /// <summary>标签宿主：多标签核心逻辑（同路径去重【D14】/页面实例缓存【D16】/增删）。</summary>
     private TabHostViewModel TabHost { get; } = new();
 
@@ -2033,6 +2036,41 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
     private void OnFullTextSearchExecuted(object sender, ExecutedRoutedEventArgs e)
         => OpenFullTextSearch();
+
+    /// <summary>
+    /// 收藏当前页（Ctrl+B 全局快捷键；PRD AC-04.1 的实现缺口，V4 T1）。
+    /// 仅当活动标签是文档标签时生效——书签面板 VM 是单例，且在工具标签激活时不会
+    /// <c>DetachDocument</c>（切工具标签要保留面板状态），因此必须显式校验活动标签并按
+    /// 活动文档重新挂接，否则会把书签加到上一份文档上。
+    /// </summary>
+    private void OnAddBookmarkExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (ActiveReaderState() is not { } reader || string.IsNullOrEmpty(reader.DocId))
+        {
+            return; // 无文档标签 / 未登记阅读实例：无操作
+        }
+
+        if (!string.Equals(_bookmarks.CurrentDocId, reader.DocId, StringComparison.OrdinalIgnoreCase))
+        {
+            // AttachDocument 幂等：已跟踪文档保留会话内最新书签，未跟踪才从 reading-state 回读。
+            _bookmarks.AttachDocument(reader.DocId);
+        }
+
+        var zeroBased = reader.ViewModel.CurrentPageNumber - 1;
+        if (zeroBased < 0)
+        {
+            return; // 加载中 / 加载失败（页码 0）不收藏
+        }
+
+        _bookmarks.SetCurrentPage(zeroBased);
+        _bookmarks.AddCurrentPageCommand.Execute(null);
+
+        // 面板可能未显示：给一条状态栏反馈，避免「按了没反应」的错觉（幂等重复按也有反馈）。
+        if (DataContext is ViewModels.MainViewModel main)
+        {
+            main.StatusText = $"已收藏第 {zeroBased + 1} 页";
+        }
+    }
 
     /// <summary>
     /// 全文搜索面板接管【D6】【R17】：仅在文档标签激活时（否则状态栏提示）。
