@@ -141,17 +141,11 @@ public partial class ReaderView : UserControl
     /// </summary>
     public event EventHandler? UnlockRequested;
 
-    /// <summary>
-    /// V4 Option 3：已解锁加密文档「锁定」请求。宿主负责清除会话密码、释放解密内容
-    /// （<see cref="ReaderViewModel.Lock"/> + 面板/搜索/批注会话）并刷新打印门禁。
-    /// </summary>
-    public event EventHandler? RelockRequested;
-
     /// <summary>锁定遮罩「解锁」按钮：仅发事件，密码流程由宿主负责（视图不接触密码）。</summary>
     private void OnUnlockClick(object sender, RoutedEventArgs e) => UnlockRequested?.Invoke(this, EventArgs.Empty);
 
-    /// <summary>状态栏「锁定」按钮：仅发事件，释放解密内容由宿主 + VM 完成。</summary>
-    private void OnRelockClick(object sender, RoutedEventArgs e) => RelockRequested?.Invoke(this, EventArgs.Empty);
+    // A+C 方案 A（底栏合一）：原状态栏「锁定」按钮已移入主窗口状态栏，
+    // 故 RelockRequested 事件与 OnRelockClick 随之移除；宿主直接调用 RelockDocument。
 
     // ------------------------------------------------------------ 滚动 ↔ 模型
 
@@ -975,21 +969,8 @@ public partial class ReaderView : UserControl
     }
 
     // ------------------------------------------------------------ 页码跳转（FR-05）
-
-    private void OnJumpBoxKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            e.Handled = true;
-            _viewModel.JumpToPageCommand.Execute(null);
-        }
-        else if (e.Key == Key.Escape)
-        {
-            e.Handled = true;
-            _viewModel.JumpText = "";
-            _viewModel.IsJumpInvalid = false;
-        }
-    }
+    // A+C 方案 A（底栏合一）：JumpBox 与 Enter/Esc 处理已移到 MainWindow（状态栏），
+    // 本视图不再持有页码输入框；Ctrl+G 由 MainWindow 的窗口级 PreviewKeyDown 处理。
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -1010,17 +991,9 @@ public partial class ReaderView : UserControl
             else SyncPopups();
             return;
         }
-
-        // Ctrl+G 定位页码输入框（FR-05）
-        if (e.Key == Key.G && Keyboard.Modifiers == ModifierKeys.Control && !JumpBox.IsKeyboardFocused)
-        {
-            e.Handled = true;
-            JumpBox.Focus();
-            JumpBox.SelectAll();
-        }
     }
 
-    /// <summary>非法页码红边抖动（FR-05 AC-05.2）；对开切换时收起浮层（组容器会重建，锚点失效）。</summary>
+    /// <summary>对开切换时收起浮层（组容器会重建，锚点失效）；锁定/解锁同理由。</summary>
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ReaderViewModel.SpreadEnabled))
@@ -1036,31 +1009,7 @@ public partial class ReaderView : UserControl
         {
             CancelDrawing();
             CloseAllAndClear();
-            return;
         }
-
-        if (e.PropertyName == nameof(ReaderViewModel.IsJumpInvalid) && _viewModel.IsJumpInvalid)
-        {
-            PlayInvalidJumpAnimation();
-        }
-    }
-
-    private void PlayInvalidJumpAnimation()
-    {
-        if (JumpBox.RenderTransform is not TranslateTransform transform)
-        {
-            transform = new TranslateTransform();
-            JumpBox.RenderTransform = transform;
-        }
-
-        var shake = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(320) };
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(0, TimeSpan.Zero));
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(-5, TimeSpan.FromMilliseconds(60)));
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(5, TimeSpan.FromMilliseconds(120)));
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(-4, TimeSpan.FromMilliseconds(180)));
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(4, TimeSpan.FromMilliseconds(240)));
-        shake.KeyFrames.Add(new LinearDoubleKeyFrame(0, TimeSpan.FromMilliseconds(300)));
-        transform.BeginAnimation(TranslateTransform.XProperty, shake);
     }
 
     /// <summary>笔记输入上下文（新建=先落高亮后替换；编辑=按 Id 更新）。</summary>

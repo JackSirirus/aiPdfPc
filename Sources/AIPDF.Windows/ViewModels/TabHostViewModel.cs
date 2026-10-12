@@ -47,6 +47,9 @@ public partial class DocumentTabViewModel : ObservableObject
     /// <summary>标签页头图标（Segoe MDL2 Assets 字形）。</summary>
     public string KindGlyph => Kind == TabKind.Document ? "\uE8A5" : "\uE70F";
 
+    /// <summary>是否文档标签：宿主据此显示状态栏的阅读控件簇（页码/跳页/缩放）。</summary>
+    public bool IsDocument => Kind == TabKind.Document;
+
     /// <summary>文档标签构造：路径须为规范化全路径（由宿主统一处理）。</summary>
     public DocumentTabViewModel(string fullPath, string title, object? content)
     {

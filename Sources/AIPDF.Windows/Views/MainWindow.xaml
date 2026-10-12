@@ -5,7 +5,9 @@
         xmlns:translation="clr-namespace:AIPDF.Windows.Views.Translation"
         xmlns:views="clr-namespace:AIPDF.Windows.Views"
         xmlns:startPage="clr-namespace:AIPDF.Windows.Views.StartPage"
-        Title="AIPDF · 本地 PDF 工作台"
+        xmlns:reader="clr-namespace:AIPDF.Windows.Views.Reader"
+                        Title="AIPDF 阅读器"
+        AutomationProperties.AutomationId="MainWindow"
         Width="1080" Height="700"
         MinWidth="420" MinHeight="560"
         FontFamily="Segoe UI Variable Display, Segoe UI"
@@ -448,16 +450,6 @@
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
                                 Margin="6,0,10,0">
-                        <!-- 工具箱入口：与是否有标签无关，始终可见；展开主区左对齐工具面板（T20） -->
-                        <Button Style="{StaticResource TopBarIconButton}"
-                                Click="OnToolboxClick"
-                                ToolTip="工具箱：全部工具入口"
-                                AutomationProperties.Name="工具箱">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE90F;" FontSize="13" VerticalAlignment="Center" />
-                                <TextBlock Text="工具箱" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
                         <Button Style="{StaticResource TopBarIconButton}"
                                 Click="OnNewTabClick"
                                 ToolTip="打开 PDF 文档（新建标签）"
@@ -483,13 +475,19 @@
                                 <TextBlock Text="打印" FontSize="12" Margin="6,0,2,0" VerticalAlignment="Center" />
                             </StackPanel>
                         </Button>
-                        <!-- ⚙ 设置入口（V3 T5）：点击弹出下拉菜单「设置 | 关于·许可」（AC-38.1，无「检查更新」） -->
+                        <!-- ⋯ 更多菜单（A+C 方案 A）：工具箱 / 设置 / 关于·许可。
+                             原顶栏常驻「工具箱」按钮已移除：工具入口回到设计稿意图（起始页网格 /
+                             选中浮菜单「用工具处理」/ 本菜单），顶栏一级入口只保留文档操作。 -->
                         <Button Style="{StaticResource TopBarIconButton}"
-                                Click="OnSettingsMenuClick"
-                                ToolTip="设置与关于"
-                                AutomationProperties.Name="设置">
+                                Click="OnMoreMenuClick"
+                                ToolTip="更多：工具箱 / 设置 / 关于"
+                                AutomationProperties.Name="更多">
                             <Button.ContextMenu>
                                 <ContextMenu>
+                                    <MenuItem Header="工具箱"
+                                              Click="OnToolboxMenuItemClick"
+                                              AutomationProperties.Name="工具箱" />
+                                    <Separator />
                                     <MenuItem Header="设置"
                                               Click="OnSettingsMenuItemClick"
                                               AutomationProperties.Name="设置" />
@@ -498,7 +496,7 @@
                                               AutomationProperties.Name="关于·许可" />
                                 </ContextMenu>
                             </Button.ContextMenu>
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="13" />
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE712;" FontSize="13" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -655,6 +653,7 @@
                          内容与左栏原工具箱同源（ToolsView 分组视图 + 既有模板），点击工具 → ShowToolPage 并关闭面板。
                          配色与投影镜像右侧 RightDrawer。 -->
                     <Border x:Name="ToolboxPanel"
+                            AutomationProperties.AutomationId="ToolboxPanel"
                             Width="340"
                             HorizontalAlignment="Left"
                             Background="{DynamicResource Brush.Window}"
@@ -705,6 +704,7 @@
                             <!-- 分组工具列表：与左栏原工具箱同款容器/模板；选择 → ShowToolPage → 关闭面板 -->
                             <ScrollViewer Grid.Row="1" Padding="10,4,6,8" VerticalScrollBarVisibility="Auto">
                                 <ListBox x:Name="ToolboxList"
+                                         AutomationProperties.AutomationId="ToolboxList"
                                          ItemsSource="{Binding ToolsView}"
                                          ItemContainerStyle="{StaticResource SidebarToolItem}"
                                          ItemTemplate="{StaticResource ToolItemTemplate}"
@@ -726,6 +726,7 @@
                          抽屉内容是现有工具页实例（自设 DataContext，含文件列表 + 参数区 + 运行条），
                          不另建每工具参数 UI。 -->
                     <Border x:Name="RightDrawer"
+                            AutomationProperties.AutomationId="RightDrawer"
                             Width="380"
                             HorizontalAlignment="Right"
                             Background="{DynamicResource Brush.Window}"
@@ -754,6 +755,7 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="RightDrawerTitle"
+                                               AutomationProperties.AutomationId="RightDrawerTitle"
                                                Grid.Column="0"
                                                FontSize="14"
                                                FontWeight="SemiBold"
@@ -979,18 +981,22 @@
             </Border>
 
             <!-- 底部状态栏 -->
-            <Border Grid.Row="2"
+                    <Border Grid.Row="2"
+                    AutomationProperties.AutomationId="StatusBarHost"
                     Background="{DynamicResource Brush.Sidebar}"
                     BorderBrush="{DynamicResource Brush.Border}"
                     BorderThickness="0,1,0,0"
                     Padding="16,6">
                 <Grid>
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal">
+                        <!-- AutomationId：FlaUI UI 冒烟按 Id 定位状态文案（不依赖可见文本变化） -->
                         <TextBlock Text="{Binding StatusText}"
+                                   AutomationProperties.AutomationId="StatusBarText"
                                    FontSize="11"
                                    Foreground="{DynamicResource Brush.TextSecondary}"
                                    VerticalAlignment="Center" />
@@ -1078,7 +1084,83 @@
                             </ItemsControl>
                         </StackPanel>
                     </StackPanel>
-                    <TextBlock Grid.Column="1"
+                    <!-- A+C 方案 A（底栏合一）：当前文档的阅读控件（页码 / 跳页 / 缩放 / 适配 / 双页 / 锁定）。
+                         外层 DataContext = TabHostViewModel（代码后置指定）→ 按标签类型显隐；
+                         内层改绑 ReaderView 的 DataContext，使控件样式内的 DataTrigger 照常生效。
+                         原先这一簇是 ReaderView 自带底栏，与全局状态栏形成上下两条，现合并为一行。 -->
+                    <StackPanel x:Name="StatusReaderCluster"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Margin="12,0"
+                                Visibility="{Binding SelectedTab.IsDocument, Converter={StaticResource BoolToVis}, FallbackValue=Collapsed}">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    DataContext="{Binding SelectedTab.Content.DataContext}">
+                            <TextBlock Style="{StaticResource FieldLabel}" VerticalAlignment="Center">
+                                <Run Text="{x:Static reader:ReaderStrings.PagePrefix}" />
+                                <Run Text="{Binding CurrentPageNumber, Mode=OneWay}" />
+                                <Run Text=" 页 / 共 " />
+                                <Run Text="{Binding PageCount, Mode=OneWay}" />
+                                <Run Text=" 页" />
+                            </TextBlock>
+                            <TextBox x:Name="StatusJumpBox"
+                                     Style="{StaticResource JumpBoxStyle}"
+                                     Text="{Binding JumpText, UpdateSourceTrigger=PropertyChanged}"
+                                     KeyDown="OnStatusJumpKeyDown" />
+                            <TextBlock Text="{x:Static reader:ReaderStrings.JumpInvalid}"
+                                       Margin="8,0,0,0"
+                                       VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource ErrorText}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsJumpInvalid}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Button Style="{StaticResource ZoomButton}"
+                                    Command="{Binding ZoomOutCommand}"
+                                    ToolTip="{x:Static reader:ReaderStrings.ZoomOutToolTip}"
+                                    Content="−" />
+                            <TextBlock Text="{Binding ZoomDisplayText}"
+                                       Style="{StaticResource FieldLabel}"
+                                       Width="52"
+                                       TextAlignment="Center" />
+                            <Button Style="{StaticResource ZoomButton}"
+                                    Command="{Binding ZoomInCommand}"
+                                    ToolTip="{x:Static reader:ReaderStrings.ZoomInToolTip}"
+                                    Content="＋" />
+                            <Button Style="{StaticResource FitWidthButton}"
+                                    Command="{Binding FitWidthCommand}"
+                                    Content="{x:Static reader:ReaderStrings.FitWidthLabel}" />
+                            <Button Style="{StaticResource FitPageButton}"
+                                    Command="{Binding FitPageCommand}"
+                                    Content="{x:Static reader:ReaderStrings.FitPageLabel}" />
+                            <Button Style="{StaticResource SpreadButton}"
+                                    Command="{Binding ToggleSpreadCommand}"
+                                    Content="{Binding SpreadToggleText}" />
+                            <StackPanel Orientation="Horizontal"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding LockStatusText}"
+                                           Style="{StaticResource FieldHint}"
+                                           VerticalAlignment="Center"
+                                           Margin="12,0,0,0" />
+                                <Button Style="{StaticResource SecondaryButton}"
+                                        Content="{x:Static reader:ReaderStrings.RelockButton}"
+                                        Click="OnStatusRelockClick"
+                                        Margin="8,0,0,0"
+                                        Visibility="{Binding ShowRelockAction, Converter={StaticResource BoolToVis}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Grid.Column="2"
                                Text="AIPDF for Windows · v0.1.0"
                                FontSize="11"
                                Foreground="{DynamicResource Brush.TextTertiary}"

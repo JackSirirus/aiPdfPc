@@ -6,6 +6,8 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using AIPDF.Windows.Annotations;
 using AIPDF.Windows.Rendering;
@@ -23,7 +25,8 @@ using AIPDF.Windows.Views.Wizard;
 namespace AIPDF.Windows.Views;
 
 /// <summary>
-/// 主窗口：顶栏（品牌 + 标签条 + ＋/搜索/⚙）+ 主区（左栏 / TabControl 标签宿主）+ 状态栏。
+/// 主窗口：顶栏（品牌 + 标签条 + ＋/搜索/打印/⋯ 更多）+ 主区（左栏 / 标签宿主）+ 状态栏
+/// （全局状态 + 当前文档的阅读控件，A+C 方案 A 起两者合并为一行）。
 /// 多标签核心逻辑在 <see cref="TabHostViewModel"/>；本类只做视图联动与事件接线。
 /// </summary>
 public partial class MainWindow : Window, ISessionRestoreTarget
@@ -72,6 +75,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // 标签条与标签宿主共用 TabHostViewModel；其余区域仍用 MainViewModel（窗口 DataContext）。
         TabStrip.DataContext = TabHost;
         TabHostControl.DataContext = TabHost;
+        // A+C 方案 A（底栏合一）：状态栏阅读控件簇同样绑 TabHostViewModel（按标签类型显隐，
+        // 内层再绑到当前 ReaderView 的 DataContext）。
+        StatusReaderCluster.DataContext = TabHost;
         TabHost.PropertyChanged += OnTabHostPropertyChanged;
 
         // T4：关闭标签前强制 flush 未保存批注（失败阻止关闭，ST-22）
@@ -1190,13 +1196,14 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         });
     }
 
-    // ---- T20 工具箱滑出面板（顶栏入口 + 主区左对齐面板） ----
+    // ---- T20 工具箱滑出面板（「⋯ 更多」菜单入口 + 主区左对齐面板） ----
 
-    /// <summary>顶栏「工具箱」按钮：展开/收起左对齐工具面板；与是否有标签无关，始终可用。</summary>
-    private void OnToolboxClick(object sender, RoutedEventArgs e)
-        => ToolboxPanel.Visibility = ToolboxPanel.Visibility == Visibility.Visible
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+    /// <summary>
+    /// 「⋯ 更多 → 工具箱」菜单项：展开左对齐工具面板（A+C 方案 A 起顶栏不再有常驻工具箱按钮，
+    /// 该面板即「有文档时的全部工具」入口，与起始页网格、选中浮菜单「用工具处理」并列）。
+    /// </summary>
+    private void OnToolboxMenuItemClick(object sender, RoutedEventArgs e)
+        => ToolboxPanel.Visibility = Visibility.Visible;
 
     /// <summary>面板头 ✕ 关闭工具箱（只隐藏，工具页实例由各自宿主缓存，不重建）。</summary>
     private void OnCloseToolboxClick(object sender, RoutedEventArgs e)
@@ -1218,10 +1225,75 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         ShowToolPage(tool, (DataContext as ViewModels.MainViewModel)?.Bridge);
     }
 
-    // ---- V3 T5 设置 / 关于·许可（FR-38 / AC-38.1 / AC-38.3） ----
+    // ---- A+C 方案 A（底栏合一）：状态栏阅读控件（页码跳转 / 缩放 / 锁定） ----
 
-    /// <summary>⚙ 按钮：在按钮下方展开「设置 | 关于·许可」下拉菜单（无「检查更新」，AC-38.1）。</summary>
-    private void OnSettingsMenuClick(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 状态栏页码输入框：Enter 跳转、Esc 清空（原 ReaderView.OnJumpBoxKeyDown 迁入）。
+    /// 非法页码红边抖动（FR-05 AC-05.2）原先由视图订阅 IsJumpInvalid 触发，这里就地触发。
+    /// </summary>
+    private void OnStatusJumpKeyDown(object sender, KeyEventArgs e)
+    {
+        if (TabHost.SelectedTab?.Content is not ReaderView view)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            view.ViewModel.JumpToPageCommand.Execute(null);
+            if (view.ViewModel.IsJumpInvalid && sender is UIElement element)
+            {
+                PlayInvalidJumpAnimation(element);
+            }
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            view.ViewModel.JumpText = "";
+            view.ViewModel.IsJumpInvalid = false;
+        }
+    }
+
+    /// <summary>非法页码红边抖动（FR-05 AC-05.2）。</summary>
+    private static void PlayInvalidJumpAnimation(UIElement element)
+    {
+        if (element.RenderTransform is not TranslateTransform transform)
+        {
+            transform = new TranslateTransform();
+            element.RenderTransform = transform;
+        }
+
+        var shake = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(320) };
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(0, TimeSpan.Zero));
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(-5, TimeSpan.FromMilliseconds(60)));
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(5, TimeSpan.FromMilliseconds(120)));
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(-4, TimeSpan.FromMilliseconds(180)));
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(4, TimeSpan.FromMilliseconds(240)));
+        shake.KeyFrames.Add(new LinearDoubleKeyFrame(0, TimeSpan.FromMilliseconds(300)));
+        transform.BeginAnimation(TranslateTransform.XProperty, shake);
+    }
+
+    /// <summary>状态栏「锁定」按钮（原阅读视图底栏入口）：按当前文档标签走宿主重锁流程。</summary>
+    private void OnStatusRelockClick(object sender, RoutedEventArgs e)
+    {
+        if (TabHost.SelectedTab is not { Kind: TabKind.Document, FilePath: { } path } tab)
+        {
+            return;
+        }
+
+        if (_readerTabs.TryGetValue(tab.TabId, out var state))
+        {
+            RelockDocument(path, state.ViewModel);
+        }
+    }
+
+    // ---- V3 T5 设置 / 关于·许可（FR-38 / AC-38.1 / AC-38.3）----
+    // A+C 方案 A：原 ⚙ 按钮改为「⋯ 更多」按钮，菜单在「设置 | 关于·许可」之上增加「工具箱」；
+    // AC-38.1 的语义（菜单含设置/关于、无「检查更新」）不变。
+
+    /// <summary>「⋯ 更多」按钮：在按钮下方展开「工具箱 | 设置 | 关于·许可」下拉菜单。</summary>
+    private void OnMoreMenuClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button button || button.ContextMenu is not { } menu)
         {
@@ -1526,9 +1598,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         view.TranslateSelectionRequested += OnReaderTranslateSelectionRequested;
         view.SelectionNoTextLayerRequested += OnReaderNoTextLayerRequested;
 
-        // V4 Option 3：锁定标签的解锁 / 重锁由宿主统一处理（密码框 + 凭据 + 释放 + 打印门禁刷新）。
+        // V4 Option 3：锁定标签的解锁由宿主统一处理（密码框 + 凭据 + 释放 + 打印门禁刷新）；
+        // 重锁入口已随底栏合一移到状态栏，宿主直接调用 RelockDocument（不再经视图事件）。
         view.UnlockRequested += (_, _) => RequestUnlock(fullPath, vm);
-        view.RelockRequested += (_, _) => RelockDocument(fullPath, vm);
 
         if (vm.HasDocument)
         {
@@ -2029,6 +2101,17 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>窗口级 Esc：先关闭最上层工具箱面板；其次搜索面板激活时消费（恢复原面板）；其余交给聚焦控件。</summary>
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // A+C 方案 A（底栏合一）：Ctrl+G 定位状态栏页码输入框（FR-05）。原先由阅读视图内部
+        // 的页码框处理，输入框已移到状态栏，故改在窗口级拦截。
+        if (e.Key == Key.G && Keyboard.Modifiers == ModifierKeys.Control
+            && !StatusJumpBox.IsKeyboardFocused)
+        {
+            e.Handled = true;
+            StatusJumpBox.Focus();
+            StatusJumpBox.SelectAll();
+            return;
+        }
+
         if (e.Key != Key.Escape)
         {
             return;

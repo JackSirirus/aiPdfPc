@@ -1,6 +1,7 @@
 <Application x:Class="AIPDF.Windows.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:reader="clr-namespace:AIPDF.Windows.Views.Reader">
     <Application.Resources>
 
         <!-- 应用级设计 token（V3 T10 / C2 夜间模式）：
@@ -196,6 +197,68 @@
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource AccentFocusVisual}" />
         </Style>
+        <!-- A+C 方案 A（底栏合一）：阅读控件样式由 ReaderView 提升到应用级——
+             控件已从阅读视图内部底栏移入主窗口状态栏，DataContext 仍是 ReaderViewModel，
+             故样式内的 DataTrigger（IsFitWidthActive / IsFitPageActive / SpreadEnabled / IsJumpInvalid）不变。 -->
+        <Style x:Key="ZoomButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinWidth" Value="32" />
+            <Setter Property="MinHeight" Value="24" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="FitWidthButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitWidthToolTip}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsFitWidthActive}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="FitPageButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitPageToolTip}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsFitPageActive}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SpreadButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="MinWidth" Value="48" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.SpreadToggleToolTip}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding SpreadEnabled}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="JumpBoxStyle" TargetType="TextBox" BasedOn="{StaticResource FieldTextBox}">
+            <Setter Property="Width" Value="52" />
+            <Setter Property="Margin" Value="6,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.JumpBoxToolTip}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsJumpInvalid}" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Error}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="ErrorText" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.Error}" />

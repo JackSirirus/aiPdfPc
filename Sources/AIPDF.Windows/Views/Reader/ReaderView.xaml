@@ -20,68 +20,8 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
-        <!-- 缩放 ＋/− 小方钮：基于全局 SecondaryButton 收紧内距 -->
-        <Style x:Key="ZoomButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="MinWidth" Value="32" />
-            <Setter Property="MinHeight" Value="24" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-
-        <!-- 适配档按钮：激活时高亮（手动缩放后脱离，FR-06/ST-11） -->
-        <Style x:Key="FitWidthButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
-            <Setter Property="Margin" Value="8,0,0,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitWidthToolTip}" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsFitWidthActive}" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="FitPageButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
-            <Setter Property="Margin" Value="8,0,0,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.FitPageToolTip}" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsFitPageActive}" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <!-- V3 T9 单页/双页对开切换：文案显示当前模式（SpreadToggleText），点击切换 -->
-        <Style x:Key="SpreadButton" TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
-            <Setter Property="Margin" Value="8,0,0,0" />
-            <Setter Property="MinWidth" Value="48" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.SpreadToggleToolTip}" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding SpreadEnabled}" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource Brush.AccentSoft}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.AccentText}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
-
-        <!-- 页码输入框：非法输入红边（FR-05），抖动动画在 code-behind -->
-        <Style x:Key="JumpBoxStyle" TargetType="TextBox" BasedOn="{StaticResource FieldTextBox}">
-            <Setter Property="Width" Value="52" />
-            <Setter Property="Margin" Value="6,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="ToolTip" Value="{x:Static reader:ReaderStrings.JumpBoxToolTip}" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsJumpInvalid}" Value="True">
-                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Error}" />
-                </DataTrigger>
-            </Style.Triggers>
-        </Style>
+        <!-- A+C 方案 A（底栏合一）：ZoomButton / FitWidthButton / FitPageButton / SpreadButton /
+             JumpBoxStyle 已提升到 App.xaml —— 对应控件移入主窗口状态栏，阅读视图内部不再有底栏。 -->
 
         <!-- T2 浮菜单/悬停操作条：与右抽屉同一视觉语言（App 级色板 + SecondaryButton 基类） -->
         <Style x:Key="FlyoutPanel" TargetType="Border">
@@ -228,7 +168,6 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -876,83 +815,8 @@
                        TextWrapping="Wrap" />
         </Border>
 
-        <!-- ============ 状态栏：页码跳转（FR-05）+ 缩放控制（FR-06） ============ -->
-        <Border Grid.Row="2"
-                Background="{DynamicResource Brush.Window}"
-                BorderBrush="{DynamicResource Brush.Border}"
-                BorderThickness="0,1,0,0"
-                Padding="12,6">
-            <DockPanel LastChildFill="False">
-                <!-- 左：当前页/总页数 + 页码跳转输入框 -->
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- 当前页 / 总页数（FR-05：滚动时状态区显示当前页/总页数） -->
-                    <TextBlock Style="{StaticResource FieldLabel}" VerticalAlignment="Center">
-                        <Run Text="{x:Static reader:ReaderStrings.PagePrefix}" />
-                        <Run Text="{Binding CurrentPageNumber, Mode=OneWay}" />
-                        <Run Text=" 页 / 共 " />
-                        <Run Text="{Binding PageCount, Mode=OneWay}" />
-                        <Run Text=" 页" />
-                    </TextBlock>
-                    <TextBox x:Name="JumpBox"
-                             Style="{StaticResource JumpBoxStyle}"
-                             Text="{Binding JumpText, UpdateSourceTrigger=PropertyChanged}"
-                             KeyDown="OnJumpBoxKeyDown" />
-                    <TextBlock Text="{x:Static reader:ReaderStrings.JumpInvalid}"
-                               Margin="8,0,0,0"
-                               VerticalAlignment="Center">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource ErrorText}">
-                                <Setter Property="Visibility" Value="Collapsed" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsJumpInvalid}" Value="True">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </StackPanel>
-
-                <!-- 右：− / 缩放值 / ＋ / 适配宽度 / 适配页面 -->
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource ZoomButton}"
-                            Command="{Binding ZoomOutCommand}"
-                            ToolTip="{x:Static reader:ReaderStrings.ZoomOutToolTip}"
-                            Content="−" />
-                    <TextBlock Text="{Binding ZoomDisplayText}"
-                               Style="{StaticResource FieldLabel}"
-                               Width="52"
-                               TextAlignment="Center" />
-                    <Button Style="{StaticResource ZoomButton}"
-                            Command="{Binding ZoomInCommand}"
-                            ToolTip="{x:Static reader:ReaderStrings.ZoomInToolTip}"
-                            Content="＋" />
-                    <Button Style="{StaticResource FitWidthButton}"
-                            Command="{Binding FitWidthCommand}"
-                            Content="{x:Static reader:ReaderStrings.FitWidthLabel}" />
-                    <Button Style="{StaticResource FitPageButton}"
-                            Command="{Binding FitPageCommand}"
-                            Content="{x:Static reader:ReaderStrings.FitPageLabel}" />
-                    <Button Style="{StaticResource SpreadButton}"
-                            Command="{Binding ToggleSpreadCommand}"
-                            Content="{Binding SpreadToggleText}" />
-
-                    <!-- V4 Option 3：仅加密文档显示的锁状态指示；已解锁时提供「锁定」入口 -->
-                    <StackPanel Orientation="Horizontal"
-                                VerticalAlignment="Center"
-                                Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisibility}}">
-                        <TextBlock Text="{Binding LockStatusText}"
-                                   Style="{StaticResource FieldHint}"
-                                   VerticalAlignment="Center"
-                                   Margin="12,0,0,0" />
-                        <Button Style="{StaticResource SecondaryButton}"
-                                Content="{x:Static reader:ReaderStrings.RelockButton}"
-                                Click="OnRelockClick"
-                                Margin="8,0,0,0"
-                                Visibility="{Binding ShowRelockAction, Converter={StaticResource BoolToVisibility}}" />
-                    </StackPanel>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+        <!-- A+C 方案 A（底栏合一）：原「页码跳转 + 缩放控制」底栏已移入主窗口状态栏
+             （MainWindow.xaml 的 StatusReaderCluster），阅读视图不再自带第二条状态栏。
+             页码跳转 Enter/Esc、Ctrl+G 定位、非法页码抖动一并移到 MainWindow.xaml.cs。 -->
     </Grid>
 </UserControl>
