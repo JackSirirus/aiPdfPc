@@ -27,6 +27,11 @@
          证据：tmp/spike-pdfium156/（隔离验证工程，tmp/ 不入库）。
          V3 T7 单栈收敛已完成：crop/edit/forms 预览已迁移至本渲染栈，PDFtoImage（SkiaSharp 栈）包已移除。 -->
     <PackageReference Include="PDFiumCore" Version="155.0.8057" />
+    <!-- V4 T8 朗读：System.Speech 8.0.0（MIT，属 .NET 平台包；.NET 8 共享框架里没有）。
+         已实测：框架依赖与自包含（self-contained）发布下均可运行，本机含 zh-CN（Microsoft Huihui Desktop）；
+         语音为系统本地合成，不联网、不上传文本。
+         注意：首次构建需联网还原该包（见计划 R19）；许可登记见 THIRD_PARTY_NOTICES.md。 -->
+    <PackageReference Include="System.Speech" Version="8.0.0" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 

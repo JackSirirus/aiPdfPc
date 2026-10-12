@@ -103,4 +103,20 @@ public static class ReaderStrings
     public const string FullscreenExited = "已退出全屏";
     public const string PresentationEntered = "演示模式：← → 翻页，Esc 退出";
     public const string PresentationExited = "已退出演示模式";
+
+    // ---- V4 T8 朗读（System.Speech，系统本地合成，不联网）----
+    public const string SpeechToolTip = "朗读当前页起的正文（系统本地语音合成，不联网、不上传文本）";
+    public const string SpeechPlay = "朗读";
+    public const string SpeechPause = "暂停";
+    public const string SpeechResume = "继续";
+    public const string SpeechStop = "停止";
+    public const string SpeechRateTitle = "语速";
+    public const string SpeechRateSlow = "慢";
+    public const string SpeechRateNormal = "正常";
+    public const string SpeechRateFast = "快";
+    public const string SpeechUnavailable = "本机没有可用的语音，朗读不可用。";
+    public const string SpeechNoText = "本页没有可朗读的文字层（扫描件可先用 OCR 工具处理）。";
+    public const string SpeechStarted = "开始朗读（当前页起）";
+    public const string SpeechStopped = "已停止朗读";
+    public const string SpeechFinished = "朗读结束";
 }

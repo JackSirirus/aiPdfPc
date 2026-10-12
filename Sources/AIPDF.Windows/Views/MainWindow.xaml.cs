@@ -13,6 +13,7 @@ using AIPDF.Windows.Annotations;
 using AIPDF.Windows.Rendering;
 using AIPDF.Windows.Search;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.Services.Speech;
 using AIPDF.Windows.Tools;
 using AIPDF.Windows.ViewModels;
 using AIPDF.Windows.ViewModels.Translation;
@@ -1588,6 +1589,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // 重锁入口已随底栏合一移到状态栏，宿主直接调用 RelockDocument（不再经视图事件）。
         view.UnlockRequested += (_, _) => RequestUnlock(fullPath, vm);
 
+        // V4 T8：朗读条接线（服务为窗口级单例；执行体在宿主，视图只负责交互）。
+        view.SpeechToggleRequested += (_, _) => ToggleSpeech(vm);
+        view.SpeechStopRequested += (_, _) => StopSpeech(vm);
+        view.SpeechRateChanged += (_, rate) => SetSpeechRate(vm, rate);
+        vm.SpeechAvailable = SpeechService.IsAvailable;
+
         if (vm.HasDocument)
         {
             // T5：视图先订阅 ScrollRequested，再套用阅读状态（缩放/页码/面板/书签）——否则恢复的滚动请求丢失。
@@ -2206,6 +2213,175 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         {
             main.StatusText = text;
         }
+    }
+
+    // ---- V4 T8：朗读（System.Speech 系统本地合成；不联网、不上传文本）----
+
+    private ReaderSpeechService? _speechService;
+    private int _speechHighlightPage = -1;
+
+    /// <summary>窗口级朗读服务（懒建：构造 SystemSpeechEngine 会枚举系统语音）。</summary>
+    private ReaderSpeechService SpeechService => _speechService ??= CreateSpeechService();
+
+    private ReaderSpeechService CreateSpeechService()
+    {
+        var service = new ReaderSpeechService(new SystemSpeechEngine());
+        service.Progress += OnSpeechProgress;
+        service.Finished += OnSpeechFinished;
+        return service;
+    }
+
+    /// <summary>朗读 / 暂停 / 继续（按当前状态切换）。</summary>
+    private void ToggleSpeech(ReaderViewModel viewModel)
+    {
+        var service = SpeechService;
+        if (!service.IsAvailable)
+        {
+            // 无可用语音必须显式提示，不得静默无声（S5 尖刺结论）
+            viewModel.SpeechAvailable = false;
+            SetStatusText(ReaderStrings.SpeechUnavailable);
+            return;
+        }
+
+        switch (service.State)
+        {
+            case SpeechState.Speaking:
+                service.Pause();
+                break;
+
+            case SpeechState.Paused:
+                service.Resume();
+                break;
+
+            default:
+                StartSpeech(viewModel, service);
+                break;
+        }
+
+        SyncSpeechState(viewModel, service);
+    }
+
+    private void StartSpeech(ReaderViewModel viewModel, ReaderSpeechService service)
+    {
+        if (ActiveReaderState() is not { } reader || viewModel.Pages.Count == 0)
+        {
+            return;
+        }
+
+        var pageCount = viewModel.Pages.Count;
+        var startPage = Math.Max(0, viewModel.CurrentPageNumber - 1);
+        // 惰性取页文本：不为朗读一次性索引整篇（大文档代价高）
+        var texts = new LazyPageTexts(index => _searchIndexService.GetPageText(reader.DocId, index), pageCount);
+        if (!service.Start(texts, startPage))
+        {
+            SetStatusText(ReaderStrings.SpeechNoText);   // 无文本层：明确提示（可先 OCR）
+            return;
+        }
+
+        SetStatusText(ReaderStrings.SpeechStarted);
+    }
+
+    private void StopSpeech(ReaderViewModel viewModel)
+    {
+        _speechService?.Stop();
+        ClearSpeechHighlight(viewModel);
+        SyncSpeechState(viewModel, _speechService);
+        SetStatusText(ReaderStrings.SpeechStopped);
+    }
+
+    private void SetSpeechRate(ReaderViewModel viewModel, int rate)
+    {
+        _ = viewModel;
+        if (_speechService is not null)
+        {
+            _speechService.Rate = rate;
+        }
+    }
+
+    /// <summary>
+    /// 字符级进度 → 页内高亮 + 自动翻页。
+    /// <b>必须封送到 UI 线程</b>：SAPI 的 SpeakProgress 来自后台线程，直接改绑定集合会抛线程亲缘异常。
+    /// </summary>
+    private void OnSpeechProgress(object? sender, SpeechProgressEventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_speechService is null || ActiveReaderState() is not { } reader)
+            {
+                return;
+            }
+
+            var pageIndex = _speechService.CurrentPageIndex;
+            if (pageIndex < 0 || pageIndex >= reader.ViewModel.Pages.Count)
+            {
+                return;
+            }
+
+            if (_speechHighlightPage != pageIndex)
+            {
+                ClearSpeechHighlight(reader.ViewModel);
+                _speechHighlightPage = pageIndex;
+                reader.ViewModel.GoToPage(pageIndex + 1);   // 自动滚动到朗读页
+            }
+
+            var rects = _searchIndexService.GetTextRects(
+                reader.DocId, pageIndex, e.CharacterPosition, e.CharacterCount);
+            reader.ViewModel.Pages[pageIndex].SetSpeechRects(rects);
+        }));
+    }
+
+    private void OnSpeechFinished(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var viewModel = ActiveReaderState()?.ViewModel;
+            if (viewModel is not null)
+            {
+                ClearSpeechHighlight(viewModel);
+            }
+
+            SyncSpeechState(viewModel, _speechService);
+            SetStatusText(ReaderStrings.SpeechFinished);
+        }));
+    }
+
+    private void ClearSpeechHighlight(ReaderViewModel viewModel)
+    {
+        _speechHighlightPage = -1;
+        foreach (var page in viewModel.Pages)
+        {
+            page.ClearSpeechRects();
+        }
+    }
+
+    private static void SyncSpeechState(ReaderViewModel? viewModel, ReaderSpeechService? service)
+    {
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        viewModel.SpeechAvailable = service?.IsAvailable ?? false;
+        viewModel.SpeechActive = service is { State: not SpeechState.Idle };
+        viewModel.SpeechPaused = service is { State: SpeechState.Paused };
+    }
+
+    /// <summary>按需取页文本的惰性列表（避免为朗读一次性索引整篇文档）。</summary>
+    private sealed class LazyPageTexts(Func<int, string> provider, int count) : IReadOnlyList<string>
+    {
+        public string this[int index] => provider(index);
+
+        public int Count => count;
+
+        public IEnumerator<string> GetEnumerator()
+        {
+            for (var index = 0; index < count; index++)
+            {
+                yield return this[index];
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private void OnFullTextSearchExecuted(object sender, ExecutedRoutedEventArgs e)
@@ -3214,6 +3390,11 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         // 追加的处理器，若靠 `Closing +=` 还原，会话会先记录「最大化 + 无边框」这类异常窗口状态（R17）。
         ExitPresentation();
         ExitFullscreenCore();
+
+        // V4 T8：停止并释放朗读（SAPI 是进程级资源，不留后台朗读）
+        _speechService?.Stop();
+        _speechService?.Dispose();
+        _speechService = null;
 
         foreach (var reader in _readerTabs.Values.ToList())
         {

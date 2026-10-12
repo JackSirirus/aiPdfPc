@@ -112,6 +112,44 @@ public partial class ReaderPageItemViewModel : ObservableObject
         if (Highlights.Count > 0) Highlights.Clear();
     }
 
+    // ---- V4 T8 朗读高亮 ----
+
+    /// <summary>
+    /// 朗读位置高亮（页内 DIP 矩形）。由朗读进度驱动，随缩放重算——复用搜索高亮的换算函数
+    /// （<see cref="PageLayoutCalculator.ToSearchHighlightDip"/>），不新增坐标换算层。
+    /// </summary>
+    public ObservableCollection<SearchHighlight> SpeechRects { get; } = [];
+
+    /// <summary>本页是否持有朗读高亮矩形（缩放重算的触发条件）。</summary>
+    internal bool HasSpeechRects => _speechSourceRects.Count > 0;
+
+    private IReadOnlyList<PdfRect> _speechSourceRects = [];
+
+    /// <summary>V4 T8：设置朗读高亮源矩形（PDF 点）并按当前显示比例换算。</summary>
+    public void SetSpeechRects(IReadOnlyList<PdfRect> rects)
+    {
+        _speechSourceRects = rects ?? [];
+        RebuildSpeechRects();
+    }
+
+    /// <summary>V4 T8：清空朗读高亮（停止朗读 / 关闭文档）。</summary>
+    public void ClearSpeechRects()
+    {
+        _speechSourceRects = [];
+        if (SpeechRects.Count > 0) SpeechRects.Clear();
+    }
+
+    /// <summary>V4 T8：按当前显示尺寸重算朗读高亮（缩放变更时调用）。</summary>
+    internal void RebuildSpeechRects()
+    {
+        SpeechRects.Clear();
+        if (_speechSourceRects.Count == 0 || WidthPt <= 0) return;
+        foreach (var rect in _speechSourceRects)
+        {
+            SpeechRects.Add(PageLayoutCalculator.ToSearchHighlightDip(rect, WidthPt, DisplayWidth));
+        }
+    }
+
     /// <summary>按当前 <see cref="DisplayWidth"/> 重新换算全部高亮（缩放变更/首次设置）。</summary>
     internal void RebuildHighlights()
     {
@@ -458,6 +496,39 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>切换对开（供状态栏按钮命令与测试调用）。</summary>
     [RelayCommand]
     private void ToggleSpread() => SetSpread(!_spreadEnabled, persist: true);
+
+    // ---- V4 T8 朗读状态（供朗读条绑定；执行体在宿主 MainWindow）----
+
+    /// <summary>朗读是否可用（无可用语音时为 false，宿主据此禁用入口并提示，不得静默无声）。</summary>
+    [ObservableProperty]
+    private bool _speechAvailable;
+
+    /// <summary>是否正在朗读（含暂停态）。</summary>
+    [ObservableProperty]
+    private bool _speechActive;
+
+    /// <summary>是否处于暂停。</summary>
+    [ObservableProperty]
+    private bool _speechPaused;
+
+    /// <summary>朗读按钮文案（朗读 / 暂停 / 继续）。</summary>
+    public string SpeechToggleLabel
+        => !SpeechActive
+            ? ReaderStrings.SpeechPlay
+            : SpeechPaused
+                ? ReaderStrings.SpeechResume
+                : ReaderStrings.SpeechPause;
+
+    /// <summary>停止按钮可用性（仅在朗读/暂停时可用）。</summary>
+    public bool SpeechStopEnabled => SpeechActive;
+
+    partial void OnSpeechActiveChanged(bool value)
+    {
+        OnPropertyChanged(nameof(SpeechToggleLabel));
+        OnPropertyChanged(nameof(SpeechStopEnabled));
+    }
+
+    partial void OnSpeechPausedChanged(bool value) => OnPropertyChanged(nameof(SpeechToggleLabel));
 
     /// <summary>
     /// V4 T7：演示模式临时切换双页对开——**不落盘**（演示不应改写用户的阅读偏好，
@@ -1139,6 +1210,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             Pages[i].OffsetY = 0;
             // 缩放变更：搜索高亮与批注叠加层按新显示尺寸重算（源矩形为 pt，不随缩放变化）
             if (Pages[i].HasSearchRects) Pages[i].RebuildHighlights();
+            if (Pages[i].HasSpeechRects) Pages[i].RebuildSpeechRects();
             if (Pages[i].HasAnnotationRecords) Pages[i].RebuildAnnotations();
             if (Pages[i].HasTranslationAnnotations) Pages[i].RebuildTranslationOverlays();
         }

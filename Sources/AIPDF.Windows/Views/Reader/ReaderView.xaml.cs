@@ -1056,6 +1056,31 @@ public partial class ReaderView : UserControl
         }
     }
 
+    // ---- V4 T8 朗读条（宿主注入执行体：本视图只负责交互与状态呈现）----
+
+    /// <summary>朗读开关（播放/暂停/继续）。</summary>
+    public event EventHandler? SpeechToggleRequested;
+
+    /// <summary>停止朗读。</summary>
+    public event EventHandler? SpeechStopRequested;
+
+    /// <summary>语速变更（-10 ~ 10）。</summary>
+    public event EventHandler<int>? SpeechRateChanged;
+
+    private void OnSpeechToggleClick(object sender, RoutedEventArgs e)
+        => SpeechToggleRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnSpeechStopClick(object sender, RoutedEventArgs e)
+        => SpeechStopRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnSpeechRateChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SpeechRateBox.SelectedItem is ComboBoxItem { Tag: string tag } && int.TryParse(tag, out var rate))
+        {
+            SpeechRateChanged?.Invoke(this, rate);
+        }
+    }
+
     private void CancelDrawing()
     {
         _drawing = false;

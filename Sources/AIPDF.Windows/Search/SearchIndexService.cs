@@ -136,6 +136,35 @@ public sealed class SearchIndexService
         }
     }
 
+    /// <summary>
+    /// V4 T8：取页内字符区间的矩形（PDF 点，左上原点）——朗读按 <c>SpeakProgress</c> 的字符区间调用，
+    /// 用于页内高亮跟随。未挂接 / 区间无效返回空列表（不抛：朗读进度可能晚于文档关闭）。
+    /// </summary>
+    public IReadOnlyList<PdfRect> GetTextRects(string docId, int pageIndex, int charStart, int charCount)
+    {
+        if (string.IsNullOrWhiteSpace(docId) || charCount <= 0 || charStart < 0)
+        {
+            return [];
+        }
+
+        lock (_gate)
+        {
+            if (!_documents.TryGetValue(docId, out var index))
+            {
+                return [];
+            }
+
+            try
+            {
+                return _textService.GetTextRects(index.Doc, pageIndex, charStart, charCount);
+            }
+            catch (Exception)
+            {
+                return [];   // 句柄已关闭 / 区间越界：静默退化为不高亮（不打断朗读）
+            }
+        }
+    }
+
     /// <summary>单页索引信息（含低质量标记与乱码率，UI 可观测）。</summary>
     public PageTextInfo GetPageInfo(string docId, int pageIndex)
     {

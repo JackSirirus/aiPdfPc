@@ -337,6 +337,38 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+
+                                <!-- V4 T8 朗读位置高亮：与搜索高亮同构（同一换算函数），
+                                     用独立配色以便与搜索命中区分；随缩放重算。 -->
+                                <ItemsControl ItemsSource="{Binding SpeechRects}"
+                                              IsHitTestVisible="False"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Top"
+                                              Width="{Binding DisplayWidth}"
+                                              Height="{Binding DisplayHeight}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="{Binding Width}"
+                                                    Height="{Binding Height}"
+                                                    IsHitTestVisible="False"
+                                                    Background="{DynamicResource Brush.AccentSoft}"
+                                                    BorderBrush="{DynamicResource Brush.Accent}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="1" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                                 <!-- 批注叠加层（V2 T1）：与搜索高亮层完全独立的 IsHitTestVisible=False 层，
                                      不改变搜索高亮语义；Canvas 绝对定位 DIP 矩形，随缩放由 VM 重算。
                                      Border 绑定 AnnotationOverlay.Fill/Border（已冻结 Brush）；Note 类型右上角画标记圆点。 -->
@@ -621,6 +653,55 @@
                     <RadioButton Style="{StaticResource DrawChoiceButton}"
                                  Content="{x:Static reader:ReaderStrings.DrawThickLabel}"
                                  Tag="4" GroupName="DrawWidth" Checked="OnDrawWidthChecked" />
+                </StackPanel>
+            </Border>
+
+            <!-- ============ V4 T8 朗读条（左下）============
+                 系统本地语音合成（System.Speech），不联网、不上传文本；无可用语音时由宿主禁用并提示。
+                 进度经 SpeakProgress 的字符区间映射到页内矩形（SpeechRects 叠加层）并自动翻页/滚动。 -->
+            <Border x:Name="SpeechBar"
+                    Style="{StaticResource DrawToolbarPanel}"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Bottom"
+                    Margin="12,0,0,12"
+                    Padding="8,6"
+                    Panel.ZIndex="6"
+                    ToolTip="{x:Static reader:ReaderStrings.SpeechToolTip}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{x:Static reader:ReaderStrings.SpeechPlay}"
+                               Style="{StaticResource FieldHint}"
+                               VerticalAlignment="Center"
+                               Margin="2,0,8,0" />
+                    <Button x:Name="SpeechToggleButton"
+                            Height="26"
+                            Padding="10,0"
+                            Cursor="Hand"
+                            IsEnabled="{Binding SpeechAvailable}"
+                            Content="{Binding SpeechToggleLabel}"
+                            Click="OnSpeechToggleClick" />
+                    <Button x:Name="SpeechStopButton"
+                            Height="26"
+                            Margin="6,0,0,0"
+                            Padding="10,0"
+                            Cursor="Hand"
+                            IsEnabled="{Binding SpeechStopEnabled}"
+                            Content="{x:Static reader:ReaderStrings.SpeechStop}"
+                            Click="OnSpeechStopClick" />
+                    <Border Width="1" Margin="8,4" Background="{DynamicResource Brush.Border}" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.SpeechRateTitle}"
+                               Style="{StaticResource FieldHint}"
+                               VerticalAlignment="Center" />
+                    <ComboBox x:Name="SpeechRateBox"
+                              Width="86"
+                              Height="26"
+                              Margin="6,0,0,0"
+                              VerticalContentAlignment="Center"
+                              SelectedIndex="1"
+                              SelectionChanged="OnSpeechRateChanged">
+                        <ComboBoxItem Content="{x:Static reader:ReaderStrings.SpeechRateSlow}" Tag="-4" />
+                        <ComboBoxItem Content="{x:Static reader:ReaderStrings.SpeechRateNormal}" Tag="0" />
+                        <ComboBoxItem Content="{x:Static reader:ReaderStrings.SpeechRateFast}" Tag="4" />
+                    </ComboBox>
                 </StackPanel>
             </Border>
 

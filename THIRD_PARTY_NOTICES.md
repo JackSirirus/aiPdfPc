@@ -32,7 +32,13 @@ Windows 版本额外使用以下组件，许可证独立于上述 Python 依赖�
 | --- | --- | --- | --- |
 | Playwright | 1.62.0 | Apache-2.0 | Python 包，仅 Windows 安装（`sys_platform == "win32"`）；用于 URL 转 PDF 的 Chromium 渲染 |
 | CommunityToolkit.Mvvm | 8.3.2 | MIT | NuGet 包，WPF 界面 MVVM 框架 |
-| bblanchon.PDFium | 152.0.7961 | Apache-2.0 | NuGet 包，PDFiumCore 的原生 PDF 渲染引擎 |
+| PDFiumCore | 155.0.8057 | Apache-2.0 | NuGet 包，PDF 渲染栈（托管包装） |
+| bblanchon.PDFium | 155.0.8057 | Apache-2.0 | NuGet 包，PDFiumCore 的原生 PDF 渲染引擎 |
+| System.Speech | 8.0.0 | MIT | NuGet 包，朗读（TTS）用系统本地语音合成；**不联网、不上传文本** |
+
+> 说明：`PDFiumCore` / `bblanchon.PDFium` 的版本由 152.0.7961 升至 155.0.8057（本机 Smart App Control
+> 版本边界实测，见 `Sources/AIPDF.Windows/AIPDF.Windows.csproj` 注释与 `设计/阅读器竞品对比.md`）。
+> `System.Speech` 属 .NET 平台包，Windows 专用；首次构建需联网还原（见 `.omo/plans/pdf-reader-v4-competitive-supplement.md` R19）。
 
 NuGet 包的许可原文随各发行包提供；打包发行时应在 `licenses/third-party/` 中保留对应声明。
 
