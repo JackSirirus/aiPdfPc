@@ -50,6 +50,14 @@ public partial class DocumentTabViewModel : ObservableObject
     /// <summary>是否文档标签：宿主据此显示状态栏的阅读控件簇（页码/跳页/缩放）。</summary>
     public bool IsDocument => Kind == TabKind.Document;
 
+    /// <summary>
+    /// V4 T2：该标签是否有未保存的批注改动（新增 / 修改 / **删除**）。
+    /// 数据源必须**按路径**查询保存服务——状态栏 savepill 是单例，且非活动文档会被强制置为
+    /// <c>Saved</c>，读它会让后台标签永远看不到红点。
+    /// </summary>
+    [ObservableProperty]
+    private bool _hasUnsavedAnnotations;
+
     /// <summary>文档标签构造：路径须为规范化全路径（由宿主统一处理）。</summary>
     public DocumentTabViewModel(string fullPath, string title, object? content)
     {
@@ -187,6 +195,13 @@ public partial class TabHostViewModel : ObservableObject
         return true;
     }
 
-    private DocumentTabViewModel? FindDocumentTab(string fullPath)
-        => Tabs.FirstOrDefault(t => t.Kind == TabKind.Document && PathComparer.Equals(t.FilePath, fullPath));
+    /// <summary>V4 T2：按规范化全路径取文档标签（未找到返回 null）。</summary>
+    public DocumentTabViewModel? FindDocumentTab(string? fullPath)
+        => string.IsNullOrEmpty(fullPath)
+            ? null
+            : Tabs.FirstOrDefault(t => t.Kind == TabKind.Document && PathComparer.Equals(t.FilePath, fullPath));
+
+    /// <summary>V4 T2：全部文档标签（未保存标记刷新用）。</summary>
+    public IEnumerable<DocumentTabViewModel> DocumentTabs
+        => Tabs.Where(t => t.Kind == TabKind.Document);
 }

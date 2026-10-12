@@ -3132,6 +3132,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     {
         Dispatcher.BeginInvoke(new Action(() =>
         {
+            // V4 T2：先刷新标签的未保存标记——**必须在下面的早退之前**。
+            // 状态栏 savepill 是单例，对非活动文档会被强制置为 Saved，读它会让后台标签永远看不到红点。
+            RefreshTabUnsavedIndicators();
+
             var active = ActiveDocumentPath();
             if (active is null || !string.Equals(active, e.Path, StringComparison.OrdinalIgnoreCase))
             {
@@ -3152,6 +3156,26 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     }
 
     /// <summary>标签切换/打开/关闭时刷新 savepill 显示文档与状态。</summary>
+    /// <summary>
+    /// V4 T2：按路径刷新所有文档标签的「未保存批注」标记。
+    /// 数据源是保存服务（<see cref="AnnotationSaveService.HasPending"/> 覆盖新增/修改/**删除**，
+    /// 外加失败态），**不是**状态栏 savepill——后者是单例，且非活动文档会被强制置为 Saved。
+    /// </summary>
+    private void RefreshTabUnsavedIndicators()
+    {
+        var service = _annotationSaves;
+        foreach (var tab in TabHost.DocumentTabs)
+        {
+            if (tab.FilePath is not { } path)
+            {
+                continue;
+            }
+
+            tab.HasUnsavedAnnotations = service is not null
+                && (service.HasPending(path) || service.GetState(path) == SavePillState.Failed);
+        }
+    }
+
     private void UpdateSavePillForActiveTab()
     {
         var active = ActiveDocumentPath();
@@ -3160,10 +3184,15 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         {
             _savePill.State = SavePillState.Saved;
             _savePill.ShouldSuggestSaveAs = false;
-            return;
+        }
+        else
+        {
+            _savePill.Apply(EnsureAnnotationSaveService().GetState(active), false, null);
         }
 
-        _savePill.Apply(EnsureAnnotationSaveService().GetState(active), false, null);
+        // V4 T2：标签的「未保存批注」标记与 savepill 同一生命周期刷新
+        // （本方法在文档打开/切换/关闭时被调用）。
+        RefreshTabUnsavedIndicators();
     }
 
     /// <summary>打开文档时采集冲突基线（T11 保存前对比的基准）。</summary>

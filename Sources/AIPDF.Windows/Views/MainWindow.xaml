@@ -179,6 +179,15 @@
                            VerticalAlignment="Center"
                            ToolTip="{Binding ToolTipText}"
                            TextTrimming="CharacterEllipsis" />
+                <!-- V4 T2：未保存批注标记（按 path 查保存服务，含「挂起删除」；不用单例 savepill） -->
+                <Ellipse Width="7"
+                         Height="7"
+                         Margin="6,0,0,0"
+                         VerticalAlignment="Center"
+                         Fill="{DynamicResource Brush.Error}"
+                         ToolTip="有未保存的批注改动"
+                         AutomationProperties.Name="有未保存的批注改动"
+                         Visibility="{Binding HasUnsavedAnnotations, Converter={StaticResource BoolToVis}}" />
                 <Button Click="OnCloseTabClick"
                         Margin="6,0,8,0"
                         Style="{StaticResource TabCloseButton}"

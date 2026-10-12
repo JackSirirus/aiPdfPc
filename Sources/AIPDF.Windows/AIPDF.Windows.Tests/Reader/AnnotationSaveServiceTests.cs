@@ -265,6 +265,46 @@ public sealed class AnnotationSaveServiceTests : IDisposable
         }
     }
 
+    // ---------------------------------------------------------------- V4 T2：未保存判据
+
+    [Fact]
+    public async Task PendingDelete_KeepsHasPendingTrue_EvenWhenClientRecordsAreEmpty()
+    {
+        // V4 T2（Oracle 高危 #6）：存在**挂起删除**时客户端记录数可能为 0——若标签红点判据只看
+        // 记录数（如 GetAllRecords().Count）就永远看不到标记。判据必须是保存服务的 HasPending
+        // （它覆盖「新增/修改/**删除**」三种未保存操作），标签红点与「关闭前 flush」都依赖它。
+        //
+        // 「已内嵌」的构造沿用 AnnotationSaveSessionTests 的语义：先提交一版，让记录在飞行期间
+        // 被修改 → PDF 内为旧版、客户端保留新版，该 id 进入 _embeddedIds（待 delete+add），
+        // 此时删除它才会排队成「挂起删除」。
+        var engine = new FakeEngine();
+        var source = MakeSource(Highlight("h1"));
+        engine.Result = (_, _, _, _) =>
+        {
+            source.Records[0] = source.Records[0] with { Color = "#123456" }; // 飞行期间被修改
+            return Task.FromResult(new AnnotationSaveEngineResult(true, null, null, new Dictionary<string, string>()));
+        };
+
+        using var service = new AnnotationSaveService(engine, Options());
+        service.RegisterDocument(source);
+
+        var first = await service.FlushAsync(_temp);
+        Assert.True(first.Succeeded);
+        Assert.True(first.RequiresFollowUp);   // 需补 delete+add
+        Assert.Single(source.Records);         // 客户端保留新版
+        Assert.True(service.HasPending(_temp));
+
+        // 删除该批注：客户端记录归零，但必须仍报「未保存」——
+        // 这正是标签红点判据不能用「记录数」的原因（挂起删除时记录数为 0）。
+        service.NotifyAnnotationRemoved(_temp, source.Records[0]);
+        source.Records.Clear();
+        Assert.Empty(source.Records);
+        Assert.True(service.HasPending(_temp), "客户端记录为空时仍须报「未保存」（否则标签无红点）");
+
+        // 仅剩删除动作的批次仍可构建并下发（会话层语义已有独立用例覆盖，此处锁服务层可达性）
+        Assert.NotEqual(SavePillState.Saved, service.GetState(_temp));
+    }
+
     private sealed class FakeSource(string path) : IAnnotationSaveSource
     {
         public List<AnnotationRecord> Records { get; } = [];
