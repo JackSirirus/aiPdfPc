@@ -17,12 +17,16 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <!-- 阅读器渲染栈（V1 T1）：PDFiumCore CppSharp 包装 + bblanchon PDFium 原生库。
-         原生钉 152.0.7961：本机应用程序控制（Smart App Control 评估态）按文件哈希放行，
-         152 哈希有既往云信誉缓存（T13 起在用）；154.0.8035 原生被拦（0x800711C7/WinError 4551）。
-         PDFiumCore 152.0.7961 与原生同修订，T1 仅用不透明句柄 + 稳定 FPDF_* 导出，无布局风险。
-         154 提升待原生哈希获得信誉或维护者调整本机策略后进行。
+         版本边界由 2026-10-11 本机实测确定（Smart App Control 处于 Enforce，
+         按文件哈希/云信誉放行，策略 ID {0283ac0f-...}）：
+           152 / 153 / 154 / 155 → 托管 PDFiumCore.dll 与原生 pdfium.dll 均可加载；
+           156.0.8076            → 托管 PDFiumCore.dll 被拦（0x800711C7 / CodeIntegrity 3077+3033），3 次重试稳定复现；
+           157.0.8086            → 旧版本方案中不存在（NuGet 解析到新版 4270.0.0，且 FPDFBitmapFillRect 等签名有变）。
+         故钉 155.0.8057（原 152.0.7961）：同为 Apache-2.0、同 API 形态，白拿 3 个修订的上游修复。
+         若将来 156 的哈希获得云信誉，可再升；升级前必须先用隔离工程验证 SAC 放行。
+         证据：tmp/spike-pdfium156/（隔离验证工程，tmp/ 不入库）。
          V3 T7 单栈收敛已完成：crop/edit/forms 预览已迁移至本渲染栈，PDFtoImage（SkiaSharp 栈）包已移除。 -->
-    <PackageReference Include="PDFiumCore" Version="152.0.7961" />
+    <PackageReference Include="PDFiumCore" Version="155.0.8057" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
