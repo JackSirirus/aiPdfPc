@@ -2793,6 +2793,8 @@ public partial class MainWindow : Window, ISessionRestoreTarget
 
         _searchProvider ??= new SearchIndexProviderAdapter(_searchIndexService);
         _searchPanelVm = new SearchPanelViewModel(_searchProvider, docId);
+        // V4 T14：跨文档搜索的文档清单（范围 = 全部时遍历）
+        _searchPanelVm.DocumentsProvider = EnumerateSearchableDocuments;
         _searchPanelVm.HitActivated += OnSearchHitActivated;
         _searchPanelVm.OcrRequested += OnSearchOcrRequested;
         _searchPanelVm.CloseRequested += OnSearchCloseRequested;
@@ -2800,9 +2802,47 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         _searchPanelVm.BeginProbe();
     }
 
+    /// <summary>
+    /// V4 T14：可供跨文档搜索的已打开文档（docId = 规范化路径 + 标签标题）。
+    /// 只列出**已挂接搜索文本层**的文档——未挂接（打开失败）的文档没有索引，列出来只会误导。
+    /// </summary>
+    private IReadOnlyList<(string DocId, string Title)> EnumerateSearchableDocuments()
+    {
+        var list = new List<(string DocId, string Title)>();
+        foreach (var tab in TabHost.DocumentTabs)
+        {
+            if (tab.FilePath is { Length: > 0 } path && _searchIndexService.IsAttached(path))
+            {
+                list.Add((path, tab.Title));
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>V4 T14：按路径激活已打开的文档标签（未打开返回 false）。</summary>
+    private bool TryActivateDocumentTab(string path)
+    {
+        var tab = TabHost.FindDocumentTab(path);
+        if (tab is null)
+        {
+            return false;
+        }
+
+        TabHost.SelectedTab = tab;
+        return true;
+    }
+
     /// <summary>命中激活：跳页 + 页内高亮（点击命中至少高亮其全部行矩形）。</summary>
     private void OnSearchHitActivated(object? sender, SearchResultItem item)
     {
+        // V4 T14：跨文档命中先切到命中所在标签页，再跳页高亮
+        if (!string.IsNullOrEmpty(item.DocId)
+            && !string.Equals(item.DocId, ActiveDocumentPath(), StringComparison.OrdinalIgnoreCase))
+        {
+            TryActivateDocumentTab(item.DocId);
+        }
+
         if (TabHost.SelectedTab is { Kind: TabKind.Document } active
             && _readerTabs.TryGetValue(active.TabId, out var reader))
         {

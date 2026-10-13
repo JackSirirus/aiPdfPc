@@ -17,7 +17,8 @@ namespace AIPDF.Windows.ViewModels;
 public sealed class SearchResultItem
 {
     public SearchResultItem(int pageIndex, int charStart, int charEnd, IReadOnlyList<PdfRect> rects,
-        PdfRect boundingRect, bool isLowQualityPage, string excerpt)
+        PdfRect boundingRect, bool isLowQualityPage, string excerpt,
+        string docId = "", string documentTitle = "")
     {
         PageIndex = pageIndex;
         CharStart = charStart;
@@ -26,6 +27,8 @@ public sealed class SearchResultItem
         BoundingRect = boundingRect;
         IsLowQualityPage = isLowQualityPage;
         Excerpt = excerpt;
+        DocId = docId;
+        DocumentTitle = documentTitle;
     }
 
     /// <summary>命中页（0 基）。</summary>
@@ -47,20 +50,60 @@ public sealed class SearchResultItem
     /// <summary>命中上下文摘录（含首尾省略号）。</summary>
     public string Excerpt { get; }
 
+    /// <summary>V4 T14：命中所属文档（docId = 规范化路径）。跨文档命中据此切换标签页。</summary>
+    public string DocId { get; }
+
+    /// <summary>V4 T14：命中所属文档标题（跨文档分组表头）。</summary>
+    public string DocumentTitle { get; }
+
     /// <summary>页码标签（1 基，展示用）。</summary>
     public string PageLabel => $"第 {PageIndex + 1} 页";
+}
+
+/// <summary>V4 T14：按文档分组的一组命中（跨文档搜索的结果分组）。</summary>
+public sealed class SearchResultGroup
+{
+    public SearchResultGroup(string docId, string title, IReadOnlyList<SearchResultItem> items)
+    {
+        DocId = docId;
+        Title = title;
+        Items = items;
+    }
+
+    /// <summary>该组所属文档（docId = 规范化路径）。</summary>
+    public string DocId { get; }
+
+    /// <summary>该组所属文档标题。</summary>
+    public string Title { get; }
+
+    /// <summary>组内命中（保持搜索顺序）。</summary>
+    public IReadOnlyList<SearchResultItem> Items { get; }
+
+    /// <summary>组表头（标题 + 命中数）。</summary>
+    public string Header => $"{Title}（{Items.Count} 处）";
+}
+
+/// <summary>V4 T14：搜索范围。</summary>
+public enum SearchScope
+{
+    /// <summary>仅当前文档（默认，保持既有行为）。</summary>
+    CurrentDocument,
+
+    /// <summary>所有已打开的文档（结果按文档分组）。</summary>
+    AllOpenDocuments,
 }
 
 /// <summary>命中 → 展示模型的纯投影（摘录截取可单测）。</summary>
 public static class SearchResultProjector
 {
-    /// <summary>把服务层 <see cref="SearchHit"/> 投影为命中列表条目。</summary>
-    public static SearchResultItem Project(SearchHit hit, string? pageText, int contextChars)
+    /// <summary>把服务层 <see cref="SearchHit"/> 投影为命中列表条目（可附带所属文档，V4 T14）。</summary>
+    public static SearchResultItem Project(SearchHit hit, string? pageText, int contextChars,
+        string docId = "", string documentTitle = "")
     {
         ArgumentNullException.ThrowIfNull(hit);
         var excerpt = BuildExcerpt(pageText, hit.CharStart, hit.CharEnd, contextChars);
         return new SearchResultItem(hit.PageIndex, hit.CharStart, hit.CharEnd, hit.LineRects,
-            hit.Rect, hit.IsLowQualityPage, excerpt);
+            hit.Rect, hit.IsLowQualityPage, excerpt, docId, documentTitle);
     }
 
     /// <summary>取命中区间前后 <paramref name="contextChars"/> 个字符的摘录；换行折为空格，越界钳制。</summary>
@@ -139,6 +182,80 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
 
     /// <summary>命中列表（已截断到上限）。</summary>
     public ObservableCollection<SearchResultItem> Results { get; } = [];
+
+    // ---- V4 T14：跨文档搜索 ----
+
+    /// <summary>
+    /// 已打开文档清单（docId = 规范化路径 + 标题），由宿主设置。范围 = 全部时遍历它；
+    /// 未设置则退化为仅当前文档（不报错）。
+    /// </summary>
+    public Func<IReadOnlyList<(string DocId, string Title)>>? DocumentsProvider { get; set; }
+
+    /// <summary>搜索范围（默认仅当前文档，保持既有行为）。</summary>
+    [ObservableProperty]
+    private SearchScope _scope = SearchScope.CurrentDocument;
+
+    /// <summary>是否跨文档（UI 据此显示分组表头）。</summary>
+    public bool IsCrossDocument => Scope == SearchScope.AllOpenDocuments;
+
+    /// <summary>是否单文档范围（UI 据此显示扁平列表）。</summary>
+    public bool IsSingleDocument => !IsCrossDocument;
+
+    /// <summary>按文档分组的结果（跨文档用；单文档时为一组）。</summary>
+    public ObservableCollection<SearchResultGroup> Groups { get; } = [];
+
+    partial void OnScopeChanged(SearchScope value)
+    {
+        OnPropertyChanged(nameof(IsCrossDocument));
+        OnPropertyChanged(nameof(IsSingleDocument));
+
+        // 范围变化会改变结果集语义：用当前查询立即重跑（空查询时清空即可）
+        if (!string.IsNullOrWhiteSpace(Query))
+        {
+            ScheduleSearch(Query);
+        }
+        else
+        {
+            ResetForEmptyQuery();
+        }
+    }
+
+    /// <summary>
+    /// 解析本次搜索的目标文档：仅当前文档 → 单元素；全部 → 宿主提供的清单
+    /// （当前文档始终在首位，保证「本文件命中」排在前面）。
+    /// </summary>
+    private IReadOnlyList<(string DocId, string Title)> ResolveSearchTargets()
+    {
+        var fallback = System.IO.Path.GetFileName(DocId);
+        if (Scope != SearchScope.AllOpenDocuments || DocumentsProvider is null)
+        {
+            return [(DocId, fallback)];
+        }
+
+        var provided = DocumentsProvider();
+
+        // 当前文档的标题优先取宿主给的标签标题（回退到文件名）
+        var currentTitle = fallback;
+        foreach (var (docId, title) in provided)
+        {
+            if (string.Equals(docId, DocId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(title))
+            {
+                currentTitle = title;
+            }
+        }
+
+        // 当前文档始终在首位，保证本文件命中排在最前
+        var list = new List<(string DocId, string Title)> { (DocId, currentTitle) };
+        foreach (var (docId, title) in provided)
+        {
+            if (!string.Equals(docId, DocId, StringComparison.OrdinalIgnoreCase))
+            {
+                list.Add((docId, string.IsNullOrEmpty(title) ? System.IO.Path.GetFileName(docId) : title));
+            }
+        }
+
+        return list;
+    }
 
     /// <summary>在途搜索任务（测试等待；应用内不需要）。</summary>
     internal Task? PendingSearchTask { get; private set; }
@@ -294,7 +411,7 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
             StatusHint = null;
         }).ConfigureAwait(false);
 
-        IReadOnlyList<SearchHit>? allHits = null;
+        var totalHits = 0;
         List<SearchResultItem> projected = [];
         SearchIndexStatus? status = null;
         var textAvailable = IsTextLayerAvailable;
@@ -305,10 +422,33 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
             // 搜索走后台线程：Search 内部有 PDFium 调用且首次调用构建整册索引（500 页约 150ms）
             await Task.Run(() =>
             {
-                allHits = _index.Search(DocId, query);
-                status = _index.GetStatus(DocId);
-                textAvailable = _index.IsTextLayerAvailable(DocId);
-                projected = ProjectHits(allHits);
+                // V4 T14：范围 = 全部时遍历已打开文档；仅当前文档时与既有路径等价。
+                // 当前文档始终在首位，保证本文件命中排在最前。
+                foreach (var (docId, title) in ResolveSearchTargets())
+                {
+                    var hits = _index.Search(docId, query);
+                    totalHits += hits.Count;
+
+                    if (string.Equals(docId, DocId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 面板态（索引状态 / 文本层可用性）由**当前文档**决定；
+                        // 其余文档只贡献结果，不改变当前文档的降级提示。
+                        status = _index.GetStatus(docId);
+                        textAvailable = _index.IsTextLayerAvailable(docId);
+                    }
+
+                    foreach (var hit in hits)
+                    {
+                        if (projected.Count >= _maxResults)
+                        {
+                            break;   // 已达展示上限：仍继续统计其余文档的命中总数
+                        }
+
+                        var pageText = _index.GetPageText(docId, hit.PageIndex);
+                        projected.Add(SearchResultProjector.Project(
+                            hit, pageText, ExcerptContextChars, docId, title));
+                    }
+                }
             }, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -337,22 +477,53 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
 
             IsTextLayerAvailable = textAvailable;
             ReplaceResults(projected);
-            TotalHitCount = allHits?.Count ?? 0;
+            TotalHitCount = totalHits;
             ResultSummary = BuildSummary(TotalHitCount, projected.Count);
             StatusHint = BuildStatusHint(status);
         }).ConfigureAwait(false);
     }
 
-    private List<SearchResultItem> ProjectHits(IReadOnlyList<SearchHit> hits)
+    private void ReplaceResults(IReadOnlyList<SearchResultItem> items)
     {
-        var list = new List<SearchResultItem>(Math.Min(hits.Count, _maxResults));
-        foreach (var hit in hits)
+        Results.Clear();
+        foreach (var item in items) Results.Add(item);
+        RebuildGroups();
+        NotifyResultStateChanged();
+    }
+
+    /// <summary>
+    /// V4 T14：按文档重建分组（保持首次出现顺序——当前文档在首位）。跨文档命中因此可以
+    /// 按文件展示；单文档时只有一组，行为与既有面板一致。
+    /// </summary>
+    private void RebuildGroups()
+    {
+        Groups.Clear();
+        var order = new List<string>();
+        var buckets = new Dictionary<string, List<SearchResultItem>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in Results)
         {
-            if (list.Count >= _maxResults) break;
-            var pageText = _index.GetPageText(DocId, hit.PageIndex);
-            list.Add(SearchResultProjector.Project(hit, pageText, ExcerptContextChars));
+            var key = string.IsNullOrEmpty(item.DocId) ? DocId : item.DocId;
+            if (!buckets.TryGetValue(key, out var bucket))
+            {
+                bucket = [];
+                buckets[key] = bucket;
+                order.Add(key);
+            }
+
+            bucket.Add(item);
         }
-        return list;
+
+        foreach (var key in order)
+        {
+            var bucket = buckets[key];
+            var title = bucket[0].DocumentTitle;
+            if (string.IsNullOrEmpty(title))
+            {
+                title = System.IO.Path.GetFileName(key);
+            }
+
+            Groups.Add(new SearchResultGroup(key, title, bucket));
+        }
     }
 
     private static string BuildSummary(int total, int shown)
@@ -378,16 +549,10 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
         return null;
     }
 
-    private void ReplaceResults(IReadOnlyList<SearchResultItem> items)
-    {
-        Results.Clear();
-        foreach (var item in items) Results.Add(item);
-        NotifyResultStateChanged();
-    }
-
     private void ClearResultItems()
     {
         if (Results.Count > 0) Results.Clear();
+        if (Groups.Count > 0) Groups.Clear();
         TotalHitCount = 0;
         ResultSummary = string.Empty;
     }
@@ -395,6 +560,7 @@ public partial class SearchPanelViewModel : ObservableObject, IDisposable
     private void ResetForEmptyQuery()
     {
         if (Results.Count > 0) Results.Clear();
+        if (Groups.Count > 0) Groups.Clear();
         HasSearched = false;
         IsSearching = false;
         IsIndexing = false;
