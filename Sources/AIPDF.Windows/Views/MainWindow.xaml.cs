@@ -2564,9 +2564,32 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     [
         new("settings.open", "设置", ["settings", "shezhi", "sz"],
             () => OnSettingsMenuItemClick(this, new RoutedEventArgs())),
+        // V4 T12：快捷键设置。设置页收口后本入口可保留（或改指向设置页的快捷键分区）。
+        new("settings.shortcuts", "快捷键设置", ["shortcut", "kuaijiejian", "kjj"],
+            OpenShortcutSettings),
         new("settings.about", "关于许可", ["about", "guanyu", "gy"],
             () => OnAboutMenuItemClick(this, new RoutedEventArgs())),
     ];
+
+    // ---- V4 T12：快捷键设置入口 ----
+
+    /// <summary>
+    /// 打开快捷键设置；保存后**立即重建窗口绑定**（无需重启），并在有冲突时明确提示。
+    /// </summary>
+    private void OpenShortcutSettings()
+    {
+        var viewModel = new ShortcutSettingsViewModel(_settingsStore);
+        var window = new ShortcutSettingsWindow(viewModel) { Owner = this };
+        if (window.ShowDialog() != true || !window.Saved)
+        {
+            return;
+        }
+
+        ApplyShortcuts();
+        SetStatusText(window.HasConflictsAfterSave
+            ? $"快捷键已保存，但存在冲突：{window.ConflictSummary}"
+            : "快捷键已保存");
+    }
 
     /// <summary>跳页：把焦点交给状态栏页码框并全选（与 Ctrl+G 一致）。</summary>
     private void FocusStatusJumpBox()

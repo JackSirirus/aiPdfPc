@@ -1,0 +1,92 @@
+<UserControl x:Class="AIPDF.Windows.Views.Settings.ShortcutSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:AIPDF.Windows.ViewModels"
+             d:DataContext="{d:DesignInstance Type=vm:ShortcutSettingsViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+    <!-- V4 T12：快捷键设置面板（DataContext = ShortcutSettingsViewModel）。
+         做成 UserControl 而非 Window：设置页收口后可直接托管本控件，集成是加法。 -->
+    <StackPanel>
+        <TextBlock Text="快捷键"
+                   FontSize="13"
+                   FontWeight="Bold"
+                   Margin="0,0,0,4"
+                   Foreground="{DynamicResource Brush.TextPrimary}" />
+        <TextBlock Text="点击右侧输入框后按下组合键，或直接输入（如 Ctrl+Shift+P）。功能键可单独使用。"
+                   FontSize="11"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,4"
+                   Foreground="{DynamicResource Brush.TextSecondary}" />
+
+        <!-- 冲突横幅（不静默：冲突时明确告知哪两个动作撞了） -->
+        <Border Background="{DynamicResource Brush.Surface}"
+                BorderBrush="{DynamicResource Brush.Error}"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="8,6"
+                Margin="0,0,0,8"
+                Visibility="{Binding HasConflicts, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="{Binding ConflictSummary}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Brush.Error}" />
+        </Border>
+
+        <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="0,0,0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding Label}"
+                                   VerticalAlignment="Center"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource Brush.TextPrimary}" />
+                        <TextBox Grid.Column="1"
+                                 Height="26"
+                                 VerticalContentAlignment="Center"
+                                 Tag="{Binding Id}"
+                                 Text="{Binding Gesture, Mode=OneWay}"
+                                 GotKeyboardFocus="OnGestureBoxGotFocus"
+                                 PreviewKeyDown="OnGestureBoxPreviewKeyDown"
+                                 LostFocus="OnGestureBoxLostFocus"
+                                 AutomationProperties.Name="快捷键输入框" />
+                        <Button Grid.Column="2"
+                                Content="恢复默认"
+                                Height="26"
+                                Margin="6,0,0,0"
+                                Padding="10,0"
+                                Cursor="Hand"
+                                Tag="{Binding Id}"
+                                Click="OnResetRowClick"
+                                IsEnabled="{Binding IsCustomized}" />
+                    </Grid>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <TextBlock x:Name="ShortcutError"
+                   FontSize="11"
+                   Margin="0,2,0,0"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource Brush.Error}"
+                   Visibility="Collapsed" />
+
+        <Button Content="全部恢复默认"
+                Height="26"
+                Margin="0,8,0,0"
+                Padding="12,0"
+                HorizontalAlignment="Left"
+                Cursor="Hand"
+                Click="OnResetAllClick" />
+    </StackPanel>
+</UserControl>
