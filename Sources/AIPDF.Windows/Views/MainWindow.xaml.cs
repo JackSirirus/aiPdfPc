@@ -60,6 +60,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         _themeManager.ApplyFromSettings();
         Closed += (_, _) => _themeManager.Dispose();
 
+        // V4 T12：按持久化设置构建快捷键绑定（覆盖 → 默认；非法覆盖回退默认）
+        ApplyShortcuts();
+
         // T8：窗口级唯一搜索栈——一个文本层服务 + 一个索引服务（MUST：每窗口各一份）
         _searchIndexService = new SearchIndexService(_searchTextService);
 
@@ -2678,6 +2681,60 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     }
 
     /// <summary>窗口级 Esc：先关闭最上层工具箱面板；其次搜索面板激活时消费（恢复原面板）；其余交给聚焦控件。</summary>
+    // ---- V4 T12：可自定义快捷键 ----
+
+    /// <summary>动作 Id → 命令。`goToPage` 不在其中：它要判断页码框是否已聚焦，走代码分支。</summary>
+    private static readonly IReadOnlyDictionary<string, ICommand> ShortcutCommands =
+        new Dictionary<string, ICommand>(StringComparer.Ordinal)
+        {
+            [ShortcutRegistry.FullTextSearch] = FullTextSearchCommand,
+            [ShortcutRegistry.CloseTab] = CloseActiveTabCommand,
+            [ShortcutRegistry.Print] = PrintCommand,
+            [ShortcutRegistry.AddBookmark] = AddBookmarkCommand,
+            [ShortcutRegistry.CommandPalette] = CommandPaletteCommand,
+        };
+
+    /// <summary>当前生效手势（动作 Id → 手势），供代码分支（Ctrl+G）匹配。</summary>
+    private IReadOnlyDictionary<string, string> _shortcutGestures = ShortcutRegistry.Defaults;
+
+    /// <summary>
+    /// V4 T12：按设置重建窗口快捷键绑定。覆盖优先、其余用默认；非法覆盖已在
+    /// <see cref="ShortcutRegistry.Resolve"/> 内回退默认，因此**不会出现「改了以后快捷键消失」**。
+    /// 冲突不静默处理：保留用户设置但在状态栏提示（设置页会展示同一冲突列表）。
+    /// </summary>
+    private void ApplyShortcuts()
+    {
+        var effective = ShortcutRegistry.Resolve(_settingsStore.Load().Shortcuts);
+        _shortcutGestures = effective;
+
+        InputBindings.Clear();
+        foreach (var (actionId, gesture) in effective)
+        {
+            if (!ShortcutCommands.TryGetValue(actionId, out var command))
+            {
+                continue;   // goToPage 走代码分支
+            }
+
+            if (ShortcutRegistry.TryParseGesture(gesture, out var parsed))
+            {
+                InputBindings.Add(new KeyBinding(command, parsed.Key, parsed.Modifiers));
+            }
+        }
+
+        var conflicts = ShortcutRegistry.FindConflicts(effective);
+        if (conflicts.Count > 0)
+        {
+            SetStatusText($"快捷键冲突：{conflicts[0].Describe(ShortcutRegistry.Labels)}");
+        }
+    }
+
+    /// <summary>V4 T12：键事件是否匹配某动作的当前手势（供代码分支复用注册表口径）。</summary>
+    private bool MatchesShortcut(string actionId, Key key, ModifierKeys modifiers)
+        => _shortcutGestures.TryGetValue(actionId, out var gesture)
+           && ShortcutRegistry.TryParseGesture(gesture, out var parsed)
+           && parsed.Key == key
+           && parsed.Modifiers == modifiers;
+
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
         // V4 T7：全屏/演示键位优先处理（尤其 Esc：演示中先退演示，再退全屏，
@@ -2688,9 +2745,10 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             return;
         }
 
-        // A+C 方案 A（底栏合一）：Ctrl+G 定位状态栏页码输入框（FR-05）。原先由阅读视图内部
+        // A+C 方案 A（底栏合一）：定位状态栏页码输入框（FR-05）。原先由阅读视图内部
         // 的页码框处理，输入框已移到状态栏，故改在窗口级拦截。
-        if (e.Key == Key.G && Keyboard.Modifiers == ModifierKeys.Control
+        // V4 T12：手势取自注册表（默认 Ctrl+G，可自定义）。
+        if (MatchesShortcut(ShortcutRegistry.GoToPage, e.Key, Keyboard.Modifiers)
             && !StatusJumpBox.IsKeyboardFocused)
         {
             e.Handled = true;

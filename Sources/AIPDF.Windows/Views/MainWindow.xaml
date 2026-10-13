@@ -24,15 +24,9 @@
     </Window.DataContext>
 
     <Window.InputBindings>
-        <!-- Ctrl+F 全文搜索入口（FR-09；T8 接管前仅事件桩）+ Ctrl+W 关闭当前标签（FR-08） -->
-        <KeyBinding Gesture="Ctrl+F" Command="{x:Static views:MainWindow.FullTextSearchCommand}" />
-        <KeyBinding Gesture="Ctrl+W" Command="{x:Static views:MainWindow.CloseActiveTabCommand}" />
-        <!-- V3 T6：Ctrl+P 打印入口（FR-30）；CanExecute 由门禁驱动，加载中/未解锁自动禁用（AC-30.2） -->
-        <KeyBinding Gesture="Ctrl+P" Command="{x:Static views:MainWindow.PrintCommand}" />
-        <!-- V4 T1：Ctrl+B 收藏当前页（PRD AC-04.1）；仅在文档标签激活时生效，工具标签下不误加到上一份文档 -->
-        <KeyBinding Gesture="Ctrl+B" Command="{x:Static views:MainWindow.AddBookmarkCommand}" />
-        <!-- V4 T6：Ctrl+K 命令面板（对标 SumatraPDF；33 工具 + 阅读操作 + 设置的统一入口） -->
-        <KeyBinding Gesture="Ctrl+K" Command="{x:Static views:MainWindow.CommandPaletteCommand}" />
+        <!-- V4 T12：快捷键改为**动态注册**（`ApplyShortcuts()` 按 SettingsStore.Shortcuts 覆盖 +
+        ShortcutRegistry 默认值构建），故此处不再硬编码 KeyBinding。
+        Ctrl+G 仍走窗口级代码分支（要判断页码框是否已聚焦），其手势同样取自注册表。 -->
     </Window.InputBindings>
     <Window.CommandBindings>
         <CommandBinding Command="{x:Static views:MainWindow.FullTextSearchCommand}"

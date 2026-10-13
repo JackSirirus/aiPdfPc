@@ -139,6 +139,14 @@ public sealed class AppSettings
     [JsonPropertyName("defaultRenderDpi")]
     public double DefaultRenderDpi { get; set; } = RenderDpiDefault;
 
+    /// <summary>
+    /// V4 T12：快捷键覆盖（动作 Id → 手势字符串，如 <c>print → Ctrl+Shift+P</c>）。
+    /// 缺省空 = 全部用默认手势；未知动作 Id 与非法手势在 <see cref="Normalize"/> 中剔除
+    /// （手改 settings.json 不得让应用崩，也不得丢默认快捷键）。
+    /// </summary>
+    [JsonPropertyName("shortcuts")]
+    public Dictionary<string, string> Shortcuts { get; set; } = [];
+
     // ------------------------------------------------------------------ v1.1 云端翻译同意（决策 #14/#21）
 
     /// <summary>
@@ -357,6 +365,8 @@ public sealed class SettingsStore
         settings.PrintDpi = NormalizePrintDpi(settings.PrintDpi);
         settings.DefaultOutputDir = NormalizeOutputDir(settings.DefaultOutputDir);
         settings.DefaultRenderDpi = NormalizeRenderDpi(settings.DefaultRenderDpi);
+        // V4 T12：剔除未知动作 Id 与非法手势（含「裸字母键」），避免手改配置导致崩或丢默认
+        settings.Shortcuts = ShortcutRegistry.NormalizeOverrides(settings.Shortcuts);
         settings.TranslationConsents = NormalizeConsents(settings.TranslationConsents);
         settings.TranslationProviders = NormalizeTranslationProviders(settings.TranslationProviders);
         settings.TranslationDefaultSourceLanguage = NormalizeTranslationLanguage(
