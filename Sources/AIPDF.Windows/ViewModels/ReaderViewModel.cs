@@ -162,10 +162,10 @@ public partial class ReaderPageItemViewModel : ObservableObject
     }
 
     /// <summary>在途渲染请求的规格（dpi, zoomPct）；结果到达时规格不匹配即丢弃（无取消 API 的适配）。</summary>
-    internal (int Dpi, int ZoomPct)? PendingKey { get; set; }
+    internal (int Dpi, int ZoomPct, ColorInversionMode Mode)? PendingKey { get; set; }
 
     /// <summary>当前位图对应的渲染规格。</summary>
-    internal (int Dpi, int ZoomPct)? RenderedKey { get; set; }
+    internal (int Dpi, int ZoomPct, ColorInversionMode Mode)? RenderedKey { get; set; }
 
     // ------------------------------------------------------------------ 批注（V2 T1）
 
@@ -412,7 +412,7 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     private readonly PdfiumRenderService? _injectedService;
     private PdfiumRenderService? _service;
     private readonly bool _ownsService;
-    private readonly ConcurrentDictionary<int, (int Dpi, int ZoomPct)> _inFlight = new();
+    private readonly ConcurrentDictionary<int, (int Dpi, int ZoomPct, ColorInversionMode Mode)> _inFlight = new();
     private readonly SynchronizationContext? _syncContext = SynchronizationContext.Current;
 
     // ---- 选区文本命中（T2 H-5）：惰性打开的独立文本层句柄 ----
@@ -563,6 +563,51 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
     /// 写回，保存时由引擎的 Delete+Add 完成更新。
     /// </summary>
     public AnnotationPropertiesViewModel Properties { get; } = new();
+
+    // ---- V4 T13：阅读配色（原样 / 反色 / 智能反色）----
+
+    /// <summary>
+    /// 阅读配色模式。变更**即时生效**：清空各页渲染规格并立即重新请求（渲染缓存键含模式，
+    /// 故新模式下会真正重渲，而不是命中旧模式的位图）。
+    /// **打印 / 导出路径不经此属性**，始终用 <see cref="ColorInversionMode.Off"/>。
+    /// </summary>
+    [ObservableProperty]
+    private ColorInversionMode _colorInversion = ColorInversionMode.Off;
+
+    /// <summary>配色模式文案（状态栏 / 命令面板显示）。</summary>
+    public string ColorInversionLabel => ColorInversion switch
+    {
+        ColorInversionMode.Invert => ReaderStrings.ColorInvertOn,
+        ColorInversionMode.SmartInvert => ReaderStrings.ColorSmartInvertOn,
+        _ => ReaderStrings.ColorInvertOff,
+    };
+
+    /// <summary>循环切换：原样 → 智能反色 → 反色 → 原样。</summary>
+    public void CycleColorInversion()
+        => ColorInversion = ColorInversion switch
+        {
+            ColorInversionMode.Off => ColorInversionMode.SmartInvert,
+            ColorInversionMode.SmartInvert => ColorInversionMode.Invert,
+            _ => ColorInversionMode.Off,
+        };
+
+    partial void OnColorInversionChanged(ColorInversionMode value)
+    {
+        OnPropertyChanged(nameof(ColorInversionLabel));
+        if (!_hasLayout) return;
+
+        // 布局不变，但每页位图必须作废并重渲（在途请求同样作废，避免旧模式结果被绑定）
+        _inFlight.Clear();
+        foreach (var page in Pages)
+        {
+            page.Bitmap = null;
+            page.RenderedKey = null;
+            page.PendingKey = null;
+            page.IsRendering = false;
+        }
+
+        UpdateViewportCore(_scrollTop);
+    }
 
     /// <summary>可视区两侧缓冲页数。</summary>
     public int BufferPages { get; }
@@ -1259,7 +1304,8 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
             Exception? failure = null;
             try
             {
-                bitmap = await service.RenderPageAsync(docId, page.Index, key.Dpi, key.ZoomPct).ConfigureAwait(false);
+                bitmap = await service.RenderPageAsync(docId, page.Index, key.Dpi, key.ZoomPct, key.Mode)
+                    .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -1291,8 +1337,14 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         });
     }
 
-    private (int Dpi, int ZoomPct) CurrentRenderKey()
-        => ((int)PageLayoutCalculator.DpiForZoom(ZoomPercent, RenderBaseDpi), (int)Math.Round(ZoomPercent));
+    /// <summary>
+    /// 当前渲染规格。**配色模式必须进键**（V4 T13）：否则切换夜间模式时，在途结果会因
+    /// 「规格相同」被绑定成白底位图，或反过来。
+    /// </summary>
+    private (int Dpi, int ZoomPct, ColorInversionMode Mode) CurrentRenderKey()
+        => ((int)PageLayoutCalculator.DpiForZoom(ZoomPercent, RenderBaseDpi),
+            (int)Math.Round(ZoomPercent),
+            ColorInversion);
 
     /// <summary>渲染结果回传 UI 线程（构造时捕获同步上下文；测试环境无上下文时内联）。</summary>
     private void Marshal(Action action)

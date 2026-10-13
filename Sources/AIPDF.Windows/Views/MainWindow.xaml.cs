@@ -2487,9 +2487,30 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             () => _ = ExportAnnotationsAsync(ExportAnnotationsService.FormatXfdf)),
         new("reader.exportSummary", ReaderStrings.ExportSummaryLabel, ["export", "summary", "daochu", "dc"],
             () => _ = ExportAnnotationsAsync(ExportAnnotationsService.FormatSummary)),
+        // V4 T13：阅读配色循环（原色 → 智能反色 → 反色）
+        new("reader.colorinvert", ReaderStrings.ColorInvertCycleLabel, ["invert", "night", "fause", "fs", "yetian", "yt"],
+            () => CycleColorInversion()),
     ];
 
     // ---- V4 T11：批注导出（XFDF / 摘要 PDF）----
+
+    // ---- V4 T13：阅读配色（原色 / 智能反色 / 反色）----
+
+    /// <summary>
+    /// 循环切换当前文档的阅读配色并在状态栏提示。**只影响屏幕渲染**：
+    /// 打印 / 导出走独立渲染调用（默认 <see cref="ColorInversionMode.Off"/>），不会带上反色。
+    /// </summary>
+    private void CycleColorInversion()
+    {
+        var viewModel = ActiveReaderState()?.ViewModel;
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        viewModel.CycleColorInversion();
+        SetStatusText(viewModel.ColorInversionLabel);
+    }
 
     private ExportAnnotationsService? _exportAnnotations;
 

@@ -166,8 +166,9 @@ public sealed class PdfiumRenderService : IDisposable
         public uint Permissions;
         public PageSize[] PageSizes = null!;    // 打开时一次解析
         public int[] PageRotations = null!;     // /Rotate 度数（0/90/180/270），打开时一次解析（M-11 判定用）
-        public readonly Dictionary<(int Page, int Dpi, int ZoomPct), BitmapSource> Cache = new();
-        public LinkedList<(int Page, int Dpi, int ZoomPct)> Lru = new();
+        // V4 T13：缓存键含配色模式——否则切夜间模式会命中白底位图（反之亦然）。
+        public readonly Dictionary<(int Page, int Dpi, int ZoomPct, ColorInversionMode Mode), BitmapSource> Cache = new();
+        public LinkedList<(int Page, int Dpi, int ZoomPct, ColorInversionMode Mode)> Lru = new();
         public long CachedBytes;
         public bool Disposed;
 
@@ -591,14 +592,19 @@ public sealed class PdfiumRenderService : IDisposable
     /// <param name="pageIndex">页索引（0 起）。</param>
     /// <param name="dpi">渲染 DPI（如 96/150）。</param>
     /// <param name="zoomPct">缩放百分比（100 = 原大），与 dpi 相乘决定像素尺寸。</param>
-    public Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi = 96, int zoomPct = 100)
-        => RenderPageAsync(docId, pageIndex, dpi, zoomPct, ScreenRenderFlags);
+    public Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi = 96, int zoomPct = 100,
+        ColorInversionMode colorMode = ColorInversionMode.Off)
+        => RenderPageAsync(docId, pageIndex, dpi, zoomPct, ScreenRenderFlags, colorMode);
 
     /// <summary>
     /// 内部渲染入口：显式旗标（测试对照与未来打印路径）。仅 <see cref="ScreenRenderFlags"/> 走 LRU 缓存，
     /// 其余旗标不缓存（避免打印语义/基线对照结果污染屏幕位图缓存）。
+    ///
+    /// V4 T13：<paramref name="colorMode"/> 参与**缓存键**——否则切到夜间模式会命中白底位图
+    /// （或切回白天命中反色位图）。**打印 / 导出路径必须传 <see cref="ColorInversionMode.Off"/>**。
     /// </summary>
-    internal Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi, int zoomPct, int renderFlags)
+    internal Task<BitmapSource> RenderPageAsync(string docId, int pageIndex, double dpi, int zoomPct, int renderFlags,
+        ColorInversionMode colorMode = ColorInversionMode.Off)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(docId);
         DocumentEntry entry = GetEntryOrThrow(docId);
@@ -607,7 +613,7 @@ public sealed class PdfiumRenderService : IDisposable
         if (dpi <= 0) throw new ArgumentOutOfRangeException(nameof(dpi));
         if (zoomPct <= 0) throw new ArgumentOutOfRangeException(nameof(zoomPct));
 
-        return Task.Run(() => RenderPageCore(entry, pageIndex, dpi, zoomPct, renderFlags));
+        return Task.Run(() => RenderPageCore(entry, pageIndex, dpi, zoomPct, renderFlags, colorMode));
     }
 
     // ------------------------------------------------------------------ 预览表单填充（T2 / Q5）
@@ -791,14 +797,16 @@ public sealed class PdfiumRenderService : IDisposable
         }
     }
 
-    private BitmapSource RenderPageCore(DocumentEntry entry, int pageIndex, double dpi, int zoomPct, int renderFlags)
+    private BitmapSource RenderPageCore(DocumentEntry entry, int pageIndex, double dpi, int zoomPct, int renderFlags,
+        ColorInversionMode colorMode)
     {
         // BLK-3：进入时登记在途计数；Close-first 重载等待归零后才关闭旧句柄。
         EnterEntry(entry);
         try
         {
             RenderCoreStartedForTest?.Invoke();
-            var key = (pageIndex, (int)Math.Round(dpi), zoomPct);
+            // V4 T13：配色模式进缓存键（漏了会串色：夜间模式拿到白底位图）
+            var key = (pageIndex, (int)Math.Round(dpi), zoomPct, colorMode);
             var cacheable = renderFlags == ScreenRenderFlags;
 
             // 缓存查询（状态锁，非 PDFium 锁）
@@ -816,7 +824,10 @@ public sealed class PdfiumRenderService : IDisposable
                 }
             }
 
-            var bitmap = RenderBitmap(entry, pageIndex, dpi, zoomPct, renderFlags, out var clamped);
+            var rendered = RenderBitmap(entry, pageIndex, dpi, zoomPct, renderFlags, out var clamped);
+            // V4 T13：配色变换在原生渲染之后、缓存写入之前完成（后台线程，冻结位图）。
+            // Off 模式原样返回（不复制、不额外分配）。
+            var bitmap = ColorInversionProcessor.Apply(rendered, colorMode);
 
             if (cacheable)
             {
@@ -987,7 +998,7 @@ public sealed class PdfiumRenderService : IDisposable
     /// <summary>限幅触发次数（可观测）。</summary>
     public int ClampedCount => Interlocked.CompareExchange(ref _clampedCount, 0, 0);
 
-    private static void TouchLru(DocumentEntry entry, (int Page, int Dpi, int ZoomPct) key)
+    private static void TouchLru(DocumentEntry entry, (int Page, int Dpi, int ZoomPct, ColorInversionMode Mode) key)
     {
         // 调用方持有 _stateLock
         if (entry.Lru.Remove(key)) entry.Lru.AddLast(key);

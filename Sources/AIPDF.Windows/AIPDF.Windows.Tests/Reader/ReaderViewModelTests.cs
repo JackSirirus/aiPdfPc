@@ -188,22 +188,48 @@ public sealed class ReaderViewModelTests
     }
 
     [Fact]
+    public async Task ColorInversionChange_RerendersAtNewMode_Immediately()
+    {
+        // V4 T13 验收②：切换配色即时生效——页位图必须按新模式重渲（缓存键含模式，不能命中旧位图）。
+        using var vm = new ReaderViewModel(new PdfiumRenderService());
+        vm.LoadDocument(Corpus.Mixed100);
+        vm.UpdateViewport(0, 600, 800);
+        await WaitUntilAsync(() => vm.Pages[0].IsRendered, "页 0 首次渲染");
+        Assert.Equal(ColorInversionMode.Off, vm.Pages[0].RenderedKey?.Mode);
+
+        vm.CycleColorInversion();   // 原色 → 智能反色
+        Assert.Equal(ColorInversionMode.SmartInvert, vm.ColorInversion);
+        await WaitUntilAsync(
+            () => vm.Pages[0].RenderedKey?.Mode == ColorInversionMode.SmartInvert, "切到智能反色应重渲");
+
+        vm.CycleColorInversion();   // → 反色
+        Assert.Equal(ColorInversionMode.Invert, vm.ColorInversion);
+        await WaitUntilAsync(
+            () => vm.Pages[0].RenderedKey?.Mode == ColorInversionMode.Invert, "切到反色应重渲");
+
+        vm.CycleColorInversion();   // → 原色
+        Assert.Equal(ColorInversionMode.Off, vm.ColorInversion);
+        await WaitUntilAsync(
+            () => vm.Pages[0].RenderedKey?.Mode == ColorInversionMode.Off, "切回原色应重渲");
+    }
+
+    [Fact]
     public async Task ZoomChange_RerendersAtHighDpi_WhenAtLeast150Percent()
     {
         using var vm = new ReaderViewModel(new PdfiumRenderService());
         vm.LoadDocument(Corpus.Mixed100);
         vm.UpdateViewport(0, 600, 800);
         await WaitUntilAsync(() => vm.Pages[0].IsRendered, "页 0 首次渲染（96dpi）");
-        Assert.Equal((96, 100), vm.Pages[0].RenderedKey);
+        Assert.Equal((96, 100, ColorInversionMode.Off), vm.Pages[0].RenderedKey);
 
         // 200% ≥ 150% → 150dpi 重渲染（规格键含 dpi）
         vm.ZoomPercent = 200;
-        await WaitUntilAsync(() => vm.Pages[0].RenderedKey == (150, 200), "200% 应触发 150dpi 重渲染");
+        await WaitUntilAsync(() => vm.Pages[0].RenderedKey == (150, 200, ColorInversionMode.Off), "200% 应触发 150dpi 重渲染");
         Assert.NotNull(vm.Pages[0].Bitmap);
 
         // 回到 100% → 96dpi
         vm.ZoomPercent = 100;
-        await WaitUntilAsync(() => vm.Pages[0].RenderedKey == (96, 100), "100% 应回到 96dpi");
+        await WaitUntilAsync(() => vm.Pages[0].RenderedKey == (96, 100, ColorInversionMode.Off), "100% 应回到 96dpi");
     }
 
     [Fact]

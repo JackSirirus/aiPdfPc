@@ -145,4 +145,10 @@ public static class ReaderStrings
     public const string ExportNoDocument = "请先打开一篇 PDF 文档再导出批注。";
     public const string ExportFailed = "批注导出失败（请检查输出目录与文档状态）。";
     public const string ExportDone = "批注已导出到";
+
+    // ---- V4 T13 阅读配色（smart 反色）----
+    public const string ColorInvertOff = "原色";
+    public const string ColorInvertOn = "反色";
+    public const string ColorSmartInvertOn = "智能反色";
+    public const string ColorInvertCycleLabel = "切换阅读配色（原色 / 智能反色 / 反色）";
 }
