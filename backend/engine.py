@@ -2139,6 +2139,189 @@ def list_annotations_request(request):
         doc.close()
 
 
+# XFDF 元素名（Adobe 规范用全小写；V4 T11）。
+XFDF_SUBTYPE_ELEMENTS = {
+    "/Highlight": "highlight",
+    "/Underline": "underline",
+    "/StrikeOut": "strikeout",
+    "/Squiggly": "squiggly",
+    "/FreeText": "freetext",
+    "/Text": "text",
+    "/Ink": "ink",
+    "/Square": "square",
+    "/Circle": "circle",
+    "/Line": "line",
+    "/Polygon": "polygon",
+    "/PolyLine": "polyline",
+    "/Stamp": "stamp",
+}
+
+
+def _xfdf_color(raw):
+    """PDF `/C` 数组（形如 `[1 0 0]`）→ `#RRGGBB`；无法解析返回 None。"""
+    if not raw:
+        return None
+    parts = str(raw).strip().strip("[]").split()
+    if len(parts) < 3:
+        return None
+    try:
+        values = [max(0, min(255, round(float(value) * 255))) for value in parts[:3]]
+    except (TypeError, ValueError):
+        return None
+    return "#%02X%02X%02X" % tuple(values)
+
+
+def _xfdf_rect(raw):
+    """行内矩形（列表或字符串）→ XFDF 的 `x0,y0,x1,y1`。"""
+    if isinstance(raw, (list, tuple)) and len(raw) == 4:
+        try:
+            return ",".join(f"{float(value):.2f}" for value in raw)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(raw, str):
+        parts = raw.strip().strip("[]").split()
+        if len(parts) == 4:
+            return ",".join(parts)
+    return None
+
+
+def export_annotations_xfdf(rows, source_path):
+    """自写 XFDF（V4 T11）：字段含页 / 类型 / 矩形 / 颜色 / 稳定名 / 作者 / 日期 / 内容。
+
+    name 取**引擎稳定名**（私有 `/Name`）优先——标准 `/NM` 是 PyMuPDF 自动名（`fitz-A0`），
+    导出它没有任何意义。`/IRT` 不在 XFDF 规范内，故不导出（回复关系仍保留在 PDF 里）。
+    """
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<xfdf xmlns="http://ns.adobe.com/xfdf/" xml:space="preserve">',
+        f'  <f href="{html.escape(Path(source_path).name, quote=True)}"/>',
+        "  <annots>",
+    ]
+    exported = 0
+    for row in rows:
+        element = XFDF_SUBTYPE_ELEMENTS.get(str(row.get("subtype") or ""))
+        if element is None:
+            continue
+        attrs = [f'page="{int(row.get("page", 0))}"']
+        rect = _xfdf_rect(row.get("rect"))
+        if rect:
+            attrs.append(f'rect="{rect}"')
+        color = _xfdf_color(row.get("color"))
+        if color:
+            attrs.append(f'color="{color}"')
+        # 名字取**引擎稳定名**（PyMuPDF 私有 /Name，如 "h1"）优先：标准 /NM 存的是 PyMuPDF
+        # 自动名（如 "fitz-A0"），跨阅读器毫无意义；导出稳定名对本引擎可回读、对其它阅读器
+        # 也才是有意义的注释名。
+        name = row.get("privateName") or row.get("name")
+        if name:
+            attrs.append(f'name="{html.escape(str(name), quote=True)}"')
+        if row.get("author"):
+            attrs.append(f'title="{html.escape(str(row["author"]), quote=True)}"')
+        if row.get("modified"):
+            attrs.append(f'date="{html.escape(str(row["modified"]), quote=True)}"')
+        content = row.get("content")
+        body = f'<contents>{html.escape(str(content))}</contents>' if content else ""
+        lines.append(f'    <{element} {" ".join(attrs)}>{body}</{element}>')
+        exported += 1
+    lines += ["  </annots>", "</xfdf>", ""]
+    return "\n".join(lines), exported
+
+
+def build_annotations_summary_pdf(rows, source_name, target):
+    """生成批注摘要 PDF（V4 T11）：按页分组，逐条列出类型 / 作者 / 颜色 / 内容。"""
+    summary = fitz.open()
+    page = summary.new_page(width=595, height=842)
+    margin = 48.0
+    y = margin
+    line_height = 15.0
+
+    def newline(step=line_height):
+        nonlocal page, y
+        y += step
+        if y > 842 - margin:
+            page = summary.new_page(width=595, height=842)
+            y = margin
+
+    def write(text, size=10, bold=False, color=(0, 0, 0)):
+        nonlocal y
+        page.insert_text((margin, y), text, fontsize=size,
+                         fontname="hebo" if bold else "helv", color=color)
+        newline(size + 5)
+
+    write(f"Annotation summary — {source_name}", 14, bold=True)
+    write(f"Total: {len(rows)} annotation(s)", 10, color=(0.4, 0.4, 0.4))
+    newline(6)
+
+    current_page = None
+    for row in rows:
+        page_index = int(row.get("page", 0))
+        if page_index != current_page:
+            current_page = page_index
+            newline(4)
+            write(f"Page {page_index + 1}", 12, bold=True, color=(0.19, 0.35, 0.85))
+        subtype = str(row.get("subtype") or "?").lstrip("/")
+        author = row.get("author") or ""
+        color = _xfdf_color(row.get("color")) or ""
+        head = f"[{subtype}] {author} {color}".strip()
+        write(head, 10, color=(0.3, 0.3, 0.3))
+        content = str(row.get("content") or "").strip()
+        if content:
+            for chunk in [content[i:i + 78] for i in range(0, len(content), 78)]:
+                write("    " + chunk)
+
+    summary.save(str(target), garbage=4, deflate=True, encryption=fitz.PDF_ENCRYPT_NONE)
+    summary.close()
+
+
+def export_annotations_request(request):
+    """V4 T11：导出批注（XFDF / 摘要 PDF）。
+
+    **只读源文件**（产物写入新任务目录）；导出源是**文件内全部注释**（经 _page_annotation_rows
+    读回），不是客户端内存集合——否则导出「其它阅读器标注过的 PDF」会得到空结果。
+    不进 BY_ID：它是阅读器内的批注操作，与 save_annotations 同类（工具目录仍 33）。
+    """
+    files = request.get("files") or []
+    if len(files) != 1:
+        raise UserError("批注导出一次处理一个文件。")
+    path = Path(str(files[0])).expanduser()
+    if not path.is_file():
+        raise UserError(f"文件不存在：{path.name}")
+    if path.suffix.lower() != ".pdf":
+        raise UserError("批注导出仅支持 PDF 文件。")
+
+    options = request.get("options") or {}
+    password = str(options.get("password") or "")
+    wanted_format = str(options.get("format") or "both").strip().lower()
+    if wanted_format not in ("xfdf", "summary", "both"):
+        raise UserError("批注导出格式不正确。")
+
+    parent = Path(request.get("outputDir", "")).expanduser()
+    if not parent.is_absolute() or not parent.is_dir():
+        raise UserError("请选择有效的输出文件夹。")
+    out = parent / ("AIPDF-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6])
+    out.mkdir(mode=0o700)
+
+    doc = open_pdf(str(path), password)
+    try:
+        rows = []
+        for index in range(len(doc)):
+            rows.extend(_page_annotation_rows(doc, doc[index], index))
+
+        outputs = []
+        if wanted_format in ("xfdf", "both"):
+            text, exported = export_annotations_xfdf(rows, path)
+            target = out / f"{path.stem}-annotations.xfdf"
+            target.write_text(text, encoding="utf-8")
+            outputs.append(str(target))
+        if wanted_format in ("summary", "both"):
+            target = out / f"{path.stem}-annotations-summary.pdf"
+            build_annotations_summary_pdf(rows, path.name, target)
+            outputs.append(str(target))
+        return {"ok": True, "outputs": outputs, "annotationCount": len(rows)}
+    finally:
+        doc.close()
+
+
 def dispatch(request):
     operation=request.get("operation", "")
     if operation=="health": return health()
@@ -2151,6 +2334,9 @@ def dispatch(request):
     # V4 T9a：批注读回是**只读** op（不写回源文件），必须与写路径分开——绝不可放进
     # ANNOTATION_OPERATIONS：那会走 save_annotations_request 的就地写回并覆盖源文件。
     if operation=="list_annotations": return list_annotations_request(request)
+    # V4 T11：批注导出（XFDF / 摘要 PDF）同样只读源文件、产物进新任务目录；
+    # 不进 BY_ID（阅读器内的批注操作，与 save_annotations 同类，工具目录仍 33）。
+    if operation=="export_annotations": return export_annotations_request(request)
     # 批注保存就地写回原文件，无输出目录且非 catalog 工具，必须在 BY_ID/outputDir
     # 校验之前处理；其内部自建 file/扩展名/multiple 等价校验（M-1）。
     if operation in ANNOTATION_OPERATIONS: return save_annotations_request(request,operation)

@@ -685,6 +685,79 @@ class EngineTests(unittest.TestCase):
             self._save_annotations(path,[{"action":"add","id":"z","kind":"reply","page":0,
                                           "parent":added["annotationHandles"]["h1"],"text":"   "}])
 
+    def test_export_annotations_xfdf_and_summary(self):
+        """V4 T11：导出 XFDF + 摘要 PDF；导出源=文件内全部注释；**源文件不变**。"""
+        path=self._annotation_path("annot-export.pdf")
+        self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"color":"#FF0000","rect":[50,100,300,130]},
+            {"action":"add","id":"ul1","kind":"underline","page":1,"color":"#00FF00","quads":[[50,100,300,130]]},
+            {"action":"add","id":"n1","kind":"note","page":2,"rect":[50,100,300,130],"text":"导出笔记"},
+        ])
+        before=path.read_bytes()
+        outdir=self.root/"export-out"
+        outdir.mkdir(exist_ok=True)
+
+        result=engine.dispatch({"operation":"export_annotations","files":[str(path)],
+                                "options":{},"outputDir":str(outdir)})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["annotationCount"],4)      # 笔记 = 高亮 + FreeText
+        self.assertEqual(len(result["outputs"]),2)         # xfdf + 摘要 PDF
+
+        xfdf=Path([o for o in result["outputs"] if o.endswith(".xfdf")][0])
+        summary=Path([o for o in result["outputs"] if o.endswith(".pdf")][0])
+        self.assertTrue(xfdf.is_file());self.assertTrue(summary.is_file())
+
+        text=xfdf.read_text(encoding="utf-8")
+        self.assertIn("<highlight",text);self.assertIn("<underline",text);self.assertIn("<freetext",text)
+        self.assertIn('color="#FF0000"',text)              # /C → #RRGGBB
+        self.assertIn('name="h1"',text)                    # 稳定名
+        self.assertIn("导出笔记",text)
+        self.assertIn('page="2"',text)
+        with fitz.open(str(summary)) as doc:
+            self.assertGreaterEqual(doc.page_count,1)
+
+        # **只读**：导出不得改动源文件（源文档只读约定）
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_export_annotations_includes_external_annotations(self):
+        """V4 T11 核心要求：导出源是**文件内全部注释**，不是客户端内存集合——
+        其它阅读器（此处用 PyMuPDF 直接写入模拟）标注过的 PDF 也必须导出得出来。"""
+        path=self.root/"annot-export-external.pdf"
+        doc=fitz.open();page=doc.new_page(width=595,height=842)
+        page.insert_text((72,120),"external annotation host",fontsize=12)
+        annot=page.add_highlight_annot(quads=[page.search_for("external annotation host")[0]])
+        annot.set_info(content="第三方标注",title="Acrobat")
+        annot.set_name("EXT-1")
+        annot.update()
+        doc.save(str(path));doc.close()
+
+        outdir=self.root/"export-out-ext";outdir.mkdir(exist_ok=True)
+        result=engine.dispatch({"operation":"export_annotations","files":[str(path)],
+                                "options":{"format":"xfdf"},"outputDir":str(outdir)})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["annotationCount"],1)
+        text=Path(result["outputs"][0]).read_text(encoding="utf-8")
+        self.assertIn("<highlight",text)
+        self.assertIn("第三方标注",text)
+        self.assertIn('title="Acrobat"',text)
+
+    def test_export_annotations_validation(self):
+        """V4 T11：多文件 / 缺输出目录 / 非法格式都必须显式报错。"""
+        path=self._annotation_path("annot-export-bad.pdf")
+        with self.assertRaises(engine.UserError):
+            engine.dispatch({"operation":"export_annotations","files":[str(path),str(path)],
+                             "options":{},"outputDir":str(self.root)})
+        with self.assertRaises(engine.UserError):
+            engine.dispatch({"operation":"export_annotations","files":[str(path)],"options":{}})
+        with self.assertRaises(engine.UserError):
+            engine.dispatch({"operation":"export_annotations","files":[str(path)],
+                             "options":{"format":"docx"},"outputDir":str(self.root)})
+
+    def test_export_annotations_stays_out_of_catalog(self):
+        """V4 T11：export_annotations 不进 BY_ID（工具目录仍 33）。"""
+        self.assertNotIn("export_annotations",engine.BY_ID)
+        self.assertEqual(len(engine.BY_ID),33)
+
     def test_annotation_operations_stay_out_of_catalog(self):
         # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
         self.assertEqual(len(engine.BY_ID),33)

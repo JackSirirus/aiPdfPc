@@ -137,4 +137,12 @@ public static class ReaderStrings
     public const string PropertiesReplyAdd = "回复";
     public const string ReplyAdded = "已添加回复";
     public const string ReplyFailed = "回复失败：找不到父批注。";
+
+    // ---- V4 T11 批注导出（XFDF / 摘要 PDF）----
+    public const string ExportXfdfLabel = "导出批注（XFDF）";
+    public const string ExportSummaryLabel = "导出批注摘要 PDF";
+    public const string ExportPickFolder = "选择批注导出目录";
+    public const string ExportNoDocument = "请先打开一篇 PDF 文档再导出批注。";
+    public const string ExportFailed = "批注导出失败（请检查输出目录与文档状态）。";
+    public const string ExportDone = "批注已导出到";
 }

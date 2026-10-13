@@ -2482,7 +2482,58 @@ public partial class MainWindow : Window, ISessionRestoreTarget
             () => OnNewTabClick(this, new RoutedEventArgs())),
         new("reader.relock", "锁定文档", ["lock", "suoding", "sd"],
             () => OnStatusRelockClick(this, new RoutedEventArgs())),
+        // V4 T11：批注导出（只读源文件，产物进新任务目录）
+        new("reader.exportXfdf", ReaderStrings.ExportXfdfLabel, ["export", "xfdf", "daochu", "dc"],
+            () => _ = ExportAnnotationsAsync(ExportAnnotationsService.FormatXfdf)),
+        new("reader.exportSummary", ReaderStrings.ExportSummaryLabel, ["export", "summary", "daochu", "dc"],
+            () => _ = ExportAnnotationsAsync(ExportAnnotationsService.FormatSummary)),
     ];
+
+    // ---- V4 T11：批注导出（XFDF / 摘要 PDF）----
+
+    private ExportAnnotationsService? _exportAnnotations;
+
+    private ExportAnnotationsService EnsureExportAnnotations()
+    {
+        if (_exportAnnotations is not null) return _exportAnnotations;
+        var bridge = (DataContext as ViewModels.MainViewModel)?.Bridge ?? new Bridge.EngineBridge();
+        _exportAnnotations = new ExportAnnotationsService(bridge);
+        return _exportAnnotations;
+    }
+
+    /// <summary>
+    /// V4 T11：导出当前文档的批注。让用户选输出目录；**导出源是文件内全部注释**（引擎读回），
+    /// 因此其它阅读器标注过的 PDF 也能导出；导出只读源文件。
+    /// </summary>
+    private async Task ExportAnnotationsAsync(string format)
+    {
+        if (ActiveDocumentPath() is not { } path)
+        {
+            SetStatusText(ReaderStrings.ExportNoDocument);
+            return;
+        }
+
+        var dialog = new Microsoft.Win32.OpenFolderDialog
+        {
+            Title = ReaderStrings.ExportPickFolder,
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var outputs = await EnsureExportAnnotations()
+            .ExportAsync(path, _credentials.Get(path), dialog.FolderName, format)
+            .ConfigureAwait(true);
+        if (outputs.Count == 0)
+        {
+            SetStatusText(ReaderStrings.ExportFailed);
+            return;
+        }
+
+        var folder = System.IO.Path.GetDirectoryName(outputs[0]) ?? dialog.FolderName;
+        SetStatusText($"{ReaderStrings.ExportDone} {folder}");
+    }
 
     /// <summary>设置与关于。</summary>
     private IReadOnlyList<Services.CommandPaletteOperation> SettingsOperations() =>
