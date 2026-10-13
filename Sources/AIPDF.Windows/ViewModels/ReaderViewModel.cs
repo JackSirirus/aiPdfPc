@@ -475,6 +475,86 @@ public partial class ReaderViewModel : ObservableObject, IDisposable
         // V4 T9：属性面板的改动走**既有保存链路**（记录替换 → 防抖 + 快速通道 → 引擎 Delete+Add），
         // 因此不需要新增任何引擎动作类型。
         Properties.Changed += (_, record) => UpdateAnnotation(record);
+        // V4 T10：回复同样进脏记录集合，保存时由引擎写标准 /IRT 关联键。
+        Properties.ReplyRequested += (_, request) => AddReply(request.ParentId, request.Text);
+    }
+
+    // ---- V4 T10：批注回复线程 ----
+
+    /// <summary>
+    /// V4 T9/T10：把选中批注交给属性面板，并刷新其回复线程。
+    /// 选中项既可能是本次会话新增（脏记录），也可能是从文件读回的已内嵌批注。
+    /// </summary>
+    public void SelectAnnotationForProperties(AnnotationRecord? record)
+    {
+        Properties.Select(record);
+        Properties.SetReplies(record is null ? [] : CollectReplies(record.Id));
+    }
+
+    /// <summary>V4 T10：某批注的全部回复（本次会话新增 + 文件读回，按存放顺序）。</summary>
+    public IReadOnlyList<AnnotationRecord> CollectReplies(string parentId)
+    {
+        var list = new List<AnnotationRecord>();
+        foreach (var record in GetAllRecords())
+        {
+            if (string.Equals(record.ParentId, parentId, StringComparison.Ordinal))
+            {
+                list.Add(record);
+            }
+        }
+
+        foreach (var record in EmbeddedRecords)
+        {
+            if (string.Equals(record.ParentId, parentId, StringComparison.Ordinal))
+            {
+                list.Add(record);
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>
+    /// V4 T10：新增回复。进**脏记录集合** → 走既有保存链路；引擎侧生成 FreeText +
+    /// 标准 `/IRT`（指向父注释 xref），因此其它阅读器也能读出回复关系。
+    /// 找不到父批注或内容为空返回 null。
+    /// </summary>
+    public AnnotationRecord? AddReply(string parentId, string text)
+    {
+        if (string.IsNullOrWhiteSpace(parentId) || string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        AnnotationRecord? parent = null;
+        foreach (var candidate in GetAllRecords())
+        {
+            if (string.Equals(candidate.Id, parentId, StringComparison.Ordinal)) { parent = candidate; break; }
+        }
+
+        if (parent is null)
+        {
+            foreach (var candidate in EmbeddedRecords)
+            {
+                if (string.Equals(candidate.Id, parentId, StringComparison.Ordinal)) { parent = candidate; break; }
+            }
+        }
+
+        if (parent is null || parent.PageIndex < 0 || parent.PageIndex >= Pages.Count)
+        {
+            return null;
+        }
+
+        // 贴在父批注右侧（引擎在未给位置时也会自行兜底）
+        var rect = new PdfRect(
+            parent.Rect.Right + 8, parent.Rect.Top, parent.Rect.Right + 168, parent.Rect.Top + 60);
+        var reply = AddAnnotation(AnnotationRecord.CreateReply(parent.PageIndex, rect, parentId, text.Trim()));
+        if (reply is not null)
+        {
+            Properties.SetReplies(CollectReplies(parentId));
+        }
+
+        return reply;
     }
 
     /// <summary>

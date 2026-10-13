@@ -584,8 +584,8 @@ public partial class ReaderView : UserControl
         if (overlay is null) { HideHover(); return; }
 
         var record = _viewModel.FindAnnotation(pageIndex, annotationId);
-        // V4 T9：把选中项交给属性面板（面板据此显示颜色/线宽/不透明度）
-        _viewModel.Properties.Select(record);
+        // V4 T9/T10：把选中项交给属性面板（含回复线程刷新）
+        _viewModel.SelectAnnotationForProperties(record);
         HoverEditButton.IsEnabled = record?.Kind == AnnotationKind.Note;
 
         _anchorElement = element;
@@ -640,8 +640,8 @@ public partial class ReaderView : UserControl
         CancelHideHover();
         _hoverAnnotationId = null;
         _hoverPageIndex = -1;
-        // V4 T9：清空属性面板的选中（面板随选中出现/消失）
-        _viewModel.Properties.Select(null);
+        // V4 T9/T10：清空属性面板的选中与回复线程（面板随选中出现/消失）
+        _viewModel.SelectAnnotationForProperties(null);
         if (_menu.Mode is MenuMode.HoverActions or MenuMode.ColorPalette)
         {
             _menu.Close();
@@ -1117,6 +1117,38 @@ public partial class ReaderView : UserControl
 
     private void OnPropertiesDismissClick(object sender, RoutedEventArgs e)
         => _viewModel.Properties.Dismiss();
+
+    // ---- V4 T10 回复线程 ----
+
+    private void OnReplyAddClick(object sender, RoutedEventArgs e) => SubmitReply();
+
+    private void OnReplyBoxKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        SubmitReply();
+    }
+
+    /// <summary>
+    /// 提交回复：交回属性面板 VM → 宿主创建记录（进脏记录集合，走既有保存链路；
+    /// 引擎写标准 /IRT，故其它阅读器也能读出回复关系）。
+    /// </summary>
+    private void SubmitReply()
+    {
+        var text = ReplyBox.Text;
+        if (string.IsNullOrWhiteSpace(text) || _viewModel.Properties.Record is null)
+        {
+            return;
+        }
+
+        _viewModel.Properties.RequestReply(text);
+        ReplyBox.Text = string.Empty;
+        ShowToast(ReaderStrings.ReplyAdded);
+    }
 
     private void CancelDrawing()
     {

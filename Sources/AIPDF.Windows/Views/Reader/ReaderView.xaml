@@ -792,6 +792,40 @@
                             <ComboBoxItem Content="{x:Static reader:ReaderStrings.PropertiesOpacity100}" Tag="1.0" />
                         </ComboBox>
                     </StackPanel>
+
+                    <!-- V4 T10：回复线程（/IRT 关联；读回的回复也会出现在这里） -->
+                    <Border Height="1" Margin="0,8,0,6" Background="{DynamicResource Brush.Border}" />
+                    <TextBlock Text="{x:Static reader:ReaderStrings.PropertiesReplies}"
+                               Style="{StaticResource FieldHint}" />
+                    <ItemsControl ItemsSource="{Binding Replies}" Margin="0,4,0,2">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource Brush.Surface}"
+                                        BorderBrush="{DynamicResource Brush.Border}"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Padding="6,4"
+                                        Margin="0,0,0,4">
+                                    <TextBlock Text="{Binding Note}"
+                                               TextWrapping="Wrap"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource Brush.TextSecondary}" />
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBox x:Name="ReplyBox"
+                             Height="26"
+                             Margin="0,4,0,4"
+                             VerticalContentAlignment="Center"
+                             ToolTip="{x:Static reader:ReaderStrings.PropertiesReplyPlaceholder}"
+                             KeyDown="OnReplyBoxKeyDown" />
+                    <Button Content="{x:Static reader:ReaderStrings.PropertiesReplyAdd}"
+                            Height="26"
+                            Padding="12,0"
+                            Cursor="Hand"
+                            HorizontalAlignment="Right"
+                            Click="OnReplyAddClick" />
                 </StackPanel>
             </Border>
 

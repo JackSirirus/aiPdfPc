@@ -130,4 +130,11 @@ public static class ReaderStrings
     public const string PropertiesOpacity50 = "50%";
     public const string PropertiesOpacity75 = "75%";
     public const string PropertiesOpacity100 = "100%";
+
+    // ---- V4 T10 批注回复线程 ----
+    public const string PropertiesReplies = "回复";
+    public const string PropertiesReplyPlaceholder = "输入回复内容（Enter 或点「回复」提交）";
+    public const string PropertiesReplyAdd = "回复";
+    public const string ReplyAdded = "已添加回复";
+    public const string ReplyFailed = "回复失败：找不到父批注。";
 }

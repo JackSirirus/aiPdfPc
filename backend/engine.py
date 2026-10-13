@@ -849,6 +849,9 @@ def apply_annotation_actions(doc, actions):
                 # V4 T4：预置文字图章或图片图章（图片走注释 appearance 流）。
                 annot = add_stamp_annot(page, action.get("rect"), stamp=action.get("stamp"),
                                         image=action.get("image"), color=color)
+            elif kind == "reply":
+                # V4 T10：回复 = FreeText + /IRT（标准键，指向父注释）。
+                annot = add_reply_annot(doc, page, action, color)
             else:
                 raise UserError("不支持的批注类型。")
             # 注释 /NM 名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
@@ -1998,6 +2001,40 @@ def process(operation, files, options, out):
         progress(f"正在处理文件 {i+1}/{len(files)}",i/len(files))
         outputs.extend(single_pdf(operation,path,options,out,i+1))
     return outputs
+
+
+def add_reply_annot(doc, page, action, color=(1, 1, 0.7)):
+    """添加回复注释（V4 T10）：FreeText + `/IRT` 指向父注释。
+
+    `/IRT` 是 PDF 标准键，PyMuPDF 1.28 原生支持（`Annot.set_irt_xref`）。S2 实测：写入后低层
+    `xref_get_key(xref, "IRT")` 可见 `"<父 xref> 0 R"`，因此**不需要 sidecar 降级**，其它阅读器
+    也能按标准读出回复关系。
+    """
+    parent_name = str(action.get("parent") or action.get("parentName") or "").strip()
+    if not parent_name:
+        raise UserError("回复批注缺少父批注。")
+    text = str(action.get("text") or "").strip()
+    if not text:
+        raise UserError("回复内容不能为空。")
+
+    parents = _find_annots(doc, {"name": parent_name})
+    if not parents:
+        raise UserError("找不到要回复的批注。")
+    parent_page, parent = parents[0]
+
+    rect = action.get("rect") or action.get("noteRect")
+    if rect is None:
+        # 未给位置：贴在父注释右侧（避免与父注释重叠）
+        base = parent.rect
+        rect = [base.x1 + 8, base.y0, base.x1 + 168, base.y0 + 60]
+
+    annot = add_freetext_annot(parent_page, rect, text, color)
+    try:
+        annot.set_irt_xref(parent.xref)
+    except Exception as error:  # noqa: BLE001 - 父注释不可用（已删除/坏对象）
+        raise UserError("回复关联失败（父批注不可用）。") from error
+    annot.update()
+    return annot
 
 
 def _annot_key(doc, xref, key):

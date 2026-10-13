@@ -7,10 +7,14 @@
 // → 引擎 Delete+Add），因此不新增任何引擎动作类型。
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using AIPDF.Windows.Annotations;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AIPDF.Windows.ViewModels;
+
+/// <summary>回复请求（V4 T10）：宿主据此创建回复记录并走既有保存链路。</summary>
+public sealed record AnnotationReplyRequest(string ParentId, string Text);
 
 /// <summary>批注属性（颜色 / 线宽 / 不透明度）。</summary>
 public sealed partial class AnnotationPropertiesViewModel : ObservableObject
@@ -51,6 +55,40 @@ public sealed partial class AnnotationPropertiesViewModel : ObservableObject
 
     /// <summary>属性已变更（宿主据此写回记录并走保存链路）。</summary>
     public event EventHandler<AnnotationRecord>? Changed;
+
+    // ---- V4 T10：回复线程 ----
+
+    /// <summary>当前选中批注的回复线程（按父 Id 过滤；保持宿主传入顺序）。</summary>
+    public ObservableCollection<AnnotationRecord> Replies { get; } = [];
+
+    /// <summary>是否有回复（UI 据此显示线程区）。</summary>
+    public bool HasReplies => Replies.Count > 0;
+
+    /// <summary>回复请求（宿主据此创建记录）。</summary>
+    public event EventHandler<AnnotationReplyRequest>? ReplyRequested;
+
+    /// <summary>V4 T10：由宿主刷新选中项的回复线程（选中变化、保存/读回后调用）。</summary>
+    public void SetReplies(IEnumerable<AnnotationRecord>? replies)
+    {
+        Replies.Clear();
+        foreach (var reply in replies ?? [])
+        {
+            Replies.Add(reply);
+        }
+
+        OnPropertyChanged(nameof(HasReplies));
+    }
+
+    /// <summary>V4 T10：提交一条回复（空内容/无选中忽略）。</summary>
+    public void RequestReply(string? text)
+    {
+        if (Record is not { } record || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+
+        ReplyRequested?.Invoke(this, new AnnotationReplyRequest(record.Id, text.Trim()));
+    }
 
     /// <summary>选中/取消选中某条批注（宿主在悬停命中变化时调用）。</summary>
     public void Select(AnnotationRecord? record) => Record = record;

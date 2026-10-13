@@ -893,6 +893,15 @@ public sealed class AnnotationSaveService : IDisposable
                 break;
 
             case AnnotationKind.Note:
+                if (record.ParentId is { Length: > 0 } parentId)
+                {
+                    // V4 T10：回复 = FreeText + 标准 /IRT 关联键（引擎走 add_reply_annot）
+                    action["kind"] = "reply";
+                    action["parent"] = parentId;
+                    action["text"] = record.Note ?? string.Empty;
+                    break;
+                }
+
                 action["kind"] = "note";
                 action["text"] = record.Note ?? string.Empty;
                 action["noteRect"] = rect;

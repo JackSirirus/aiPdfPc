@@ -640,6 +640,51 @@ class EngineTests(unittest.TestCase):
             over=[a for a in doc[0].annots() if a.info.get("name")=="h2"][0]
             self.assertIn(round(over.opacity,2),(-1.0,1.0))
 
+    def test_reply_annotation_irt_roundtrip(self):
+        """V4 T10：回复生成 /IRT 关联注释（标准键；其它阅读器可读），读回通道也带出 irt。"""
+        path=self._annotation_path("annot-reply.pdf")
+        added=self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"rect":[50,100,300,130]},
+        ])
+        handle=added["annotationHandles"]["h1"]
+
+        self._save_annotations(path,[
+            {"action":"add","id":"r1","kind":"reply","page":0,"parent":handle,"text":"第一条回复"},
+            {"action":"add","id":"r2","kind":"reply","page":0,"parent":handle,"text":"第二条回复"},
+        ])
+        with fitz.open(str(path)) as doc:
+            # 注意：必须在迭代内取完所需字段——Annot 对象在 annots() 生成器结束后会失效
+            rows={a.info.get("name"):(a.xref,a.type[1],a.info.get("content")) for a in doc[0].annots()}
+            self.assertIn("r1",rows);self.assertIn("r2",rows)
+            parent_xref=rows["h1"][0]
+            for name in ("r1","r2"):
+                # 低层 /IRT 必须指向父注释 xref（标准键，非私有）
+                self.assertEqual(doc.xref_get_key(rows[name][0],"IRT")[1],f"{parent_xref} 0 R")
+            # 回复是 FreeText 且内容正确
+            self.assertEqual(rows["r1"][1],"FreeText")
+            self.assertIn("第一条回复",rows["r1"][2] or "")
+
+        # 读回通道带出 irt（T9a 的 list_annotations）
+        listed=engine.dispatch({"operation":"list_annotations","files":[str(path)],"options":{}})
+        replies=[r for r in listed["annotations"] if r["irt"]]
+        self.assertEqual(len(replies),2)
+        contents={r["privateName"]:r["content"] for r in replies}
+        self.assertIn("第一条回复",contents["r1"])
+
+    def test_reply_annotation_validation(self):
+        """V4 T10：缺父批注 / 父不存在 / 空内容都必须显式报错。"""
+        path=self._annotation_path("annot-reply-bad.pdf")
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"x","kind":"reply","page":0,"text":"无父"}])
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"y","kind":"reply","page":0,
+                                          "parent":"no-such-annot","text":"父不存在"}])
+        added=self._save_annotations(path,[
+            {"action":"add","id":"h1","kind":"highlight","page":0,"rect":[50,100,300,130]}])
+        with self.assertRaises(engine.UserError):
+            self._save_annotations(path,[{"action":"add","id":"z","kind":"reply","page":0,
+                                          "parent":added["annotationHandles"]["h1"],"text":"   "}])
+
     def test_annotation_operations_stay_out_of_catalog(self):
         # 批注 handler 不得进 BY_ID（v1.1 目录为 33，含 translate_batch）
         self.assertEqual(len(engine.BY_ID),33)

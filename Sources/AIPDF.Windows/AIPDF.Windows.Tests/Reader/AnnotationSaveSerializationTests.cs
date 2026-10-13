@@ -202,6 +202,41 @@ public sealed class AnnotationSaveSerializationTests : IDisposable
         Assert.False(withImage.ContainsKey("stamp"));
     }
 
+    [Fact]
+    public async Task BuildActions_EmitsReplyKindWithParent_NotNote()
+    {
+        // V4 T10：回复必须下发为 kind:"reply" + parent（引擎据此写标准 /IRT），
+        // 绝不能退化成普通 note——那会丢掉回复关系。
+        var engine = new CapturingEngine();
+        var source = new FakeSource(_temp);
+        var parent = AnnotationRecord.CreateHighlight(0, new PdfRect(10, 20, 110, 40)) with { Id = "h1" };
+        source.Records.AddRange(
+        [
+            parent,
+            AnnotationRecord.CreateReply(0, new PdfRect(120, 20, 280, 80), "h1", "同意") with { Id = "r1" },
+            AnnotationRecord.CreateNote(0, new PdfRect(10, 100, 110, 140), "普通笔记") with { Id = "n1" },
+        ]);
+
+        using var service = new AnnotationSaveService(engine, new AnnotationSaveOptions { DebounceMs = 100_000 });
+        service.RegisterDocument(source);
+
+        var outcome = await service.FlushAsync(_temp);
+        Assert.True(outcome.Succeeded);
+
+        var adds = engine.Actions
+            .Where(a => (string?)a["action"] == "add")
+            .ToDictionary(a => (string)a["id"]!);
+
+        var reply = adds["r1"];
+        Assert.Equal("reply", reply["kind"]);
+        Assert.Equal("h1", reply["parent"]);
+        Assert.Equal("同意", reply["text"]);
+
+        // 普通笔记不受影响（仍是 note）
+        Assert.Equal("note", adds["n1"]["kind"]);
+        Assert.False(adds["n1"].ContainsKey("parent"));
+    }
+
     private sealed class FakeSource(string path) : IAnnotationSaveSource
     {
         public List<AnnotationRecord> Records { get; } = [];

@@ -73,9 +73,22 @@ public sealed class AnnotationReadbackService
         }
 
         var records = new List<AnnotationRecord>();
+
+        // V4 T10：先建 xref → 稳定名 映射——`/IRT` 存的是**父注释的 xref**（形如 "7 0 R"），
+        // 需要借此还原父批注 Id，才能把回复挂回它的线程。
+        var nameByXref = new Dictionary<int, string>();
         foreach (var row in element.EnumerateArray())
         {
-            if (ToRecord(row) is { } record)
+            var name = ReadString(row, "privateName") ?? ReadString(row, "name");
+            if (name is not null && ReadInt(row, "xref") is { } xref)
+            {
+                nameByXref[xref] = name;
+            }
+        }
+
+        foreach (var row in element.EnumerateArray())
+        {
+            if (ToRecord(row, nameByXref) is { } record)
             {
                 records.Add(record);
             }
@@ -88,8 +101,12 @@ public sealed class AnnotationReadbackService
     /// 引擎行 → 客户端记录。不支持的 subtype 返回 null（跳过，不阻断其它注释读回）。
     /// 目前覆盖 Highlight / Underline / StrikeOut / FreeText：它们是本应用会写入、
     /// 也是属性面板与汇总导出最需要的类型；Ink / 形状 / 图章的几何还原留待后续。
+    /// 带 <c>/IRT</c> 的 FreeText 还原为**回复**（见 <see cref="AnnotationRecord.ParentId"/>）。
     /// </summary>
     internal static AnnotationRecord? ToRecord(JsonElement row)
+        => ToRecord(row, new Dictionary<int, string>());
+
+    internal static AnnotationRecord? ToRecord(JsonElement row, IReadOnlyDictionary<int, string> nameByXref)
     {
         var subtype = ReadString(row, "subtype");
         var kind = subtype switch
@@ -120,7 +137,11 @@ public sealed class AnnotationReadbackService
         if (kind == AnnotationKind.Note)
         {
             var text = ReadString(row, "content");
-            record = AnnotationRecord.CreateNote(page, rect, string.IsNullOrWhiteSpace(text) ? "(无内容)" : text, color);
+            var content = string.IsNullOrWhiteSpace(text) ? "(无内容)" : text;
+            // V4 T10：带 /IRT 的 FreeText = 回复（还原父 Id，供线程展示）
+            record = ResolveParentId(row, nameByXref) is { } parentId
+                ? AnnotationRecord.CreateReply(page, rect, parentId, content, color)
+                : AnnotationRecord.CreateNote(page, rect, content, color);
         }
         else
         {
@@ -128,6 +149,26 @@ public sealed class AnnotationReadbackService
         }
 
         return record with { Id = id };
+    }
+
+    /// <summary>
+    /// 解析 <c>/IRT</c>（形如 <c>"7 0 R"</c>）为父批注的稳定名；无法解析返回 null
+    /// （父注释不在本次读回范围内时退化为普通笔记，不丢内容）。
+    /// </summary>
+    private static string? ResolveParentId(JsonElement row, IReadOnlyDictionary<int, string> nameByXref)
+    {
+        var irt = ReadString(row, "irt");
+        if (string.IsNullOrWhiteSpace(irt))
+        {
+            return null;
+        }
+
+        var token = irt.Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        return token.Length > 0
+               && int.TryParse(token[0], out var xref)
+               && nameByXref.TryGetValue(xref, out var name)
+            ? name
+            : null;
     }
 
     /// <summary>PDF <c>/C</c> 数组（形如 <c>[1 0 0]</c>）→ <c>#RRGGBB</c>；无法解析返回 null（用默认色）。</summary>

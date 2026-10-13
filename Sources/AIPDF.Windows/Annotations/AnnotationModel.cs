@@ -195,6 +195,12 @@ public sealed record AnnotationRecord
     /// <summary>图章图片字节（图片图章；预置图章为 null）。V4 T4。</summary>
     public byte[]? StampImage { get; init; }
 
+    /// <summary>
+    /// 父批注 Id（V4 T10：仅回复有值）。保存时下发为 <c>kind:"reply"</c> + <c>parent</c>，
+    /// 引擎据此写 PDF 标准 <c>/IRT</c> 关联键（其它阅读器可读，不需要 sidecar）。
+    /// </summary>
+    public string? ParentId { get; init; }
+
     /// <summary>描边线宽（pt；手写与形状使用）。</summary>
     public double LineWidth { get; init; } = DefaultLineWidth;
 
@@ -282,6 +288,27 @@ public sealed record AnnotationRecord
             Color = color ?? StampPresets.DefaultColor,
             StampToken = image is null ? token : null,
             StampImage = image,
+        };
+    }
+
+    /// <summary>
+    /// 新建回复记录（V4 T10）：在 PDF 里是锚定到父批注的 FreeText + 标准 <c>/IRT</c> 关联键。
+    /// 复用 <see cref="AnnotationKind.Note"/> 的渲染（回复就是一条带父链接的笔记）。
+    /// </summary>
+    public static AnnotationRecord CreateReply(
+        int pageIndex, PdfRect rect, string parentId, string text, string? color = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(parentId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        return new()
+        {
+            Id = NewId(),
+            PageIndex = pageIndex,
+            Rect = rect,
+            Kind = AnnotationKind.Note,
+            Color = color ?? DefaultHighlightColor,
+            Note = text,
+            ParentId = parentId,
         };
     }
 
@@ -391,6 +418,7 @@ public sealed record AnnotationRecord
            && AnnotationGeometry.RectsEqual(Quads, other.Quads)
            && Opacity.Equals(other.Opacity)
            && string.Equals(StampToken, other.StampToken, StringComparison.Ordinal)
+           && string.Equals(ParentId, other.ParentId, StringComparison.Ordinal)
            && AnnotationGeometry.BytesEqual(StampImage, other.StampImage);
 
     /// <summary>返回改色后的副本（FR-13 改色）。</summary>
