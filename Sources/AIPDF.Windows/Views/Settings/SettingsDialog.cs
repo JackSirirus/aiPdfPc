@@ -123,6 +123,13 @@ public sealed class SettingsDialog : Window
     private FrameworkElement _paneTranslationOutput = default!;
     private FrameworkElement _paneAdvanced = default!;
 
+    /// <summary>
+    /// 表单面板的宿主 ScrollViewer（key 同分类 tag）。必须与内层面板同步显隐：
+    /// 只剩空 ScrollViewer 留在可视树时它仍参与命中测试，会盖住其它面板吞掉鼠标输入。
+    /// 供应商面板自带内部滚动，不在此表内（它直接作为 row 1 的子元素）。
+    /// </summary>
+    private readonly Dictionary<string, FrameworkElement> _paneHosts = new(StringComparer.Ordinal);
+
     /// <summary>保存成功后的已归一化设置；取消 / 关闭为 null。</summary>
     public AppSettings? SavedSettings { get; private set; }
 
@@ -247,13 +254,10 @@ public sealed class SettingsDialog : Window
         _paneAppearance.Name = "Pane_appearance";
 
         // ---- Pane 3: 翻译·模型供应商（translation.providers）----
-        var providersPanel = new StackPanel { Margin = new Thickness(20, 12, 20, 8) };
-        providersPanel.Children.Add(new TextBlock
-        {
-            Text = "管理翻译服务商：内置预设、本地服务与自定义供应商。密钥只交 Windows 凭据管理器，设置文件绝不含密钥；供应商改动即时生效。",
-            Style = FindStyle("FieldHint"),
-            TextWrapping = TextWrapping.Wrap,
-        });
+        // 面板直接交给主从详情填满（Grid 隐式单行即铺满高度，与设计参考
+        // .set-pane{display:flex;flex-direction:column;min-height:0} 一致）：
+        // 面板内不再重复放置说明 TextBlock —— paneHeadDesc 已承载同一句文案，重复会白占一行并加剧垂直裁切。
+        var providersPanel = new Grid { Margin = new Thickness(20, 12, 20, 8) };
         providersPanel.Children.Add(BuildProviderMasterDetail());
         RefreshProviderList();
         _paneTranslationProviders = providersPanel;
@@ -326,31 +330,38 @@ public sealed class SettingsDialog : Window
         _paneHeadDesc.Margin = new Thickness(0, 2, 0, 8);
         paneHeadPanel.Children.Add(_paneHeadDesc);
 
-        var contentHost = new Grid();
+        // ====================================================================
+        // 内容宿主：6 面板 + pane head（Visibility 切换）
+        // 不再用外层 ScrollViewer 包裹 contentHost——ScrollViewer 传递无限高度给子控件，
+        // 导致 Star 行退化为 Auto，供应商列表因固定 MaxHeight=423 被裁切（设计参考要求列表填满剩余高度）。
+        // 改为直接用 Grid 作为内容宿主，Star 行获得真实视口高度；
+        // 其他 5 个表单面板各自包装 ScrollViewer 以处理内容溢出。
+        // ====================================================================
+        var contentHost = new Grid { Name = "SettingsContentHost" };
         contentHost.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         contentHost.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         // paneHeadPanel 占 row 0（Auto），6 个面板叠在 row 1，靠 Visibility 切换
         Grid.SetRow(paneHeadPanel, 0);
         contentHost.Children.Add(paneHeadPanel);
-        Grid.SetRow(_paneGeneral, 1);
-        contentHost.Children.Add(_paneGeneral);
-        Grid.SetRow(_paneAppearance, 1);
-        contentHost.Children.Add(_paneAppearance);
+        // 表单面板各自包装 ScrollViewer，避免内容溢出时裁切。
+        // 宿主容器必须随分类一并隐藏（见 ShowCategory）：只隐藏内层面板时，空 ScrollViewer 仍留在
+        // 可视树中、仍参与命中测试，会盖在下方面板上吞掉鼠标输入（供应商列表无法点选 / 拖滚动条）。
+        _paneHosts["general"] = HostPane(_paneGeneral);
+        _paneHosts["appearance"] = HostPane(_paneAppearance);
+        // 供应商面板不需要外层 ScrollViewer：主从详情的左右栏各自内含滚动，
+        // 且面板本身通过 Star 行填满剩余高度，由左栏 ListBox 的内部滚动处理溢出。
         Grid.SetRow(_paneTranslationProviders, 1);
         contentHost.Children.Add(_paneTranslationProviders);
-        Grid.SetRow(_paneTranslationGlossary, 1);
-        contentHost.Children.Add(_paneTranslationGlossary);
-        Grid.SetRow(_paneTranslationOutput, 1);
-        contentHost.Children.Add(_paneTranslationOutput);
-        Grid.SetRow(_paneAdvanced, 1);
-        contentHost.Children.Add(_paneAdvanced);
+        _paneHosts["translation.glossary"] = HostPane(_paneTranslationGlossary);
+        _paneHosts["translation.output"] = HostPane(_paneTranslationOutput);
+        _paneHosts["advanced"] = HostPane(_paneAdvanced);
 
-        var contentPane = new ScrollViewer
+        // 把面板宿主放进 row 1（Star）：拿到真实视口高度，内部 Star 行才有确定高度。
+        foreach (var host in _paneHosts.Values)
         {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = contentHost,
-        };
+            Grid.SetRow(host, 1);
+            contentHost.Children.Add(host);
+        }
 
         // ====================================================================
         // 左侧导航列（170px）：ListBox + 选中态样式（T3）
@@ -428,8 +439,8 @@ public sealed class SettingsDialog : Window
         middleBand.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(navPanel, 0);
         middleBand.Children.Add(navPanel);
-        Grid.SetColumn(contentPane, 1);
-        middleBand.Children.Add(contentPane);
+        Grid.SetColumn(contentHost, 1);
+        middleBand.Children.Add(contentHost);
 
         // ---- 根布局：三行 Grid（标题 / 内容 / 按钮） ----
         var root = new Grid();
@@ -455,6 +466,17 @@ public sealed class SettingsDialog : Window
 
         return root;
     }
+
+    /// <summary>
+    /// 把表单面板包进宿主 ScrollViewer（内容溢出时可滚动）；调用方负责登记到 <see cref="_paneHosts"/> 并放进 row 1。
+    /// 显隐由 <see cref="ShowCategory"/> 与内层面板同步切换，避免空宿主盖住其它面板吃掉输入。
+    /// </summary>
+    private FrameworkElement HostPane(FrameworkElement pane) => new ScrollViewer
+    {
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        Content = pane,
+    };
 
     // ====================================================================
     // 分类导航切换（T3/T5）
@@ -492,6 +514,15 @@ public sealed class SettingsDialog : Window
         _paneTranslationGlossary.Visibility = Visibility.Collapsed;
         _paneTranslationOutput.Visibility = Visibility.Collapsed;
         _paneAdvanced.Visibility = Visibility.Collapsed;
+
+        // 宿主容器必须同步隐藏：只隐藏内层面板时，空 ScrollViewer 仍留在可视树中参与命中测试，
+        // 会盖在其它面板之上吞掉鼠标输入（供应商列表无法点选 / 拖滚动条）。
+        foreach (var (hostKey, host) in _paneHosts)
+        {
+            host.Visibility = string.Equals(hostKey, key, StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
 
         switch (key)
         {
@@ -669,19 +700,31 @@ public sealed class SettingsDialog : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         // ---- 左栏 ----
-        var left = new StackPanel { Margin = new Thickness(0, 0, 14, 0) };
-        left.Children.Add(new TextBlock { Text = "搜索供应商", Style = FindStyle("FieldHint") });
+        // 用 Grid 代替 StackPanel：Star 行让 ListBox 填满剩余高度并自行滚动，
+        // 不再依赖固定 MaxHeight=423（该值在 880×560 窗口中超出实际可用高度导致裁切）。
+        var left = new Grid { Margin = new Thickness(0, 0, 14, 0) };
+        left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 搜索标签
+        left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 搜索框
+        left.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // ListBox（填满剩余高度）
+        left.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 添加按钮
+
+        var searchLabel = new TextBlock { Text = "搜索供应商", Style = FindStyle("FieldHint") };
+        Grid.SetRow(searchLabel, 0);
+        left.Children.Add(searchLabel);
+
         _providerSearchBox.Style = FindStyle("FieldTextBox");
         _providerSearchBox.Margin = new Thickness(0, 3, 0, 4);
         _providerSearchBox.TextChanged += (_, _) => RefreshProviderList(_selectedEntry?.Identity);
+        Grid.SetRow(_providerSearchBox, 1);
         left.Children.Add(_providerSearchBox);
 
         _providerList.Background = Brushes.Transparent;
         _providerList.BorderThickness = new Thickness(0);
         _providerList.Padding = new Thickness(0);
-        _providerList.MaxHeight = 423;
+        // 不再设置 MaxHeight=423：Star 行填满剩余高度，ListBox 自行滚动。
         _providerList.SelectionChanged += OnProviderListSelectionChanged;
         _providerList.ItemContainerStyle = BuildProviderListItemStyle();
+        Grid.SetRow(_providerList, 2);
         left.Children.Add(_providerList);
 
         _addProviderButton.Content = "＋ 添加供应商";
@@ -689,17 +732,18 @@ public sealed class SettingsDialog : Window
         _addProviderButton.HorizontalAlignment = HorizontalAlignment.Stretch;
         _addProviderButton.Margin = new Thickness(0, 8, 0, 0);
         _addProviderButton.Click += OnAddProviderClick;
+        Grid.SetRow(_addProviderButton, 3);
         left.Children.Add(_addProviderButton);
 
         Grid.SetColumn(left, 0);
         grid.Children.Add(left);
 
         // ---- 右栏 ----
+        // 不再设置 MaxHeight=423：右栏 ScrollViewer 与左栏 Grid 同高，自行滚动。
         var right = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            MaxHeight = 423,
             Content = BuildProviderDetail(),
         };
         Grid.SetColumn(right, 1);
@@ -783,7 +827,11 @@ public sealed class SettingsDialog : Window
         // 模型（自由输入 + 拉取）
         var modelRow = new DockPanel { LastChildFill = true };
         ApplyFieldStyle(_modelBox, double.NaN);
-        _modelBox.TextChanged += (_, _) => UpdateModelHint();
+        // 模型变化的唯一入口：手输、预设下拉、拉取下拉都写回本输入框，因此都必须在此重算协议。
+        // 历史缺陷：只有「预设下拉」重算协议，手输 / 拉取选中的模型（如 opencode go 的
+        // deepseek-v4.1-flash，不在预设模型表内）会沿用上一个模型的协议，把 anthropic 协议
+        // 配 DeepSeek 模型发给网关，被服务端以 HTTP 403 拒绝。
+        _modelBox.TextChanged += (_, _) => OnModelChanged();
         _fetchModelsButton.Content = "拉取";
         _fetchModelsButton.Style = FindStyle("SecondaryButton");
         _fetchModelsButton.Margin = new Thickness(8, 0, 0, 0);
@@ -1124,7 +1172,18 @@ public sealed class SettingsDialog : Window
         if (_suppressModelCombo) return;
         if (_presetModelCombo.SelectedItem is not ComboBoxItem { Tag: string model }) return;
 
+        // 只写回输入框：协议 / 端点由 TextChanged → OnModelChanged 统一重算（与手输、拉取同口径）。
         _modelBox.Text = model;
+    }
+
+    /// <summary>
+    /// 模型输入框变化后的统一刷新（T16 F3 补齐）：模型提示 + <b>混合协议供应商按模型重算协议与端点</b>。
+    /// 手输与「拉取模型」下拉都只写回 <c>_modelBox</c>，必须与「预设下拉」同口径，
+    /// 否则会带着上一个模型的协议保存（如 anthropic 协议 + DeepSeek 模型 → 网关 HTTP 403）。
+    /// </summary>
+    private void OnModelChanged()
+    {
+        UpdateModelHint();
         RefreshProtocolForModel();
     }
 
@@ -1499,6 +1558,7 @@ public sealed class SettingsDialog : Window
     {
         if (_fetchedModelCombo.SelectedItem is ComboBoxItem { Tag: string model })
         {
+            // 只写回输入框：协议 / 端点由 TextChanged → OnModelChanged 统一重算（历史缺陷：此处曾不重算协议）。
             _modelBox.Text = model;
         }
     }

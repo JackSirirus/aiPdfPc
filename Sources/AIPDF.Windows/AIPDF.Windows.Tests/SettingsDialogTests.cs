@@ -12,6 +12,7 @@ using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using AIPDF.Windows.Services;
 using AIPDF.Windows.Tests.Services;
 using AIPDF.Windows.Views.Settings;
@@ -547,7 +548,8 @@ public sealed class SettingsDialogTests
     }
 
     // ================================================================ S1 设计稿对齐（结构回归）：
-    // 对话框 880 宽、左列 236、左右 MaxHeight 423、字段序 API Key→模型→端点→协议→连接→同意状态，
+    // 对话框 880 宽、左列 236、左右栏通过 Star 行填满剩余高度（不再用固定 MaxHeight=423），
+    // 字段序 API Key→模型→端点→协议→连接→同意状态，
     // 列表行只保留「名称 + tag + 状态点」（不再逐行回显 provider id），名称 / provider id 仅自定义项可见。
 
     /// <summary>S1 详情面板已知字段标签（用于按序断言，不与提示文案混淆）。</summary>
@@ -593,13 +595,13 @@ public sealed class SettingsDialogTests
         }
     }
 
-    private static (Grid Master, StackPanel Left, ScrollViewer Detail, ListBox List) FindProviderMasterDetail(
+    private static (Grid Master, Grid Left, ScrollViewer Detail, ListBox List) FindProviderMasterDetail(
         SettingsDialog dialog)
     {
         var master = Descendants(dialog)
             .OfType<Grid>()
             .Single(grid => grid.ColumnDefinitions.Count == 2 && grid.ColumnDefinitions[0].Width.Value == 236);
-        var left = master.Children.OfType<StackPanel>().Single(c => Grid.GetColumn(c) == 0);
+        var left = master.Children.OfType<Grid>().Single(c => Grid.GetColumn(c) == 0);
         var detail = master.Children.OfType<ScrollViewer>().Single(c => Grid.GetColumn(c) == 1);
         var list = left.Children.OfType<ListBox>().Single();
         return (master, left, detail, list);
@@ -623,6 +625,19 @@ public sealed class SettingsDialogTests
         => list.Items.OfType<ListBoxItem>()
             .Where(item => item.Tag is not null)
             .First(item => Descendants(item).OfType<TextBlock>().Any(t => t.Text == displayName));
+
+    /// <summary>详情面板里的「模型」输入框（模型标签所在面板内的第一个 TextBox）。</summary>
+    private static TextBox FindModelBox(ScrollViewer detail)
+    {
+        var label = Descendants(detail).OfType<TextBlock>().First(tb => tb.Text == "模型");
+        var panel = (Panel)LogicalTreeHelper.GetParent(label)!;
+        return Descendants(panel).OfType<TextBox>().First();
+    }
+
+    /// <summary>供应商详情内的「保存」按钮（区别于对话框底部按钮带的「保存」）。</summary>
+    private static Button FindProviderSaveButton(SettingsDialog dialog)
+        => Descendants(FindPane(dialog, "Pane_translation_providers"))
+            .OfType<Button>().Single(b => (b.Content as string) == "保存");
 
     private static void SelectLastProviderEntry(ListBox list)
     {
@@ -675,9 +690,15 @@ public sealed class SettingsDialogTests
 
             // T3：导航到模型供应商页再断言（翻译段默认折叠）
             SelectNavCategory(dialog, "translation.providers");
+            // 执行布局：Measure → Arrange → UpdateLayout，使 Star 行分配真实高度给 ListBox。
+            var content = (FrameworkElement)dialog.Content;
+            content.Measure(new Size(880, 516));
+            content.Arrange(new Rect(0, 0, 880, 516));
+            content.UpdateLayout();
             var (_, _, detail, list) = FindProviderMasterDetail(dialog);
-            Assert.Equal(423d, list.MaxHeight);                 // S1：左列表 236 × 423
-            Assert.Equal(423d, detail.MaxHeight);               // S1：详情 472 × 423
+            // 不再断言固定 MaxHeight=423：左右栏通过 Star 行填满剩余高度，不再裁切。
+            // 左栏 ListBox 的 ActualHeight 应为正数（Star 行分配了真实高度）。
+            Assert.True(list.ActualHeight > 0, $"ListBox ActualHeight 应为正数，实际 {list.ActualHeight}");
 
             // 选中内置云端预设 OpenAI（未配置）：名称 / provider id 字段隐藏，id 改由副标题呈现。
             var openAiRow = FindProviderRow(list, "OpenAI");
@@ -906,14 +927,11 @@ public sealed class SettingsDialogTests
             using var fx = new Fixture();
             var dialog = NewDialog(fx.NewStore());
 
-            // contentHost 是 ScrollViewer（Auto 垂直 / Disabled 水平）的 Content Grid
-            var scrollViewer = Descendants(dialog)
-                .OfType<ScrollViewer>()
-                .FirstOrDefault(sv => sv.VerticalScrollBarVisibility == ScrollBarVisibility.Auto
-                                   && sv.HorizontalScrollBarVisibility == ScrollBarVisibility.Disabled);
-            Assert.NotNull(scrollViewer);
-            Assert.IsType<Grid>(scrollViewer.Content);
-            var host = (Grid)scrollViewer.Content;
+            // contentHost 是名为 SettingsContentHost 的 Grid（不再有外层 ScrollViewer 包裹）。
+            var host = Descendants(dialog)
+                .OfType<Grid>()
+                .FirstOrDefault(g => g.Name == "SettingsContentHost");
+            Assert.NotNull(host);
 
             // 至少 2 行：Auto（pane head）+ Star（pane body）
             Assert.True(host.RowDefinitions.Count >= 2,
@@ -926,9 +944,11 @@ public sealed class SettingsDialogTests
             Assert.NotNull(headPanel);
             Assert.Equal(0, Grid.GetRow(headPanel));
 
-            // Pane_general 在 row 1
+            // Pane_general 在 row 1（被 ScrollViewer 包裹，其 Content 仍是 Pane_general）
             var generalPane = FindPane(dialog, "Pane_general");
-            Assert.Equal(1, Grid.GetRow(generalPane));
+            var generalScroller = LogicalTreeHelper.GetParent(generalPane) as ScrollViewer;
+            Assert.NotNull(generalScroller);
+            Assert.Equal(1, Grid.GetRow(generalScroller));
         });
     }
 
@@ -984,5 +1004,452 @@ public sealed class SettingsDialogTests
             Assert.Contains("默认渲染 DPI", Descendants(advanced).OfType<TextBlock>()
                 .Where(tb => tb.Visibility == Visibility.Visible).Select(tb => tb.Text));
         });
+    }
+
+    /// <summary>
+    /// 回归测试（供应商列表垂直裁切缺陷）：在 880×560 窗口中，供应商面板必须整体落进 pane body 可视区，
+    /// 列表通过自身滚动条把底部条目（opencode go / GLM Coding Plan / Kimi Code）带进可视区。
+    /// 缺陷成因：固定 MaxHeight=423 的列表位于外层 ScrollViewer 内，列表下半部永远落在可视区之外。
+    /// </summary>
+    [Fact]
+    public void ProviderList_FitsPaneBody_AndLastRowsReachableByScrolling()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+
+            // 导航到模型供应商页
+            SelectNavCategory(dialog, "translation.providers");
+
+            // 执行布局：Measure → Arrange → UpdateLayout，使 Star 行分配真实高度给 ListBox。
+            var content = (FrameworkElement)dialog.Content;
+            content.Measure(new Size(880, 516));
+            content.Arrange(new Rect(0, 0, 880, 516));
+            content.UpdateLayout();
+
+            var pane = FindPane(dialog, "Pane_translation_providers");
+            var (_, left, _, list) = FindProviderMasterDetail(dialog);
+
+            // (a) 左栏整体（搜索框 + 列表 + 添加按钮）必须落在 pane body 可视区内，不得溢出被裁切。
+            var paneTop = pane.TransformToAncestor(content).Transform(new Point(0, 0)).Y;
+            var paneBottom = paneTop + pane.ActualHeight;
+            var addButton = left.Children.OfType<Button>().Single();
+            Assert.True(paneBottom + 1 >= addButton.TransformToAncestor(content).Transform(new Point(0, addButton.ActualHeight)).Y,
+                "「＋ 添加供应商」按钮被 pane body 下边缘裁切");
+
+            // (b) 列表拿到真实高度（Star 行生效），且列表自身无需外部滚动即可整体可见。
+            Assert.True(list.ActualHeight > 0, $"ListBox ActualHeight 应为正数，实际 {list.ActualHeight}");
+            var listBottom = list.TransformToAncestor(content).Transform(new Point(0, list.ActualHeight)).Y;
+            Assert.True(listBottom <= paneBottom + 0.5, $"列表底部 {listBottom:F1} 超出 pane body 底部 {paneBottom:F1}");
+
+            // (c) 列表内容高于自身视口 → 必须有内部滚动条（而不是静默裁切）。
+            var scroller = Visuals(list).OfType<ScrollViewer>().FirstOrDefault();
+            Assert.NotNull(scroller);
+            Assert.True(scroller!.ScrollableHeight > 0, "列表内容高于视口时必须可滚动");
+
+            // (d) 滚到底后最末条目必须落进 pane body 可视区（即底部条目可达，不再被裁切）。
+            scroller.ScrollToEnd();
+            content.UpdateLayout();
+
+            var lastRow = list.Items.OfType<ListBoxItem>().Last(item => item.Tag is not null);
+            var lastBottom = lastRow.TransformToAncestor(content).Transform(new Point(0, lastRow.ActualHeight)).Y;
+            Assert.True(lastBottom <= paneBottom + 0.5,
+                $"滚到底后末条目底部 {lastBottom:F1} 仍超出 pane body 底部 {paneBottom:F1}");
+
+            // (e) opencode go 与 Kimi Code 都必须在列表数据中（用户报告缺失的条目）。
+            Assert.NotNull(FindProviderRow(list, "opencode go"));
+            Assert.NotNull(FindProviderRow(list, "Kimi Code"));
+        });
+    }
+
+    /// <summary>
+    /// 回归测试（不可见宿主遮挡输入）：任一分类下，contentHost row 1 里可见的子元素必须恰好只有当前分类一个。
+    /// 若只隐藏内层面板、把空 ScrollViewer 留在可视树，它会继续参与命中测试并盖在下方面板之上，
+    /// 使供应商列表无法点选、滚动条无法拖动（2026-09-18 回归）。
+    /// </summary>
+    [Fact]
+    public void OnlyActiveCategoryHost_IsVisible_SoHitTestingIsNotBlocked()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+            var host = Descendants(dialog).OfType<Grid>().Single(g => g.Name == "SettingsContentHost");
+
+            string[] categories =
+                ["general", "appearance", "translation.providers", "translation.glossary", "translation.output", "advanced"];
+            foreach (var tag in categories)
+            {
+                SelectNavCategory(dialog, tag);
+                var visible = host.Children.OfType<FrameworkElement>()
+                    .Where(child => Grid.GetRow(child) == 1 && child.Visibility == Visibility.Visible)
+                    .ToList();
+                Assert.True(visible.Count == 1,
+                    $"分类 {tag} 下 row 1 可见宿主应恰好 1 个，实际 {visible.Count} 个（多余宿主会吞掉鼠标输入）");
+            }
+        });
+    }
+
+    /// <summary>
+    /// 回归测试（混合协议供应商：协议必须随模型派生）。场景：
+    /// opencode go 先以默认模型 minimax-m3（anthropic）保存，随后把模型改成不在预设模型表内的
+    /// <c>deepseek-v4.1-flash</c>（典型来自「拉取模型」下拉或手输）再保存 —— 必须写出
+    /// openai 协议 + OpenAI base。修复前手输 / 拉取路径不重算协议，会写出 anthropic 协议 +
+    /// Anthropic base，引擎据此把 Anthropic 请求发给 DeepSeek 模型，被网关以 HTTP 403 拒绝。
+    /// </summary>
+    [Fact]
+    public void MixedProtocolPreset_SaveAfterModelChange_DerivesProtocolAndEndpointFromModel()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var store = fx.NewStore();
+
+            // 预置：用户先按默认模型（minimax-m3 → anthropic）保存过 opencode go。
+            store.Save(new AppSettings
+            {
+                TranslationProviders =
+                [
+                    new TranslationProviderConfig
+                    {
+                        Provider = "opencode go",
+                        Endpoint = "https://opencode.ai/zen/go",
+                        Model = "minimax-m3",
+                        PresetId = "opencode-go",
+                        ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+                        ModelProtocols = TranslationProviderPreset.Find("opencode-go")!.DefaultModelProtocols,
+                    },
+                ],
+            });
+
+            var dialog = NewDialog(store);
+            SelectNavCategory(dialog, "translation.providers");
+            var (_, _, detail, list) = FindProviderMasterDetail(dialog);
+            list.SelectedItem = FindProviderRow(list, "opencode go");
+
+            // 改模型（等价于「拉取模型」下拉选中 / 手输）：协议与端点必须随之派生。
+            FindModelBox(detail).Text = "deepseek-v4.1-flash";
+
+            FindProviderSaveButton(dialog).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            var saved = Assert.Single(store.Load().TranslationProviders);
+            Assert.Equal("opencode-go", saved.PresetId);
+            Assert.Equal("deepseek-v4.1-flash", saved.Model);
+            Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, saved.ApiProtocol);
+            // openai base 含版本段，引擎据此拼 {base}/chat/completions。
+            Assert.Equal("https://opencode.ai/zen/go/v1", saved.Endpoint);
+        });
+    }
+
+    // ================================================================ Task 5 P1：
+    // (A) 「拉取模型」下拉选中路径 OnFetchedModelSelected；(B) 协议反向切换 + 端点回滚。
+
+    /// <summary>详情面板「API 地址」输入框（与 <see cref="FindModelBox"/> 同口径：标签 → 容器 → 首个 TextBox）。</summary>
+    private static TextBox FindEndpointBox(ScrollViewer detail)
+    {
+        var label = Descendants(detail).OfType<TextBlock>().First(tb => tb.Text == "API 地址");
+        var panel = (Panel)LogicalTreeHelper.GetParent(label)!;
+        return Descendants(panel).OfType<TextBox>().First();
+    }
+
+    /// <summary>
+    /// 私有字段 <c>_fetchedModelCombo</c>（「拉取模型」下拉）。逻辑树里它与预设下拉同为 ComboBox，
+    /// 无法按类型区分；沿用测试工程既有反射先例（FullTranslationViewModelTests 读私有字段）直取，
+    /// 不改生产可访问性。
+    /// </summary>
+    private static ComboBox FindFetchedModelCombo(SettingsDialog dialog)
+        => (ComboBox)typeof(SettingsDialog)
+            .GetField("_fetchedModelCombo",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(dialog)!;
+
+    /// <summary>当前生效协议 <c>_protocol</c>（经 <c>SelectProtocol</c> 归一化；混合协议预设分段按钮双双失活，须直读字段）。</summary>
+    private static string GetSelectedProtocol(SettingsDialog dialog)
+        => (string)typeof(SettingsDialog)
+            .GetField("_protocol",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(dialog)!;
+
+    /// <summary>
+    /// 回归测试（「拉取模型」下拉选中路径）：SelectionChanged 接线（SettingsDialog.cs:861）→
+    /// <c>OnFetchedModelSelected</c>（:1557）必须把选中项写回 <c>_modelBox</c>，
+    /// 再经 TextChanged → <c>OnModelChanged</c> → <c>RefreshProtocolForModel</c> 按所选模型刷新协议与端点。
+    /// 历史缺陷：下拉选中不重算协议，anthropic 协议会配 openai 系模型发往网关（HTTP 403）。
+    /// </summary>
+    [Fact]
+    public void OnFetchedModelSelected_ModelDropdown_WritesBackModelAndRefreshesProtocolAndEndpoint()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var store = fx.NewStore();
+
+            // 预置：用户先按默认模型（minimax-m3 → anthropic）保存过 opencode go。
+            store.Save(new AppSettings
+            {
+                TranslationProviders =
+                [
+                    new TranslationProviderConfig
+                    {
+                        Provider = "opencode go",
+                        Endpoint = "https://opencode.ai/zen/go",
+                        Model = "minimax-m3",
+                        PresetId = "opencode-go",
+                        ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+                        ModelProtocols = TranslationProviderPreset.Find("opencode-go")!.DefaultModelProtocols,
+                    },
+                ],
+            });
+
+            var dialog = NewDialog(store);
+            SelectNavCategory(dialog, "translation.providers");
+            var (_, _, detail, list) = FindProviderMasterDetail(dialog);
+            list.SelectedItem = FindProviderRow(list, "opencode go");
+
+            // 锚点：anthropic 协议 + Anthropic base（不带 /v1）。
+            Assert.Equal("minimax-m3", FindModelBox(detail).Text);
+            Assert.Equal("https://opencode.ai/zen/go", FindEndpointBox(detail).Text);
+            Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, GetSelectedProtocol(dialog));
+
+            // 模拟「拉取模型」下拉已填充（直写 Items，不发网络请求），选中 openai 系模型。
+            var fetchedCombo = FindFetchedModelCombo(dialog);
+            var target = new ComboBoxItem { Content = "deepseek-v4.1-flash", Tag = "deepseek-v4.1-flash" };
+            fetchedCombo.Items.Add(target);
+            fetchedCombo.SelectedItem = target; // → :861 SelectionChanged → OnFetchedModelSelected(:1557)
+
+            // 模型写回 _modelBox（OnFetchedModelSelected 唯一职责）；协议/端点随所选模型刷新：
+            // deepseek-v4.1-flash 未命中 DefaultModelProtocols → 回退预设 DefaultProtocol = openai。
+            Assert.Equal("deepseek-v4.1-flash", FindModelBox(detail).Text);
+            Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, GetSelectedProtocol(dialog));
+            // 端点仍是预设默认 base → SyncDefaultEndpointForProtocol 切到 OpenAI base（协议/端点同源，不产生 /v1/v1）。
+            Assert.Equal("https://opencode.ai/zen/go/v1", FindEndpointBox(detail).Text);
+
+            FindProviderSaveButton(dialog).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            var saved = Assert.Single(store.Load().TranslationProviders);
+            Assert.Equal("deepseek-v4.1-flash", saved.Model);
+            Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, saved.ApiProtocol);
+            Assert.Equal("https://opencode.ai/zen/go/v1", saved.Endpoint);
+        });
+    }
+
+    /// <summary>
+    /// 回归测试（协议反向切换 + 端点回滚）：opencode go 从 anthropic 态切到 openai 系模型后，
+    /// <c>SelectProtocol</c> + <c>SyncDefaultEndpointForProtocol</c> 同步切到 OpenAI base；
+    /// 再反向切回 anthropic 系模型（minimax-m3）必须把协议与端点一并回滚到 Anthropic base，
+    /// 保存后的 apiProtocol 存储与回滚后的对话框态一致（不留 openai 残留）。
+    /// </summary>
+    [Fact]
+    public void ProtocolReverse_SwitchOpenAiModelThenBack_RollsBackProtocolAndEndpoint()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var store = fx.NewStore();
+
+            store.Save(new AppSettings
+            {
+                TranslationProviders =
+                [
+                    new TranslationProviderConfig
+                    {
+                        Provider = "opencode go",
+                        Endpoint = "https://opencode.ai/zen/go",
+                        Model = "minimax-m3",
+                        PresetId = "opencode-go",
+                        ApiProtocol = TranslationProviderConfig.ProtocolAnthropic,
+                        ModelProtocols = TranslationProviderPreset.Find("opencode-go")!.DefaultModelProtocols,
+                    },
+                ],
+            });
+
+            var dialog = NewDialog(store);
+            SelectNavCategory(dialog, "translation.providers");
+            var (_, _, detail, list) = FindProviderMasterDetail(dialog);
+            list.SelectedItem = FindProviderRow(list, "opencode go");
+
+            // 锚点：anthropic 协议 + Anthropic base。
+            Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, GetSelectedProtocol(dialog));
+            Assert.Equal("https://opencode.ai/zen/go", FindEndpointBox(detail).Text);
+
+            // ① 切到 openai 系模型（DefaultModelProtocols 命中 openai）→ 协议与端点同向刷新。
+            FindModelBox(detail).Text = "kimi-k3";
+            Assert.Equal(TranslationProviderConfig.ProtocolOpenAi, GetSelectedProtocol(dialog));
+            Assert.Equal("https://opencode.ai/zen/go/v1", FindEndpointBox(detail).Text); // OpenAI base
+
+            // ② 反向切回 anthropic 系模型 → SelectProtocol + SyncDefaultEndpointForProtocol 必须回滚协议与端点。
+            //    端点恰回到 Anthropic base 本身即协议回滚的证据：仅当 _protocol 归一化为 anthropic 时，
+            //    DefaultEndpointForProtocol 才会返回该值（OpenAI base 与之不同）。
+            FindModelBox(detail).Text = "minimax-m3";
+            Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, GetSelectedProtocol(dialog));
+            Assert.Equal("https://opencode.ai/zen/go", FindEndpointBox(detail).Text);
+
+            FindProviderSaveButton(dialog).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+            var saved = Assert.Single(store.Load().TranslationProviders);
+            Assert.Equal("minimax-m3", saved.Model);
+            Assert.Equal(TranslationProviderConfig.ProtocolAnthropic, saved.ApiProtocol); // apiProtocol 存储与回滚后一致
+            Assert.Equal("https://opencode.ai/zen/go", saved.Endpoint);
+        });
+    }
+
+    // ================================================================ Task 6 P1：
+    // (A) HostPane 宿主可见性 Theory；(B) providers 无宿主护栏；(C) 右栏 MaxHeight 语义。
+
+    /// <summary>
+    /// 回归测试（HostPane 宿主可见性）：除 translation.providers 外的 5 个分类各自包一层
+    /// HostPane ScrollViewer（SettingsDialog.cs:349-357）。切到某分类时其宿主 Visible、
+    /// 其余 row 1 子元素（其余宿主 + providers 直挂面板）全部 Collapsed，且宿主 Content
+    /// 恰为对应内层面板；随后切回 general，general 宿主恢复 Visible、其余 Collapsed。
+    /// 只翻内层 Visibility 会留下空宿主盖住命中测试（见 OnlyActiveCategoryHost 事实）。
+    /// </summary>
+    [Theory]
+    [InlineData("appearance")]
+    [InlineData("translation.glossary")]
+    [InlineData("translation.output")]
+    [InlineData("advanced")]
+    public void HostedCategory_HostVisibleOthersCollapsed_WrapperContentIsPane(string categoryKey)
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+            var contentHost = Descendants(dialog).OfType<Grid>().Single(g => g.Name == "SettingsContentHost");
+
+            SelectNavCategory(dialog, categoryKey);
+            var pane = FindPane(dialog, CategoryToPaneName[categoryKey]);
+            var host = Assert.IsType<ScrollViewer>(LogicalTreeHelper.GetParent(pane));
+            Assert.Equal(Visibility.Visible, host.Visibility);
+            Assert.Equal(Visibility.Visible, pane.Visibility);
+            Assert.Same(pane, host.Content); // 宿主 Content = 内层面板（HostPane 包装）
+            foreach (var child in contentHost.Children.OfType<FrameworkElement>()
+                         .Where(fe => Grid.GetRow(fe) == 1 && !ReferenceEquals(fe, host)))
+            {
+                Assert.Equal(Visibility.Collapsed, child.Visibility);
+            }
+
+            // 切回 general：general 宿主恢复，其余（含刚访问的宿主与 providers 面板）折叠。
+            SelectNavCategory(dialog, "general");
+            var generalPane = FindPane(dialog, "Pane_general");
+            var generalHost = Assert.IsType<ScrollViewer>(LogicalTreeHelper.GetParent(generalPane));
+            Assert.Equal(Visibility.Visible, generalHost.Visibility);
+            Assert.Same(generalPane, generalHost.Content);
+            foreach (var child in contentHost.Children.OfType<FrameworkElement>()
+                         .Where(fe => Grid.GetRow(fe) == 1 && !ReferenceEquals(fe, generalHost)))
+            {
+                Assert.Equal(Visibility.Collapsed, child.Visibility);
+            }
+        });
+    }
+
+    /// <summary>
+    /// 回归护栏（providers 无宿主）：translation.providers 不登记进 <c>_paneHosts</c>，
+    /// 面板直接挂 contentHost row 1（SettingsDialog.cs:351 注释：主从左右栏自带滚动）。
+    /// 若有人给它补一层 HostPane，会重新引入外层滚动 → Star 行退化 → 列表被裁切的缺陷。
+    /// </summary>
+    [Fact]
+    public void ProvidersCategory_HasNoHostPane_RowsDirectlyOnContentHost()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+            var contentHost = Descendants(dialog).OfType<Grid>().Single(g => g.Name == "SettingsContentHost");
+
+            // (a) _paneHosts 恰为 5 个宿主键，值全是 HostPane ScrollViewer；不含 providers。
+            var hosts = (Dictionary<string, FrameworkElement>)typeof(SettingsDialog)
+                .GetField("_paneHosts", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(dialog)!;
+            Assert.Equal(5, hosts.Count);
+            foreach (var expected in new[]
+                     {
+                         "general", "appearance", "translation.glossary", "translation.output", "advanced",
+                     })
+            {
+                Assert.Contains(expected, hosts.Keys);
+            }
+
+            Assert.False(hosts.ContainsKey("translation.providers"),
+                "providers 不应有 HostPane 宿主：左右栏自带滚动（SettingsDialog.cs:351）");
+            Assert.All(hosts.Values, v => Assert.IsType<ScrollViewer>(v));
+
+            // (b) 内容树：providers 面板父级就是 contentHost（Grid），不是 ScrollViewer 宿主。
+            var providers = FindPane(dialog, "Pane_translation_providers");
+            Assert.Same(contentHost, LogicalTreeHelper.GetParent(providers));
+            Assert.Equal(1, Grid.GetRow(providers));
+        });
+    }
+
+    /// <summary>
+    /// 回归测试（MaxHeight 语义）：主从详情两栏都不得再设固定 MaxHeight=423 —— 该值在
+    /// 880×560 窗口超出 pane body 可用高度，下半截永远落在可视区外（SettingsDialog.cs:704/:724/:742
+    /// 已移除）。同时：contentHost Star 行必须拿到真实高度（否则 Star 退化为 Auto），
+    /// 左栏列表视口 > 0 且滚动 extent &gt;= 视口。左栏裁切细节由
+    /// <see cref="ProviderList_FitsPaneBody_AndLastRowsReachableByScrolling"/> 覆盖，此事实专守
+    /// MaxHeight 回归（右栏 423 不会让左栏事实变红）。
+    /// </summary>
+    [Fact]
+    public void ProviderMasterDetail_NoFixedMaxHeight_StarRowRealHeight_ExtentCoversViewport()
+    {
+        RunOnSta(() =>
+        {
+            EnsureApplication();
+            using var fx = new Fixture();
+            var dialog = NewDialog(fx.NewStore());
+            SelectNavCategory(dialog, "translation.providers");
+
+            // 执行布局：Measure → Arrange → UpdateLayout，使 Star 行分配真实高度。
+            var content = (FrameworkElement)dialog.Content;
+            content.Measure(new Size(880, 516));
+            content.Arrange(new Rect(0, 0, 880, 516));
+            content.UpdateLayout();
+
+            var contentHost = Descendants(dialog).OfType<Grid>().Single(g => g.Name == "SettingsContentHost");
+            var pane = FindPane(dialog, "Pane_translation_providers");
+            var (_, left, right, list) = FindProviderMasterDetail(dialog);
+
+            // (a) 右栏 ScrollViewer 与左栏 ListBox 不得设固定上限（历史缺陷值 423）。
+            //     WPF MaxHeight 默认 +∞（不是 NaN）；未设限 = NaN 或 +∞。
+            Assert.NotEqual(423d, right.MaxHeight);
+            Assert.True(double.IsNaN(right.MaxHeight) || double.IsPositiveInfinity(right.MaxHeight),
+                $"右栏 MaxHeight 应未设限（NaN/∞），实际 {right.MaxHeight}");
+            Assert.NotEqual(423d, list.MaxHeight);
+            Assert.True(double.IsNaN(list.MaxHeight) || double.IsPositiveInfinity(list.MaxHeight),
+                $"列表 MaxHeight 应未设限（NaN/∞），实际 {list.MaxHeight}");
+
+            // (b) contentHost Star 行（row 1）拿到真实高度：当前唯一可见子元素 ActualHeight > 0。
+            var visibleRow1 = contentHost.Children.OfType<FrameworkElement>()
+                .Single(fe => Grid.GetRow(fe) == 1 && fe.Visibility == Visibility.Visible);
+            Assert.True(visibleRow1.ActualHeight > 0, $"Star 行高度应为正，实际 {visibleRow1.ActualHeight}");
+            // providers 无宿主 → 可见子元素就是面板本体；右栏随 master Grid 星号列填满。
+            Assert.Same(pane, visibleRow1);
+            Assert.True(right.ActualHeight > 0, $"右栏 ActualHeight 应为正，实际 {right.ActualHeight}");
+            Assert.True(left.ActualHeight > 0, $"左栏 ActualHeight 应为正，实际 {left.ActualHeight}");
+
+            // (c) 列表视口拿到真实高度，且滚动 extent >= 视口。
+            var scroller = Visuals(list).OfType<ScrollViewer>().First();
+            Assert.True(scroller.ViewportHeight > 0, $"列表视口高度应为正，实际 {scroller.ViewportHeight}");
+            Assert.True(scroller.ExtentHeight >= scroller.ViewportHeight,
+                $"列表 extent {scroller.ExtentHeight} 应 >= 视口 {scroller.ViewportHeight}");
+        });
+    }
+
+    /// <summary>按可视树递归遍历（ListBox 内部滚动条等模板部件不在逻辑树中）。</summary>
+    private static IEnumerable<DependencyObject> Visuals(DependencyObject root)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            yield return child;
+            foreach (var nested in Visuals(child)) yield return nested;
+        }
     }
 }
