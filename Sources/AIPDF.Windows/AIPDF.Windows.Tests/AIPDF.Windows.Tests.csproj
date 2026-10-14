@@ -13,6 +13,12 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- FlaUI UIA3：真实 UI 冒烟（启动 / 工具箱导航 / 状态栏）。仅 UI 测试引用，单元测试不依赖。 -->
+    <PackageReference Include="FlaUI.Core" Version="5.0.0" />
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <!-- xunit v2 无 Assert.Skip（v3 API）；动态 skip 用 SkippableFact：Skip.If 抛 SkipException 由该 Fact 识别为 Skipped。
+         精确钉 1.5.85：≤1.2.x 仅带 net452/portable lib（net8.0-windows 解析不到 → CS0246）；1.5.85 带 netstandard2.0。 -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.85" />
   </ItemGroup>
 
   <ItemGroup>
