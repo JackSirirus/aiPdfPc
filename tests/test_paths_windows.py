@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 AIPDF contributors
 """Windows path resolution tests; filesystem probes are mocked, no real installs needed."""
+import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -171,6 +173,67 @@ class WindowsPathTests(unittest.TestCase):
                 message=str(ctx.exception)
                 self.assertIn("HEIC",message)
                 self.assertIn("Windows",message)
+
+    # ---- 冒烟 #9：dispatch 级 HEIC 全链路（区别于上面直调 load_image 的单测）----
+
+    def test_dispatch_images_to_pdf_heic_usererror_inprocess(self):
+        """冒烟 #9 · 进程内路径：dispatch → images_to_pdf → load_image HEIC 分支。
+
+        选择进程内 import 调用面（本用例）；stdout JSON 形态由下面的子进程用例
+        `test_engine_stdout_json_heic_dispatch_subprocess` 覆盖（EngineBridge 真实
+        调用形态是一进程一 JSON 请求/响应，两者互补）。
+        增量相对 test_heic_image_rejected_with_clear_message：经过 dispatch 的扩展名
+        闸门（catalog 放行 heic）、outputDir 校验、process 外层包装——错误消息带
+        「本次输出目录」标记即证明走完 dispatch 链，而非直调 load_image。
+        拒绝分支实为 Image.open 先失败、except 内按 win32+后缀命中 engine.py:1259-1260
+        （扩展名闸门并不拦截 heic），故合成占位字节即可，无需 HEIC 编码器。
+        """
+        with tempfile.TemporaryDirectory(prefix="aipdf-win-tests-",dir=ROOT/"tmp") as tmp:
+            root=Path(tmp)
+            heic=root/"photo.heic"
+            heic.write_bytes(b"\x00\x00\x00\x20ftypheic NOT-A-REAL-IMAGE")  # 合成占位，非个人图片
+            out=root/"out"
+            out.mkdir()
+            request={"operation":"images_to_pdf","files":[str(heic)],
+                     "options":{},"outputDir":str(out)}
+            with patch.object(sys,"platform","win32"):
+                with self.assertRaises(engine.UserError) as ctx:
+                    engine.dispatch(request)
+            message=str(ctx.exception)
+            self.assertIn("HEIC",message)                     # engine.py:1259-1260 分支命中
+            self.assertIn("转换为 PNG 或 JPEG",message)         # 格式转换引导片段（与 :1260 一致）
+            self.assertIn("本次输出目录",message)               # dispatch 外层包装标记 → 非直调 load_image
+
+    def test_engine_stdout_json_heic_dispatch_subprocess(self):
+        """冒烟 #9 · 子进程路径（EngineBridge 契约面）：JSON stdin → dispatch → JSON stdout。
+
+        与 EngineBridge.RunAsync 相同形态：一次进程一份 JSON 请求（stdin 字节）、
+        一份结果（stdout）。按 AGENTS.md「stdout 只输出约定 JSON」整体 json.loads
+        严格断言（不用 test_engine.py:24 的容忍诊断行扫描）；失败路径不触 MuPDF
+        C 层输出，stderr 才是进度行。非 win32 跳过：HEIC 专属消息按设计仅 win32。
+        """
+        if sys.platform != "win32":
+            self.skipTest("HEIC 拒绝分支按设计仅 win32 生效（engine.py:1259）")
+        with tempfile.TemporaryDirectory(prefix="aipdf-win-tests-",dir=ROOT/"tmp") as tmp:
+            root=Path(tmp)
+            heic=root/"photo.heic"
+            heic.write_bytes(b"\x00\x00\x00\x20ftypheic NOT-A-REAL-IMAGE")
+            out=root/"out"
+            out.mkdir()
+            request={"operation":"images_to_pdf","files":[str(heic)],
+                     "options":{},"outputDir":str(out)}
+            done=subprocess.run([sys.executable,str(ROOT/"backend"/"engine.py")],
+                                input=json.dumps(request).encode("utf-8"),
+                                capture_output=True,timeout=120,
+                                env={**os.environ,"AIPDF_STATE_DIR":str(root/"state")})
+            stderr_tail=done.stderr.decode("utf-8",errors="replace")[-500:]
+            self.assertEqual(done.returncode,1,stderr_tail)   # main()：ok=False → 1
+            payload=done.stdout.decode("utf-8")               # strict：编码泄漏在此抛错
+            result=json.loads(payload)                        # stdout 整体为纯 JSON
+            self.assertFalse(result["ok"])
+            error=result["error"]
+            self.assertIn("HEIC",error)
+            self.assertIn("转换为 PNG 或 JPEG",error)          # 与 engine.py:1259-1260 引导一致
 
 
 if __name__=="__main__":
