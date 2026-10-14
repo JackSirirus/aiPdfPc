@@ -140,6 +140,27 @@ public sealed class ShortcutSettingsViewModelTests : IDisposable
     }
 
     [Fact]
+    public void PendingOverrides_SupportsHostSingleWrite()
+    {
+        // 集成契约：设置页把覆盖项并入它自己的 AppSettings 后**一次性保存**
+        //（避免宿主保存与 VM 保存各写一次而互相覆盖）。
+        var viewModel = new ShortcutSettingsViewModel(Store());
+        viewModel.TrySetGesture(ShortcutRegistry.Print, "Ctrl+Shift+P", out _);
+
+        var overrides = viewModel.PendingOverrides;
+        Assert.Equal("Ctrl+Shift+P", Assert.Single(overrides).Value);
+
+        var settings = Store().Load();
+        settings.Shortcuts = new Dictionary<string, string>(overrides);
+        Store().Save(settings);
+
+        // 新实例（模拟重启）读回同一结果
+        var reopened = new ShortcutSettingsViewModel(Store());
+        Assert.Equal("Ctrl+Shift+P", reopened.Items.Single(row => row.Id == ShortcutRegistry.Print).Gesture);
+        Assert.False(reopened.IsDirty);
+    }
+
+    [Fact]
     public void Reload_DiscardsUnsavedChanges()
     {
         var viewModel = new ShortcutSettingsViewModel(Store());

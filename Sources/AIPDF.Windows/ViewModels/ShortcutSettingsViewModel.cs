@@ -87,6 +87,16 @@ public sealed partial class ShortcutSettingsViewModel : ObservableObject
     /// <summary>是否有未保存改动。</summary>
     public bool IsDirty { get; private set; }
 
+    /// <summary>
+    /// 当前编辑结果的覆盖项快照（只含与默认不同的项），供宿主并入它自己的
+    /// <see cref="AppSettings"/> 后**一次性保存**：
+    /// <code>current.Shortcuts = new Dictionary&lt;string, string&gt;(viewModel.PendingOverrides);</code>
+    /// 设置页只需一次 `_store.Save(current)`，避免「宿主保存」与「本 VM 保存」各写一次而互相覆盖
+    /// （与设置页既有的「回读 + 就地修改」范式一致）。
+    /// </summary>
+    public IReadOnlyDictionary<string, string> PendingOverrides
+        => new Dictionary<string, string>(_working, StringComparer.Ordinal);
+
     /// <summary>从设置文件重新加载（丢弃未保存改动）。</summary>
     public void Reload()
     {
