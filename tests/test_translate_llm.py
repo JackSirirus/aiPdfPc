@@ -316,6 +316,43 @@ class OverLimitAndProtocolTests(unittest.TestCase):
                 make_client().translate({"system": "S", "user": "U"})
         self.assertEqual(opened.call_count, 1)
 
+    def test_403_is_auth_error_but_not_blamed_on_api_key(self):
+        """403 = 凭据已接受但无权使用该模型 / 端点：仍归 AuthError（不可重试），
+        但文案不得再误导用户去「检查 API Key」（那是 401 的语义）。"""
+        with unittest.mock.patch.object(llm, "_open",
+                                        side_effect=http_error(403, "forbidden")) as opened:
+            with self.assertRaises(llm.AuthError) as caught:
+                make_client().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 1)
+        self.assertIn("403", str(caught.exception))
+        self.assertNotIn("API Key", str(caught.exception))
+
+    def test_401_message_points_to_api_key_check(self):
+        """401 语义断言：凭据无效 → 报文指向「检查 API Key」，且不得混入 403 的协议/端点指引。"""
+        with unittest.mock.patch.object(llm, "_open",
+                                        side_effect=http_error(401, "unauthorized")) as opened:
+            with self.assertRaises(llm.AuthError) as caught:
+                make_client().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 1)
+        message = str(caught.exception)
+        self.assertIn("HTTP 401", message)
+        self.assertIn("检查 API Key", message)
+        self.assertNotIn("模型与协议", message)
+        self.assertNotIn("标准 API 端点", message)
+
+    def test_403_message_guides_protocol_model_check_not_api_key(self):
+        """403 语义断言：凭据已接受但无权访问 → 指引核对模型/协议或标准端点，而非「检查 API Key」。"""
+        with unittest.mock.patch.object(llm, "_open",
+                                        side_effect=http_error(403, "forbidden")) as opened:
+            with self.assertRaises(llm.AuthError) as caught:
+                make_client().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 1)
+        message = str(caught.exception)
+        self.assertIn("HTTP 403", message)
+        self.assertIn("模型与协议", message)
+        self.assertIn("标准 API 端点", message)
+        self.assertNotIn("检查 API Key", message)
+
     def test_generic_400_is_not_retried(self):
         with unittest.mock.patch.object(llm, "_open",
                                         side_effect=http_error(400, "bad request")) as opened:
@@ -521,6 +558,20 @@ class AnthropicProtocolTests(unittest.TestCase):
             with self.assertRaises(llm.AuthError):
                 self.make_anthropic().translate({"system": "S", "user": "U"})
         self.assertEqual(opened.call_count, 1)
+
+    def test_anthropic_403_message_guides_protocol_model_check_not_api_key(self):
+        """Anthropic 协议路径 403：共享 `_classify_http_error`（非协议分叉）→ AuthError 不可重试，
+        报文锁 403 指引（模型/协议 + 标准 API 端点），且不得混入 401 的「检查 API Key」。"""
+        with unittest.mock.patch.object(llm, "_open",
+                                        side_effect=http_error(403, "forbidden")) as opened:
+            with self.assertRaises(llm.AuthError) as caught:
+                self.make_anthropic().translate({"system": "S", "user": "U"})
+        self.assertEqual(opened.call_count, 1)
+        message = str(caught.exception)
+        self.assertIn("HTTP 403", message)
+        self.assertIn("模型与协议", message)
+        self.assertIn("标准 API 端点", message)
+        self.assertNotIn("检查 API Key", message)
 
     def test_anthropic_429_maps_to_rate_limit_and_retries(self):
         """分类与重试策略与 OpenAI 分支一致：429 → RateLimitError，共 3 次尝试。"""
