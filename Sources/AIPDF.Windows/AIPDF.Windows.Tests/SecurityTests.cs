@@ -323,6 +323,7 @@ public sealed class SecurityTests
             "Console.Write",           // 绝不写控制台（stdout 只归引擎 JSON）
             "Debug.WriteLine",
             "Trace.WriteLine",
+            "File.AppendAllText",      // 绝不把响应体/内容写入文件日志（P3-A：诊断走 stderr，不落盘）
         };
 
         Assert.NotEmpty(sources);
