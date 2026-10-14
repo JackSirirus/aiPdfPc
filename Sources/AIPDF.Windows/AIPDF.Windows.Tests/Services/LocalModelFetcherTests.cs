@@ -4,7 +4,7 @@
 //   - 请求 URI = {base}/models（OpenAI base 不再追加 /v1，绝不出现 /v1/v1/models）；
 //   - 本地 loopback 零密钥外发（即使调用方传入密钥）；未确认端点（无已保存密钥）零鉴权头（规则 7）；
 //   - 云端按协议鉴权：openai → Authorization: Bearer；anthropic → x-api-key + anthropic-version；
-//   - 10s 超时 + 2 次重试（共 3 次尝试）；401 不重试；用户取消不重试；
+//   - 10s 超时 + 2 次重试（共 3 次尝试）；401 / 403 不重试；用户取消不重试；
 //   - 非 JSON / 非 OpenAI 形状 → 结构化错误；游标分页两页；明文 http 云端端点拒绝。
 // 全部走内存 HttpMessageHandler，不发起真实网络请求；密钥为可识别假值，断言不出现于异常文本。
 using System.Net;
@@ -133,6 +133,22 @@ public sealed class LocalModelFetcherTests
         Assert.Equal(LocalModelFetchFailureKind.Auth, exception.Kind);
         Assert.Equal(401, exception.StatusCode);
         Assert.Single(handler.Requests); // 401 是确定性答案，不重试
+        Assert.DoesNotContain(ApiKey, exception.ToString());
+    }
+
+    [Fact]
+    public async Task FetchAsync_Forbidden_ThrowsForbiddenFailure_WithoutRetry_AndHidesKey()
+    {
+        var handler = new ModelListHandler().ReplyStatus(HttpStatusCode.Forbidden);
+        var fetcher = new LocalModelFetcher(handler);
+
+        var exception = await Assert.ThrowsAsync<LocalModelFetchException>(
+            () => fetcher.FetchAsync(OpenAiBase, ApiKey, "openai", CancellationToken.None));
+
+        Assert.Equal(LocalModelFetchFailureKind.Forbidden, exception.Kind);
+        Assert.Equal(403, exception.StatusCode);
+        Assert.Single(handler.Requests); // 403 是确定性答案，不重试（与 401 同）
+        Assert.Contains("403", exception.Message, StringComparison.Ordinal);
         Assert.DoesNotContain(ApiKey, exception.ToString());
     }
 

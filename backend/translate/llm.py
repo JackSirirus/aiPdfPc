@@ -50,7 +50,8 @@ class RateLimitError(LLMError):
 
 
 class AuthError(LLMError):
-    """HTTP 401/403：凭据被拒。不可重试，需用户在设置中修正 API Key。"""
+    """HTTP 401/403：请求被服务端拒绝。401 = 凭据无效（需修正 API Key）；403 = 凭据已接受但无权使用
+    所请求的模型 / 端点（订阅网关按模型区分协议，或套餐不含该模型）。不可重试。"""
 
 
 class RefusalError(LLMError):
@@ -119,6 +120,12 @@ _EMPTY_MESSAGE = "翻译服务返回了空内容。"
 _BUDGET_MESSAGE = "已达成本硬上限（{limit} tokens），停止后续翻译请求。"
 _OVER_LIMIT_MESSAGE = "请求超出模型上下文上限，请减小分段或更换模型。"
 _AUTH_MESSAGE = "翻译服务拒绝了凭据（HTTP {status}）。请在设置中检查 API Key。"
+# 403 与 401 语义不同：401 = 凭据本身无效；403 = 凭据已被接受、但该账号 / 套餐无权使用所请求的
+# 模型或端点（订阅网关按模型区分协议，选错协议即会命中）。不要再用「检查 API Key」误导用户。
+_FORBIDDEN_MESSAGE = (
+    "翻译服务拒绝了本次请求（HTTP 403）：凭据已被接受，但该账号 / 套餐无权使用所请求的模型或端点。"
+    "请检查所选模型与协议是否匹配（订阅网关按模型区分协议），或改用标准 API 端点。"
+)
 _SERVER_MESSAGE = "翻译服务暂时不可用（HTTP {status}），请稍后重试。"
 _GENERIC_HTTP_MESSAGE = "翻译服务返回错误（HTTP {status}）。"
 _MALFORMED_MESSAGE = "翻译服务返回了无法解析的响应。"
@@ -517,8 +524,11 @@ def _classify_http_error(error):
         return RateLimitError(_RATE_LIMIT_MESSAGE)
     if status == 413 or any(marker in detail for marker in _OVER_LIMIT_MARKERS):
         return OverLimitError(_OVER_LIMIT_MESSAGE)
-    if status in (401, 403):
+    if status == 401:
         return AuthError(_AUTH_MESSAGE.format(status=status))
+    if status == 403:
+        # 403：凭据通过，但请求被拒（模型 / 协议 / 套餐权限），与「API Key 无效」区分开。
+        return AuthError(_FORBIDDEN_MESSAGE)
     if isinstance(status, int) and (status >= 500 or status == 408):
         return NetworkError(_SERVER_MESSAGE.format(status=status))
     return LLMError(_GENERIC_HTTP_MESSAGE.format(status=status))

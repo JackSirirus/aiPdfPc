@@ -333,6 +333,14 @@ public sealed class TranslationProviderComplianceTests
         Assert.Equal(
             TranslationProviderFailureKind.CredentialMismatch,
             TranslationProviderCompliance.ClassifyFailure(status, "unauthorized", "k3"));
+
+        // 401 / 403 共用同一横幅（Task 13 / P3-B）：文案须同时覆盖两个状态码，
+        // 403 路径不得显示「401：」纯 401 误导前缀，也不得把拒绝归咎于密钥本身（无「检查 API Key」）。
+        var banner = TranslationProviderCompliance.FailureBanner(
+            TranslationProviderFailureKind.CredentialMismatch)!;
+        Assert.Contains("401 / 403", banner, StringComparison.Ordinal);
+        Assert.DoesNotContain("401：", banner, StringComparison.Ordinal);
+        Assert.DoesNotContain("检查 API Key", banner, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -80,9 +80,11 @@ public static class TranslationProviderCompliance
         "请求失败（400 / 404）：路径或请求格式不被端点接受。该端点可能使用另一协议"
         + "（OpenAI 兼容走 /chat/completions + Bearer；Anthropic 兼容走 /v1/messages + x-api-key），请切换到匹配的协议后重试。";
 
-    /// <summary>密钥与端点不匹配横幅（P41）。</summary>
+    /// <summary>密钥与端点不匹配横幅（P41）。401 与 403 共用此横幅，须同时覆盖两个状态码：
+    /// 403 不得显示「401：」纯 401 文案误导用户，也不把拒绝单纯归咎于密钥本身。</summary>
     public const string CredentialMismatchBanner =
-        "401：该密钥不适用于此端点。Kimi Code（sk-kimi-）与开放平台密钥、GLM 套餐密钥与标准 API 密钥互不通用。";
+        "401 / 403：该端点拒绝了本次凭据请求（密钥类型不匹配，或账号 / 套餐无权访问）。"
+        + "Kimi Code（sk-kimi-）与开放平台密钥、GLM 套餐密钥与标准 API 密钥互不通用，请改用匹配的密钥类型或确认账号 / 套餐权限。";
 
     /// <summary>已下线模型横幅（P40）。</summary>
     public const string RetiredModelBanner =
