@@ -761,7 +761,7 @@ public sealed class SettingsDialogTests
         => Descendants(dialog).OfType<FrameworkElement>()
             .Single(fe => fe.Name == paneName);
 
-    /// <summary>六个分类名 → 对应 pane Name。</summary>
+    /// <summary>七个分类名 → 对应 pane Name。</summary>
     private static readonly Dictionary<string, string> CategoryToPaneName = new()
     {
         ["general"] = "Pane_general",
@@ -770,12 +770,13 @@ public sealed class SettingsDialogTests
         ["translation.glossary"] = "Pane_translation_glossary",
         ["translation.output"] = "Pane_translation_output",
         ["advanced"] = "Pane_advanced",
+        ["shortcuts"] = "Pane_shortcuts",
     };
 
-    /// <summary>所有六个 pane Name。</summary>
+    /// <summary>所有七个 pane Name。</summary>
     private static readonly string[] AllPaneNames =
         ["Pane_general", "Pane_appearance", "Pane_translation_providers",
-         "Pane_translation_glossary", "Pane_translation_output", "Pane_advanced"];
+         "Pane_translation_glossary", "Pane_translation_output", "Pane_advanced", "Pane_shortcuts"];
 
     [Fact]
     public void Navigation_CategoryItemsAndSwitching()
@@ -791,7 +792,7 @@ public sealed class SettingsDialogTests
                 .OfType<ListBox>()
                 .Single(lb => lb.Name == "SettingsNavList");
             var itemTexts = navList.Items.OfType<ListBoxItem>().Select(i => (string)i.Content).ToList();
-            Assert.Equal(new[] { "常规", "外观", "翻译", "模型供应商", "术语表", "输出", "高级" }, itemTexts);
+            Assert.Equal(new[] { "常规", "外观", "翻译", "模型供应商", "术语表", "输出", "高级", "快捷键" }, itemTexts);
 
             // 2. 默认选中「常规」（T5）
             var defaultItem = (ListBoxItem)navList.SelectedItem!;
@@ -852,11 +853,11 @@ public sealed class SettingsDialogTests
             using var fx = new Fixture();
             var dialog = NewDialog(fx.NewStore());
 
-            // 每个分类切换后：对应 pane Visible 且含可见 TextBlock；其余五个 pane 均 Collapsed
+            // 每个分类切换后：对应 pane Visible 且含可见 TextBlock；其余六个 pane 均 Collapsed
             var categories = new[]
             {
                 "general", "appearance", "translation.providers",
-                "translation.glossary", "translation.output", "advanced"
+                "translation.glossary", "translation.output", "advanced", "shortcuts"
             };
             foreach (var cat in categories)
             {
@@ -1314,6 +1315,7 @@ public sealed class SettingsDialogTests
     [InlineData("translation.glossary")]
     [InlineData("translation.output")]
     [InlineData("advanced")]
+    [InlineData("shortcuts")]
     public void HostedCategory_HostVisibleOthersCollapsed_WrapperContentIsPane(string categoryKey)
     {
         RunOnSta(() =>
@@ -1364,14 +1366,15 @@ public sealed class SettingsDialogTests
             var dialog = NewDialog(fx.NewStore());
             var contentHost = Descendants(dialog).OfType<Grid>().Single(g => g.Name == "SettingsContentHost");
 
-            // (a) _paneHosts 恰为 5 个宿主键，值全是 HostPane ScrollViewer；不含 providers。
+            // (a) _paneHosts 恰为 6 个宿主键（V4 T12 起含 shortcuts），值全是 HostPane ScrollViewer；不含 providers。
             var hosts = (Dictionary<string, FrameworkElement>)typeof(SettingsDialog)
                 .GetField("_paneHosts", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(dialog)!;
-            Assert.Equal(5, hosts.Count);
+            Assert.Equal(6, hosts.Count);
             foreach (var expected in new[]
                      {
                          "general", "appearance", "translation.glossary", "translation.output", "advanced",
+                         "shortcuts",
                      })
             {
                 Assert.Contains(expected, hosts.Keys);

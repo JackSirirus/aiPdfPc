@@ -21,6 +21,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using AIPDF.Windows.Services;
+using AIPDF.Windows.ViewModels;
 
 namespace AIPDF.Windows.Views.Settings;
 
@@ -115,13 +116,17 @@ public sealed class SettingsDialog : Window
     private TextBlock _paneHeadTitle = new();
     private TextBlock _paneHeadDesc = new();
 
-    // 6 个分类面板（Visibility 切换，不重建控件）
+    // 7 个分类面板（Visibility 切换，不重建控件）
     private FrameworkElement _paneGeneral = default!;
     private FrameworkElement _paneAppearance = default!;
     private FrameworkElement _paneTranslationProviders = default!;
     private FrameworkElement _paneTranslationGlossary = default!;
     private FrameworkElement _paneTranslationOutput = default!;
     private FrameworkElement _paneAdvanced = default!;
+
+    // V4 T12：快捷键面板（UserControl + 独立 VM；保存时把覆盖项并入同一次写入）
+    private FrameworkElement _paneShortcuts = default!;
+    private ShortcutSettingsViewModel? _shortcutsViewModel;
 
     /// <summary>
     /// 表单面板的宿主 ScrollViewer（key 同分类 tag）。必须与内层面板同步显隐：
@@ -313,8 +318,17 @@ public sealed class SettingsDialog : Window
         _paneAdvanced = advancedGrid;
         _paneAdvanced.Name = "Pane_advanced";
 
+        // V4 T12：快捷键面板。用 UserControl 承载（逻辑全在 VM 内、可独立单测），
+        // 与命令面板入口共用同一个 ShortcutSettingsViewModel。
+        _shortcutsViewModel = new ShortcutSettingsViewModel(_store);
+        _paneShortcuts = new ShortcutSettingsPanel
+        {
+            DataContext = _shortcutsViewModel,
+            Name = "Pane_shortcuts",
+        };
+
         // ====================================================================
-        // 内容宿主：6 面板 + pane head（Visibility 切换）
+        // 内容宿主：7 面板 + pane head（Visibility 切换）
         // ====================================================================
         var paneHeadPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 4) };
         _paneHeadTitle.Name = "PaneHeadTitle";
@@ -355,6 +369,7 @@ public sealed class SettingsDialog : Window
         _paneHosts["translation.glossary"] = HostPane(_paneTranslationGlossary);
         _paneHosts["translation.output"] = HostPane(_paneTranslationOutput);
         _paneHosts["advanced"] = HostPane(_paneAdvanced);
+        _paneHosts["shortcuts"] = HostPane(_paneShortcuts);
 
         // 把面板宿主放进 row 1（Star）：拿到真实视口高度，内部 Star 行才有确定高度。
         foreach (var host in _paneHosts.Values)
@@ -514,6 +529,7 @@ public sealed class SettingsDialog : Window
         _paneTranslationGlossary.Visibility = Visibility.Collapsed;
         _paneTranslationOutput.Visibility = Visibility.Collapsed;
         _paneAdvanced.Visibility = Visibility.Collapsed;
+        _paneShortcuts.Visibility = Visibility.Collapsed;
 
         // 宿主容器必须同步隐藏：只隐藏内层面板时，空 ScrollViewer 仍留在可视树中参与命中测试，
         // 会盖在其它面板之上吞掉鼠标输入（供应商列表无法点选 / 拖滚动条）。
@@ -555,6 +571,11 @@ public sealed class SettingsDialog : Window
                 _paneAdvanced.Visibility = Visibility.Visible;
                 _paneHeadTitle.Text = "高级";
                 _paneHeadDesc.Text = "打印与渲染的 DPI 设置。";
+                break;
+            case "shortcuts":
+                _paneShortcuts.Visibility = Visibility.Visible;
+                _paneHeadTitle.Text = "快捷键";
+                _paneHeadDesc.Text = "自定义窗口快捷键；点输入框后按下组合键即可。保存后立即生效（无需重启），冲突会明确提示。";
                 break;
         }
     }
@@ -599,7 +620,7 @@ public sealed class SettingsDialog : Window
         style.Triggers.Add(selected);
         list.ItemContainerStyle = style;
 
-        // 导航项：常规 / 外观 / 翻译 / 模型供应商(sub) / 术语表(sub) / 输出(sub) / 高级
+        // 导航项：常规 / 外观 / 翻译 / 模型供应商(sub) / 术语表(sub) / 输出(sub) / 高级 / 快捷键
         var items = new (string Text, string Tag, bool IsSub)[]
         {
             ("常规", "general", false),
@@ -609,6 +630,7 @@ public sealed class SettingsDialog : Window
             ("术语表", "translation.glossary", true),
             ("输出", "translation.output", true),
             ("高级", "advanced", false),
+            ("快捷键", "shortcuts", false),
         };
 
         foreach (var (text, tag, isSub) in items)
@@ -2296,6 +2318,13 @@ public sealed class SettingsDialog : Window
             outputDir: _outputDirBox.Text,
             renderDpi: ParseDouble(_renderDpiBox.Text, AppSettings.RenderDpiDefault),
             markerEnabled: _markerCheck.IsChecked == true);
+
+        // V4 T12：并入快捷键覆盖项（同一原则：只就地修改本字段，绝不重建整个 AppSettings）。
+        // 由 VM 提供「与默认不同」的工作集，因此这里只需一次 Save，不会与 VM 各自保存而互相覆盖。
+        if (_shortcutsViewModel is { } shortcuts)
+        {
+            settings.Shortcuts = new Dictionary<string, string>(shortcuts.PendingOverrides);
+        }
 
         try
         {

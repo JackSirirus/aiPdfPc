@@ -1311,9 +1311,16 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         if (dialog.SavedSettings is { } saved)
         {
             _startPage?.ApplyRecentFilesLimit(SettingsInjection.ResolveRecentFilesLimit(saved.RecentFilesLimit));
+
+            // V4 T12：快捷键保存后立即重建窗口绑定（无需重启）。
+            ApplyShortcuts();
+
             if (DataContext is ViewModels.MainViewModel main)
             {
-                main.StatusText = "设置已保存（对随后新打开的文档生效）。";
+                // 冲突提示不能被「设置已保存」覆盖掉（否则等于静默）
+                main.StatusText = _shortcutConflictSummary.Length > 0
+                    ? $"设置已保存；快捷键冲突：{_shortcutConflictSummary}"
+                    : "设置已保存（对随后新打开的文档生效）。";
             }
         }
     }
@@ -2720,6 +2727,9 @@ public partial class MainWindow : Window, ISessionRestoreTarget
     /// <summary>当前生效手势（动作 Id → 手势），供代码分支（Ctrl+G）匹配。</summary>
     private IReadOnlyDictionary<string, string> _shortcutGestures = ShortcutRegistry.Defaults;
 
+    /// <summary>最近一次应用快捷键后的冲突摘要（无冲突为空串）。宿主据此把冲突与其它状态一并提示。</summary>
+    private string _shortcutConflictSummary = string.Empty;
+
     /// <summary>
     /// V4 T12：按设置重建窗口快捷键绑定。覆盖优先、其余用默认；非法覆盖已在
     /// <see cref="ShortcutRegistry.Resolve"/> 内回退默认，因此**不会出现「改了以后快捷键消失」**。
@@ -2745,9 +2755,12 @@ public partial class MainWindow : Window, ISessionRestoreTarget
         }
 
         var conflicts = ShortcutRegistry.FindConflicts(effective);
+        _shortcutConflictSummary = conflicts.Count == 0
+            ? string.Empty
+            : conflicts[0].Describe(ShortcutRegistry.Labels);
         if (conflicts.Count > 0)
         {
-            SetStatusText($"快捷键冲突：{conflicts[0].Describe(ShortcutRegistry.Labels)}");
+            SetStatusText($"快捷键冲突：{_shortcutConflictSummary}");
         }
     }
 
