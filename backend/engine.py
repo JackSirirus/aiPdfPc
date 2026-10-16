@@ -799,8 +799,12 @@ def add_stamp_annot(page, rect, stamp=None, image=None, color=(1, 0, 0)):
 
 
 def _find_annots(doc, action):
-    """按稳定 /NM 名（name/handle）或同会话 xref 定位注释；跨保存 xref 会被 garbage
-    重编号，故名字才是 T4 应持久化的句柄。"""
+    """按稳定名（name/handle）或同会话 xref 定位注释；跨保存 xref 会被 garbage 重编号，
+    故名字才是 T4 应持久化的句柄。
+
+    ⚠️ 这里的「稳定名」是 PyMuPDF **私有 `/Name`**（`annot.info["name"]`，即 `set_name()` 写入的键），
+    **不是标准 `/NM`**——实测同一注释为 `/NM(fitz-A0)/Name/STABLE-NAME-1`：`/NM` 存的是自动名
+    （如 `fitz-A0`），按它匹配会静默错位。见 .omo/evidence/v4-spike-annotation-readback.md。"""
     wanted = action.get("name") or action.get("handle")
     xref = action.get("xref")
     found = []
@@ -854,7 +858,9 @@ def apply_annotation_actions(doc, actions):
                 annot = add_reply_annot(doc, page, action, color)
             else:
                 raise UserError("不支持的批注类型。")
-            # 注释 /NM 名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
+            # 稳定名跨保存稳定（xref 会被 garbage 重编号），T4 用它删除/改色。
+            # 注意 `set_name()` 写的是 PyMuPDF **私有 `/Name`**（读回见 `annot.info["name"]`），
+            # **不是标准 `/NM`**（那是自动名 fitz-A0 之类）；跨阅读器匹配时别读错键。
             annot.set_name(handle)
             annot.update()
             handles[str(action.get("id") or handle)] = handle

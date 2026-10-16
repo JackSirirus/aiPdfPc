@@ -588,6 +588,16 @@ class EngineTests(unittest.TestCase):
         # 两个名字都要在：私有 /Name（set_name 真正写入的键）与标准 /NM
         self.assertTrue({"h1","ul1","n1"} <= {r["privateName"] for r in rows},
                         [r["privateName"] for r in rows])
+        # 回归锁：稳定名在**私有 /Name**，标准 /NM 是自动名（fitz-A*），二者**不得相等**。
+        # 若将来有人把稳定名改写到 /NM（或读错键），这条会立刻失败——
+        # 代码注释里也据此写明「按 /NM 匹配会静默错位」。
+        for row in rows:
+            self.assertNotEqual(row["name"],row["privateName"],
+                                f"标准 /NM 不应等于稳定名（row={row['privateName']}）："
+                                "稳定名在私有 /Name，/NM 是自动名")
+            if row["privateName"] in ("h1","ul1","n1"):
+                self.assertRegex(row["name"] or "","^fitz-",
+                                 "标准 /NM 应为 PyMuPDF 自动名（fitz-*）")
         for row in rows:
             self.assertIn("name",row)
             self.assertIsNotNone(row["rect"],"每条注释都应带矩形")
